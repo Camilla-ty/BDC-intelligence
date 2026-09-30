@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
   assertPortfolioFields,
   type DateRow,
@@ -6,21 +5,15 @@ import {
   type NameSourceRow,
   type RegistrantRow,
 } from "@/lib/portfolios";
-
-const CONTAINER = process.env.BDC_DB_CONTAINER ?? "bdc-intelligence-pg";
-const DATABASE = process.env.BDC_DATABASE ?? "bdc_local";
+import { executeSql } from "@/server/sql-text";
 
 const CIK = /^[0-9]{10}$/;
 const REPORTED_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
-function query(sql: string): { json: unknown; error: string | null } {
-  const result = spawnSync(
-    "docker",
-    ["exec", "-i", CONTAINER, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", DATABASE, "-At"],
-    { input: sql, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
-  if (result.status !== 0) return { json: null, error: "The portfolio listing could not be read." };
-  const line = (result.stdout ?? "").trim();
+async function query(sql: string): Promise<{ json: unknown; error: string | null }> {
+  const executed = await executeSql(sql);
+  if (!executed.ok) return { json: null, error: "The portfolio listing could not be read." };
+  const line = executed.text;
   try {
     return { json: JSON.parse(line === "" ? "null" : line), error: null };
   } catch {
@@ -32,8 +25,8 @@ function readerSql(body: string): string {
   return `SET ROLE bdc_reader;\nSET statement_timeout = '30s';\n${body}\nRESET ROLE;\n`;
 }
 
-export function loadEmptyPeriods(): { labels: string[]; error: string | null } {
-  const { json, error } = query(readerSql(`
+export async function loadEmptyPeriods(): Promise<{ labels: string[]; error: string | null }> {
+  const { json, error } = await query(readerSql(`
 SELECT coalesce(json_agg(release_label ORDER BY release_label), '[]'::json)
 FROM registry.portfolio_empty_period;`));
   if (error || !Array.isArray(json) || !json.every((item) => typeof item === "string")) {
@@ -44,8 +37,8 @@ FROM registry.portfolio_empty_period;`));
 
 export type DirectoryResult = { rows: RegistrantRow[]; error: string | null };
 
-export function loadPortfolioDirectory(): DirectoryResult {
-  const { json, error } = query(readerSql(`
+export async function loadPortfolioDirectory(): Promise<DirectoryResult> {
+  const { json, error } = await query(readerSql(`
 SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
 FROM (
   SELECT registrant_cik, name_state, name_raw, ticker_state, ticker_raw,
@@ -70,11 +63,11 @@ export type DetailResult = {
   error: string | null;
 };
 
-export function loadPortfolioDetail(cik: string): DetailResult {
+export async function loadPortfolioDetail(cik: string): Promise<DetailResult> {
   if (!CIK.test(cik)) {
     return { registrant: null, names: [], dates: [], emptyPeriods: [], error: null };
   }
-  const { json, error } = query(readerSql(`
+  const { json, error } = await query(readerSql(`
 SELECT json_build_object(
   'registrant', (
     SELECT row_to_json(r) FROM (
@@ -126,11 +119,11 @@ SELECT json_build_object(
 
 export type LinesResult = { total: number | null; rows: LineRow[]; error: string | null };
 
-export function loadPortfolioLines(cik: string, reportedDate: string, offset: number): LinesResult {
+export async function loadPortfolioLines(cik: string, reportedDate: string, offset: number): Promise<LinesResult> {
   if (!CIK.test(cik) || !REPORTED_DATE.test(reportedDate) || !Number.isSafeInteger(offset) || offset < 0) {
     return { total: null, rows: [], error: null };
   }
-  const { json, error } = query(readerSql(`
+  const { json, error } = await query(readerSql(`
 SELECT json_build_object(
   'total', (
     SELECT count(*)::integer

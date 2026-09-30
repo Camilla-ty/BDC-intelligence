@@ -13,7 +13,7 @@ export default async function MarketDatePage({
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) {
     return <MarketDate reportedDate={date} rows={[]} emptyMessage={MISSING_DATE} />;
   }
-  const detail = loadMarketDate(date);
+  const detail = await loadMarketDate(date);
   if (detail.error) return <p className="text-sm">{detail.error}</p>;
   return (
     <MarketDate

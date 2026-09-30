@@ -1,10 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { assertListingFields, type ObservationRow } from "@/lib/borrowers";
+import { executeSql } from "@/server/sql-text";
 
-// ENGINEERING DECISION: Phase 10-min reads registry.borrower_observation_listing as bdc_reader
-// through the local PostgreSQL container. A hosted DATABASE_URL client is FUTURE / NOT MVP.
-const CONTAINER = process.env.BDC_DB_CONTAINER ?? "bdc-intelligence-pg";
-const DATABASE = process.env.BDC_DATABASE ?? "bdc_local";
+// Reads registry.borrower_observation_listing as bdc_reader. The SQL is unchanged.
+// DATABASE_URL selects the hosted client; otherwise the local container is used.
 
 const LISTING_SQL = `
 SET ROLE bdc_reader;
@@ -37,16 +35,12 @@ RESET ROLE;
 
 export type ListingResult = { rows: ObservationRow[]; error: string | null };
 
-export function loadBorrowerObservations(): ListingResult {
-  const result = spawnSync(
-    "docker",
-    ["exec", "-i", CONTAINER, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", DATABASE, "-At"],
-    { input: LISTING_SQL, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
-  if (result.status !== 0) {
+export async function loadBorrowerObservations(): Promise<ListingResult> {
+  const executed = await executeSql(LISTING_SQL);
+  if (!executed.ok) {
     return { rows: [], error: "The borrower listing could not be read." };
   }
-  const line = (result.stdout ?? "").trim();
+  const line = executed.text;
   let parsed: unknown;
   try {
     parsed = JSON.parse(line === "" ? "[]" : line);

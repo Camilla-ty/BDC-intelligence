@@ -73,6 +73,7 @@ Run from the repository root:
 | `npm run verify` | Run all of the above checks in sequence |
 | `npm run db:up` / `npm run db:down` | Start or stop the local test PostgreSQL container |
 | `npm run db:migrate` | Apply pending migrations to a local database (`-- --db NAME`, default `bdc_local`) |
+| `npm run db:migrate:hosted` | Apply pending migrations through `DATABASE_URL` (session pooler port 5432 or direct). Refuses port 6543. Local `db:migrate` stays on Docker |
 | `npm run db:snapshot` | Regenerate `db/schema.snapshot.sql` after adding a migration |
 | `npm run verify:source-fixtures` | Local only: recompute cached SEC file checksums and scan public files for leaked names (skipped without `.cache/sec/`) |
 | `npm run sec:fetch` | Local only: download the SEC files listed in the manifest into `.cache/sec/` (needs `SEC_USER_AGENT` in `.env.local`) |

@@ -11,7 +11,7 @@ export default async function MarketPage({
 }) {
   const { q } = await searchParams;
   const query = typeof q === "string" ? q : "";
-  const directory = loadMarketDirectory();
+  const directory = await loadMarketDirectory();
   return (
     <MarketCoverage
       registrants={directory.error ? [] : listRegistrantCoverage(directory.registrants, query)}

@@ -11,8 +11,8 @@ export default async function MaturityPage({
 }) {
   const { q } = await searchParams;
   const query = typeof q === "string" ? q : "";
-  const { rows, error } = loadPortfolioDirectory();
-  const periods = loadEmptyPeriods();
+  const { rows, error } = await loadPortfolioDirectory();
+  const periods = await loadEmptyPeriods();
   const registrants = error ? [] : listPortfolios(rows, query);
   return (
     <MaturityList

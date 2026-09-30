@@ -37,6 +37,7 @@
     "db:up": "node scripts/db/container.mjs up",
     "db:down": "node scripts/db/container.mjs down",
     "db:migrate": "node scripts/db/migrate.mjs",
+    "db:migrate:hosted": "node --env-file-if-exists=.env.local scripts/db/migrate-hosted.mjs",
     "db:snapshot": "node scripts/db/snapshot.mjs",
     "db:test": "node scripts/db/test.mjs",
     "verify": "npm run verify:no-reference-tracked && npm run verify:reference && npm run verify:guardrails && npm run verify:source-schemas && npm run db:test && npm run test:pipeline && npm run test:pipeline:integration && npm run lint && npm run typecheck && npm run test && npm run build"

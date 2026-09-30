@@ -13,7 +13,7 @@ export default async function PortfolioPage({
 }) {
   const { cik } = await params;
   if (!/^[0-9]{10}$/.test(cik)) return <MissingRecord message={UNOBSERVED_REGISTRANT} href="/portfolios" label="Portfolios" />;
-  const detail = loadPortfolioDetail(cik);
+  const detail = await loadPortfolioDetail(cik);
   if (detail.error) return <p className="text-sm">{detail.error}</p>;
   if (!detail.registrant) return <MissingRecord message={UNOBSERVED_REGISTRANT} href="/portfolios" label="Portfolios" />;
   return (

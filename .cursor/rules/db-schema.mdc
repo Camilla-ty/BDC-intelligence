@@ -19,7 +19,9 @@ Reference: `docs/DATA_MODEL.md`, ADR 0009 and ADR 0010.
 - End every migration that creates tables with `SELECT ops.apply_append_only_to_all();`.
 - Regenerate `db/schema.snapshot.sql` with `npm run db:snapshot` in the same change, and run
   `npm run db:test`.
-- No ORM and no npm database packages without approval (G-17).
+- No ORM and no database abstraction layer. ADR 0009 permits exactly one in-process
+  PostgreSQL client for hosted runtime connectivity. Scripts under `scripts/db/` stay on
+  Docker `psql`. Do not add that client from a schema change (G-17).
 
 ## Table design
 

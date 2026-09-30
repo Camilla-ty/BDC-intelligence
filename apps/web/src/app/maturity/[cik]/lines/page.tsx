@@ -31,14 +31,14 @@ export default async function MaturityLinesPage({
     || (year !== "" && !/^(?:unknown|multiple|[0-9]{4})$/.test(year))) {
     return <MissingRecord message={UNOBSERVED_DATE} href="/maturity" label="Maturity" />;
   }
-  const periods = loadEmptyPeriods();
-  const first = loadMaturityLines(cik, reportedDate, year, 0);
+  const periods = await loadEmptyPeriods();
+  const first = await loadMaturityLines(cik, reportedDate, year, 0);
   if (first.error || periods.error) return <p className="text-sm">{first.error ?? periods.error}</p>;
   const total = first.total ?? 0;
   const window = pageWindow(requested, total);
   let rows = first.rows;
   if (first.dateFound && !window.pastEnd && window.start !== 0) {
-    const pageRows = loadMaturityLines(cik, reportedDate, year, window.start);
+    const pageRows = await loadMaturityLines(cik, reportedDate, year, window.start);
     if (pageRows.error) return <p className="text-sm">{pageRows.error}</p>;
     rows = pageRows.rows;
   }

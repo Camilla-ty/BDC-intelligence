@@ -17,7 +17,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 export const MIGRATIONS_DIR = path.join(repoRoot, "db", "migrations");
 const NAME_PATTERN = /^(\d{4})_[a-z0-9_]+\.sql$/;
 
-const BOOTSTRAP = `
+export const BOOTSTRAP = `
 CREATE SCHEMA IF NOT EXISTS ops;
 CREATE TABLE IF NOT EXISTS ops.schema_migration (
   filename    text PRIMARY KEY CHECK (filename ~ '^[0-9]{4}_[a-z0-9_]+\\.sql$'),
@@ -25,6 +25,22 @@ CREATE TABLE IF NOT EXISTS ops.schema_migration (
   applied_at  timestamptz NOT NULL DEFAULT now()
 );
 `;
+
+export const LEDGER_QUERY = "SELECT filename, sha256 FROM ops.schema_migration ORDER BY filename";
+
+// One transaction: the migration file, then its ledger row. Hosted and local runners send this text.
+export function migrationTransaction(migration) {
+  return `BEGIN;\n${migration.sql}\nINSERT INTO ops.schema_migration (filename, sha256) VALUES ('${migration.filename}', '${migration.sha256}');\nCOMMIT;\n`;
+}
+
+export function assertChecksums(applied, migrations) {
+  const byName = new Map(migrations.map((m) => [m.filename, m]));
+  for (const [filename, sha256] of applied) {
+    const local = byName.get(filename);
+    if (!local) throw new Error(`checksum drift: applied migration ${filename} is missing locally`);
+    if (local.sha256 !== sha256) throw new Error(`checksum drift: ${filename} changed after it was applied`);
+  }
+}
 
 export function listMigrations(dir = MIGRATIONS_DIR) {
   const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
@@ -53,23 +69,17 @@ export function migrate(database, dir = MIGRATIONS_DIR) {
   if (boot.status !== 0) throw new Error(boot.stderr.trim());
 
   const applied = new Map(
-    query(database, "SELECT filename, sha256 FROM ops.schema_migration ORDER BY filename").map((line) => {
+    query(database, LEDGER_QUERY).map((line) => {
       const [filename, sha256] = line.split("\t");
       return [filename, sha256];
     }),
   );
 
-  const byName = new Map(migrations.map((m) => [m.filename, m]));
-  for (const [filename, sha256] of applied) {
-    const local = byName.get(filename);
-    if (!local) throw new Error(`checksum drift: applied migration ${filename} is missing locally`);
-    if (local.sha256 !== sha256) throw new Error(`checksum drift: ${filename} changed after it was applied`);
-  }
+  assertChecksums(applied, migrations);
 
   const pending = migrations.filter((m) => !applied.has(m.filename));
   for (const m of pending) {
-    const script = `BEGIN;\n${m.sql}\nINSERT INTO ops.schema_migration (filename, sha256) VALUES ('${m.filename}', '${m.sha256}');\nCOMMIT;\n`;
-    const r = psql(database, script);
+    const r = psql(database, migrationTransaction(m));
     if (r.status !== 0) throw new Error(`${m.filename} failed:\n${r.stderr.trim()}`);
   }
   return { applied: pending.map((m) => m.filename), alreadyApplied: applied.size };

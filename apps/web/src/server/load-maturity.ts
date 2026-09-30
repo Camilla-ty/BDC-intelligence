@@ -1,26 +1,19 @@
-import { spawnSync } from "node:child_process";
+import type { CoverageRow, MaturityLineRow, YearRow } from "@/lib/maturity";
 import {
   assertPortfolioFields,
   type NameSourceRow,
   type RegistrantRow,
 } from "@/lib/portfolios";
-import type { CoverageRow, MaturityLineRow, YearRow } from "@/lib/maturity";
-
-const CONTAINER = process.env.BDC_DB_CONTAINER ?? "bdc-intelligence-pg";
-const DATABASE = process.env.BDC_DATABASE ?? "bdc_local";
+import { executeSql } from "@/server/sql-text";
 
 const CIK = /^[0-9]{10}$/;
 const REPORTED_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const YEAR = /^(?:unknown|multiple|[0-9]{4})$/;
 
-function query(sql: string): { json: unknown; error: string | null } {
-  const result = spawnSync(
-    "docker",
-    ["exec", "-i", CONTAINER, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", DATABASE, "-At"],
-    { input: sql, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
-  if (result.status !== 0) return { json: null, error: "The maturity listing could not be read." };
-  const line = (result.stdout ?? "").trim();
+async function query(sql: string): Promise<{ json: unknown; error: string | null }> {
+  const executed = await executeSql(sql);
+  if (!executed.ok) return { json: null, error: "The maturity listing could not be read." };
+  const line = executed.text;
   try {
     return { json: JSON.parse(line === "" ? "null" : line), error: null };
   } catch {
@@ -41,11 +34,11 @@ export type MaturityDetail = {
   error: string | null;
 };
 
-export function loadMaturityDetail(cik: string): MaturityDetail {
+export async function loadMaturityDetail(cik: string): Promise<MaturityDetail> {
   if (!CIK.test(cik)) {
     return { registrant: null, names: [], dates: [], years: [], emptyPeriods: [], error: null };
   }
-  const { json, error } = query(readerSql(`
+  const { json, error } = await query(readerSql(`
 SELECT json_build_object(
   'registrant', (
     SELECT row_to_json(r) FROM (
@@ -114,14 +107,14 @@ export type MaturityLinesResult = {
   error: string | null;
 };
 
-export function loadMaturityLines(cik: string, reportedDate: string, year: string, offset: number): MaturityLinesResult {
+export async function loadMaturityLines(cik: string, reportedDate: string, year: string, offset: number): Promise<MaturityLinesResult> {
   if (!CIK.test(cik) || !REPORTED_DATE.test(reportedDate) || (year !== "" && !YEAR.test(year))
     || !Number.isSafeInteger(offset) || offset < 0) {
     return { total: null, dateFound: false, rows: [], error: null };
   }
   const kind = year === "" ? "all" : year === "unknown" ? "unknown" : year === "multiple" ? "multiple" : "year";
   const yearNumber = kind === "year" ? String(Number(year)) : "NULL";
-  const { json, error } = query(readerSql(`
+  const { json, error } = await query(readerSql(`
 SELECT json_build_object(
   'date_found', EXISTS (
     SELECT 1 FROM registry.maturity_coverage('${cik}') c

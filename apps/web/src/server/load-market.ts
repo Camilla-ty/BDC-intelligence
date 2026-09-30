@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
   assertMarketFields,
   type DateCoverageRow,
@@ -7,21 +6,15 @@ import {
   type ReleaseCoverageRow,
   type ReleaseDateRow,
 } from "@/lib/market";
-
-const CONTAINER = process.env.BDC_DB_CONTAINER ?? "bdc-intelligence-pg";
-const DATABASE = process.env.BDC_DATABASE ?? "bdc_local";
+import { executeSql } from "@/server/sql-text";
 
 const REPORTED_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const RELEASE_LABEL = /^[0-9]{4}(_[0-9]{2}|q[1-4])$/;
 
-function query(sql: string): { json: unknown; error: string | null } {
-  const result = spawnSync(
-    "docker",
-    ["exec", "-i", CONTAINER, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", DATABASE, "-At"],
-    { input: sql, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
-  if (result.status !== 0) return { json: null, error: "The market coverage listing could not be read." };
-  const line = (result.stdout ?? "").trim();
+async function query(sql: string): Promise<{ json: unknown; error: string | null }> {
+  const executed = await executeSql(sql);
+  if (!executed.ok) return { json: null, error: "The market coverage listing could not be read." };
+  const line = executed.text;
   try {
     return { json: JSON.parse(line === "" ? "null" : line), error: null };
   } catch {
@@ -40,9 +33,9 @@ export type DirectoryResult = {
   error: string | null;
 };
 
-export function loadMarketDirectory(): DirectoryResult {
+export async function loadMarketDirectory(): Promise<DirectoryResult> {
   const empty = { registrants: [], releases: [], dates: [], error: "The market coverage listing could not be read." };
-  const { json, error } = query(readerSql(`
+  const { json, error } = await query(readerSql(`
 SELECT json_build_object(
   'registrants', (
     SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
@@ -78,9 +71,9 @@ export type ReleaseResult = {
   error: string | null;
 };
 
-export function loadMarketRelease(label: string): ReleaseResult {
+export async function loadMarketRelease(label: string): Promise<ReleaseResult> {
   if (!RELEASE_LABEL.test(label)) return { found: false, coverageState: null, rows: [], error: null };
-  const { json, error } = query(readerSql(`
+  const { json, error } = await query(readerSql(`
 SELECT json_build_object(
   'coverage_state', (
     SELECT coverage_state FROM registry.market_release_coverage WHERE release_label = '${label}'
@@ -109,9 +102,9 @@ export type DateResult = {
   error: string | null;
 };
 
-export function loadMarketDate(reportedDate: string): DateResult {
+export async function loadMarketDate(reportedDate: string): Promise<DateResult> {
   if (!REPORTED_DATE.test(reportedDate)) return { found: false, rows: [], error: null };
-  const { json, error } = query(readerSql(`
+  const { json, error } = await query(readerSql(`
 SELECT json_build_object(
   'found', EXISTS (
     SELECT 1 FROM registry.market_reported_date WHERE reported_date = '${reportedDate}'

@@ -10,7 +10,7 @@ export default async function MarketReleasePage({
   params: Promise<{ label: string }>;
 }) {
   const { label } = await params;
-  const detail = loadMarketRelease(label);
+  const detail = await loadMarketRelease(label);
   if (detail.error) return <p className="text-sm">{detail.error}</p>;
   return (
     <MarketRelease

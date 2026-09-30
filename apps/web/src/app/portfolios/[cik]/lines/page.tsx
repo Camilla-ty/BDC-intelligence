@@ -20,14 +20,14 @@ export default async function PortfolioLinesPage({
   if (!/^[0-9]{10}$/.test(cik) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(reportedDate)) {
     return <MissingRecord message={UNOBSERVED_DATE} href="/portfolios" label="Portfolios" />;
   }
-  const periods = loadEmptyPeriods();
-  const first = loadPortfolioLines(cik, reportedDate, 0);
+  const periods = await loadEmptyPeriods();
+  const first = await loadPortfolioLines(cik, reportedDate, 0);
   if (first.error || periods.error) return <p className="text-sm">{first.error ?? periods.error}</p>;
   const total = first.total ?? 0;
   const window = pageWindow(requested, total);
   let rows = first.rows;
   if (!window.pastEnd && window.start !== 0) {
-    const pageRows = loadPortfolioLines(cik, reportedDate, window.start);
+    const pageRows = await loadPortfolioLines(cik, reportedDate, window.start);
     if (pageRows.error) return <p className="text-sm">{pageRows.error}</p>;
     rows = pageRows.rows;
   }

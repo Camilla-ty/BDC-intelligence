@@ -13,7 +13,7 @@ export default async function MaturityRegistrantPage({
 }) {
   const { cik } = await params;
   if (!/^[0-9]{10}$/.test(cik)) return <MissingRecord message={UNOBSERVED_REGISTRANT} href="/maturity" label="Maturity" />;
-  const detail = loadMaturityDetail(cik);
+  const detail = await loadMaturityDetail(cik);
   if (detail.error) return <p className="text-sm">{detail.error}</p>;
   if (!detail.registrant) return <MissingRecord message={UNOBSERVED_REGISTRANT} href="/maturity" label="Maturity" />;
   return (

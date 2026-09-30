@@ -11,7 +11,7 @@ export default async function BorrowersPage({
 }) {
   const { q } = await searchParams;
   const query = typeof q === "string" ? q : "";
-  const { rows, error } = loadBorrowerObservations();
+  const { rows, error } = await loadBorrowerObservations();
   const borrowers = error ? [] : listBorrowers(rows, query);
   return <BorrowerList borrowers={borrowers} query={query} error={error} />;
 }

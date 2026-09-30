@@ -12,7 +12,7 @@ export default async function SourcesPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { rows, error } = loadBorrowerObservations();
+  const { rows, error } = await loadBorrowerObservations();
   if (error) return <p className="text-sm">{error}</p>;
   const borrower = borrowerDetail(rows, id);
   if (!borrower) return <MissingRecord message={UNOBSERVED_BORROWER} href="/borrowers" label="Borrowers" />;
