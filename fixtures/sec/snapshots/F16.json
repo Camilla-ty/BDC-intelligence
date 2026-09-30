@@ -1,0 +1,14 @@
+{
+  "data_file_links": [
+    "/Archives/edgar/daily-index/bulkdata/submissions.zip",
+    "/Archives/edgar/daily-index/xbrl/companyfacts.zip",
+    "/files/edgar/filer-information/api-overview.pdf",
+    "/files/ocoo01-excess-pers-prop-guidance.pdf"
+  ],
+  "fair_access_phrases": [],
+  "fixture_id": "F16",
+  "last_reviewed_or_updated": "April 8, 2025",
+  "note": "HTML pages include dynamic markup; their checksums are expected to change on every retrieval",
+  "source_type": "sec_web_page",
+  "title": "SEC.gov | EDGAR Application Programming Interfaces (APIs)"
+}

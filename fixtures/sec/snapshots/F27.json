@@ -1,0 +1,131 @@
+{
+  "cik_value_lengths": {
+    "len10": 137
+  },
+  "columns": {
+    "01 rep_file_num": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "02 CIK": {
+      "format_classes": {
+        "integer": 137
+      },
+      "non_empty": 137
+    },
+    "03 entity_name": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "04 street1": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "05 street2": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "06 city": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "07 state_code": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "08 zip": {
+      "format_classes": {
+        "integer": 133,
+        "text": 4
+      },
+      "non_empty": 137
+    },
+    "09 filing_date": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "10 doc_type_code": {
+      "format_classes": {
+        "integer": 2,
+        "text": 135
+      },
+      "non_empty": 137
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F27",
+  "fixture_sha256": "21396a3b453b172d302842abe8b33ed976cc6fd3520c1d33f295610c41bd60c0",
+  "header": [
+    "rep_file_num",
+    "CIK",
+    "entity_name",
+    "street1",
+    "street2",
+    "city",
+    "state_code",
+    "zip",
+    "filing_date",
+    "doc_type_code"
+  ],
+  "header_equals_verified_2026_layout": false,
+  "rows": 137,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "15": 1,
+    "497": 1,
+    "10-12B": 1,
+    "10-K": 1,
+    "10-K/A": 1,
+    "10-Q": 7,
+    "2-E": 1,
+    "40-17F2": 1,
+    "40-17G": 5,
+    "40-33": 1,
+    "40-6C/A": 1,
+    "40-APP": 1,
+    "40-APP/A": 4,
+    "424B": 1,
+    "497AD": 1,
+    "8-K": 45,
+    "8-K/A": 1,
+    "APP ORDR": 1,
+    "CERT": 1,
+    "CERTAMX": 1,
+    "CERTNAS": 1,
+    "D": 1,
+    "D/A": 2,
+    "DEF 14A": 3,
+    "DEFA14A": 2,
+    "DRS/A": 1,
+    "EFFECT": 6,
+    "N-2": 1,
+    "N-2/A": 8,
+    "N-54A": 4,
+    "N-6F": 1,
+    "N-8F NTC": 1,
+    "NO ACT": 2,
+    "POS 8C": 2,
+    "POS AMI": 1,
+    "PRE 14A": 1,
+    "RW": 9,
+    "SC 13D": 1,
+    "SC 13D/A": 2,
+    "SC TO-I": 1,
+    "SC TO-I/A": 10
+  }
+}

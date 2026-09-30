@@ -1,0 +1,40 @@
+---
+description: Entity, economic-group, and instrument resolution rules (states, separation of concepts, CIK usage)
+globs: pipeline/**/resolve/**,db/**
+alwaysApply: false
+---
+
+# Identity resolution
+
+Guardrails: G-09, G-10, G-13, G-14, G-15
+
+## States (G-13)
+
+- Use exactly: MATCHED, PROBABLE, UNRESOLVED, REJECTED. Do not add states or collapse them.
+- When the evidence does not settle a case, its state stays UNRESOLVED.
+- Fuzzy or similarity matching only generates candidates. It is never proof and never
+  produces MATCHED on its own.
+- Every resolution records state, method, confidence classification, evidence, and rule version.
+- A changed decision creates a new version with an audit record (G-10).
+
+## Separate concepts (G-14)
+
+- Legal entity, economic group, and instrument are resolved independently.
+- Never infer an economic group from name similarity alone.
+
+## Instruments (G-15)
+
+- Same borrower does not mean same loan. Different tranches, seniorities, or security types
+  are never merged. When continuity is not unambiguous, keep the records separate and UNRESOLVED.
+
+## CIK (G-09)
+
+- CIK stays on BDC and filing records and never becomes a borrower, legal-entity, or
+  economic-group identifier.
+- Never infer a registrant CIK from an accession-number prefix.
+- Phase 2 does not match amendments: every `/A` filing is UNRESOLVED with no target.
+
+```text
+BAD : borrower_id = filing.cik
+GOOD: borrower identity resolved from disclosed names plus evidence; CIK stays on the filing
+```

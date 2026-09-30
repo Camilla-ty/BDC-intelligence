@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Ensure local-only files are not tracked
+        run: npm run verify:no-reference-tracked
+
+      - name: Verify reference checksums (skipped when files are absent)
+        run: npm run verify:reference
+
+      - name: Verify agent guardrails
+        run: npm run verify:guardrails
+
+      - name: Verify SEC source schemas and fixture manifest
+        run: npm run verify:source-schemas
+
+      - name: Pipeline unit tests (network-free)
+        run: npm run test:pipeline
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  database:
+    name: Database schema tests (PostgreSQL 17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          # Ephemeral CI-only database with no published ports; tests use docker exec.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Migrations, schema snapshot, and constraint tests
+        run: npm run db:test
+        env:
+          BDC_DB_CONTAINER: ${{ job.services.postgres.id }}
+
+      - name: Pipeline integration tests (synthetic fixtures, offline)
+        run: npm run test:pipeline:integration
+        env:
+          BDC_DB_CONTAINER: ${{ job.services.postgres.id }}
+          CI: true

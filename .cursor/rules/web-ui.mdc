@@ -1,0 +1,37 @@
+---
+description: Web application display rules for Unknown values, coverage, derived labels, and no client-side financial math
+globs: apps/web/**
+alwaysApply: false
+---
+
+# Web UI
+
+Guardrails: G-02, G-04, G-05, G-06, G-07
+
+## Display (G-04, G-05)
+
+- Render Unknown as the word "Unknown", never as 0, a dash that reads as zero, or blank.
+- Show coverage and as-of context wherever figures appear; missing coverage is not zero exposure.
+- Mark derived values as derived and link reported values to their source.
+
+## Data (G-02, G-07)
+
+- The web layer only formats values it receives. It does not compute financial figures.
+- No hard-coded or mock financial numbers, borrower names, or BDC names in components,
+  pages, stories, or demos.
+
+## No scores (G-06)
+
+- See `no-scores-rankings.mdc`.
+
+## Framework
+
+- This app uses a recent Next.js with breaking changes. Read `apps/web/AGENTS.md` and the
+  bundled docs in `node_modules/next/dist/docs/` before writing framework code.
+
+```tsx
+// BAD
+<td>{value ?? 0}</td>
+// GOOD
+<td>{value === null ? "Unknown" : formatAmount(value)}</td>
+```

@@ -1,0 +1,41 @@
+# Local-only, never committed to the public repository
+/reference/
+/docs/IMPLEMENTATION_PLAN.md
+
+# Dependencies
+node_modules/
+
+# Next.js / build output
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Testing
+coverage/
+
+# Local cache of downloaded source files (raw SEC data is never committed)
+.cache/
+
+# Local pipeline store: content-addressed SEC bytes, fetch log, never committed
+.data/
+
+# Environment files (only .env.example is tracked)
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel/
+
+# Cursor: only shared project rules are tracked; personal config (MCP servers, etc.) is not
+/.cursor/*
+!/.cursor/rules/
+.cursor/mcp.json
+
+# Logs
+npm-debug.log*
+
+# OS / editor
+.DS_Store

@@ -1,0 +1,36 @@
+---
+description: How to fetch and load SEC registry and SOI sources into the local pipeline
+globs: pipeline/**
+alwaysApply: false
+---
+
+# Pipeline ingestion
+
+Guardrails: G-01, G-03, G-09, G-11, G-12, G-16, G-17
+
+Reference: `docs/SOURCE_SCHEMAS.md`, ADR 0011, ADR 0012.
+
+## Fetch vs load
+
+- `npm run registry:fetch` is the only command that talks to the SEC. It writes
+  git-ignored `.data/sec/`. CI never fetches.
+- `npm run registry:load` and `npm run soi:load` are offline rebuilds from that store.
+- Do not add npm HTTP or database clients. Load uses `docker exec psql` and `COPY`.
+
+## SOI
+
+- Member path is `soi.tsv` at the archive root, not `datasets/soi.tsv`.
+- Raw identity is `(table_load_id, line_number)`. Never unique on accession, identifier,
+  date, or `qtrs`. Never silently deduplicate.
+- Link filings by the `adsh` cell only. Never derive a CIK from an accession prefix.
+- Do not ingest NUM, TAG, TXT, PRE, CAL, or NON in this phase.
+- Do not resolve borrowers, instruments, or position continuity.
+- Q14 "Adjusted cost basis" and "Initial fair value of Investment" stay provisional
+  observed fields; they are not authoritative cost/FV.
+- `SOI_HOLDINGS` coverage is separate from `FILING_METADATA`. Empty or missing periods are
+  not zero holdings.
+
+## Fixtures
+
+- Synthetic fixtures must be obviously fake (TEST BDC, CIK `9999999901+`, dates in 2099,
+  TEST-ONLY URLs). Real SEC bytes stay in ignored local storage.

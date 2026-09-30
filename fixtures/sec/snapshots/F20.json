@@ -1,0 +1,130 @@
+{
+  "cik_value_lengths": {
+    "len10": 196
+  },
+  "columns": {
+    "01 File_No": {
+      "format_classes": {
+        "text": 196
+      },
+      "non_empty": 196
+    },
+    "02 CIK": {
+      "format_classes": {
+        "integer": 196
+      },
+      "non_empty": 196
+    },
+    "03 Registrant_Name": {
+      "format_classes": {
+        "text": 196
+      },
+      "non_empty": 196
+    },
+    "04 Address_1": {
+      "format_classes": {
+        "text": 196
+      },
+      "non_empty": 196
+    },
+    "05 Address_2": {
+      "format_classes": {
+        "empty": 96,
+        "text": 100
+      },
+      "non_empty": 100
+    },
+    "06 City": {
+      "format_classes": {
+        "text": 196
+      },
+      "non_empty": 196
+    },
+    "07 State": {
+      "format_classes": {
+        "text": 196
+      },
+      "non_empty": 196
+    },
+    "08 Zip_Code": {
+      "format_classes": {
+        "integer": 189,
+        "text": 7
+      },
+      "non_empty": 196
+    },
+    "09 Filing Date": {
+      "format_classes": {
+        "text": 196
+      },
+      "non_empty": 196
+    },
+    "10 Filing Type": {
+      "format_classes": {
+        "integer": 2,
+        "text": 194
+      },
+      "non_empty": 196
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F20",
+  "fixture_sha256": "92750ef5bd606e1ff2bd1dcb6e024804cf959bea6ef3008903a841445159ad57",
+  "header": [
+    "File_No",
+    "CIK",
+    "Registrant_Name",
+    "Address_1",
+    "Address_2",
+    "City",
+    "State",
+    "Zip_Code",
+    "Filing Date",
+    "Filing Type"
+  ],
+  "header_equals_verified_2026_layout": true,
+  "rows": 196,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": true,
+  "type_last_filing_values": {
+    "4": 1,
+    "425": 1,
+    "10-12B": 1,
+    "10-K": 1,
+    "10-Q": 30,
+    "15-12G": 2,
+    "2-E": 1,
+    "40-17F2": 1,
+    "40-17G": 11,
+    "40-APP": 15,
+    "40-APP/A": 4,
+    "424B": 1,
+    "424B2": 1,
+    "424B3": 3,
+    "8-K": 59,
+    "APP ORDR": 2,
+    "APP WD": 2,
+    "APP WDG": 1,
+    "D": 1,
+    "D/A": 3,
+    "DEF 14A": 1,
+    "DEFA14A": 6,
+    "DRS": 1,
+    "EFFECT": 2,
+    "N-2": 1,
+    "N-2/A": 7,
+    "N-54A": 5,
+    "N-6F": 2,
+    "N-6F/A": 1,
+    "NO ACT": 2,
+    "POS 8C": 1,
+    "POS AMI": 1,
+    "POS EX": 1,
+    "PRE 14A": 1,
+    "RW": 9,
+    "SC TO-I": 9,
+    "SC TO-I/A": 1,
+    "SCHEDULE 13D/A": 1,
+    "SCHEDULE 13G/A": 3
+  }
+}

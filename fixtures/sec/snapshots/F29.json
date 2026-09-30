@@ -1,0 +1,132 @@
+{
+  "cik_value_lengths": {
+    "len10": 142
+  },
+  "columns": {
+    "01 rep_file_num": {
+      "format_classes": {
+        "text": 142
+      },
+      "non_empty": 142
+    },
+    "02 CIK": {
+      "format_classes": {
+        "integer": 142
+      },
+      "non_empty": 142
+    },
+    "03 entity_name": {
+      "format_classes": {
+        "text": 142
+      },
+      "non_empty": 142
+    },
+    "04 street1": {
+      "format_classes": {
+        "text": 142
+      },
+      "non_empty": 142
+    },
+    "05 street2": {
+      "format_classes": {
+        "text": 142
+      },
+      "non_empty": 142
+    },
+    "06 city": {
+      "format_classes": {
+        "text": 142
+      },
+      "non_empty": 142
+    },
+    "07 state_code": {
+      "format_classes": {
+        "text": 142
+      },
+      "non_empty": 142
+    },
+    "08 zip": {
+      "format_classes": {
+        "integer": 137,
+        "text": 5
+      },
+      "non_empty": 142
+    },
+    "09 filing_date": {
+      "format_classes": {
+        "text": 142
+      },
+      "non_empty": 142
+    },
+    "10 doc_type_code": {
+      "format_classes": {
+        "integer": 10,
+        "text": 132
+      },
+      "non_empty": 142
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F29",
+  "fixture_sha256": "784c4db9f73ed6bf1271b9b05319af7ca479b92515a9de0aeac6a2d1c73e3801",
+  "header": [
+    "rep_file_num",
+    "CIK",
+    "entity_name",
+    "street1",
+    "street2",
+    "city",
+    "state_code",
+    "zip",
+    "filing_date",
+    "doc_type_code"
+  ],
+  "header_equals_verified_2026_layout": false,
+  "rows": 142,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "3": 2,
+    "15": 1,
+    "497": 7,
+    "1-E AD": 1,
+    "10-12B": 1,
+    "10-12G": 1,
+    "10-12G/A": 1,
+    "10-K": 1,
+    "10-K/A": 1,
+    "10-Q": 16,
+    "40-17F2": 3,
+    "40-17G": 11,
+    "40-33": 2,
+    "40-6C/A": 1,
+    "40-APP": 2,
+    "40-APP/A": 4,
+    "424B": 1,
+    "8-K": 31,
+    "APP NTC": 2,
+    "APP WD": 1,
+    "APP WD/A": 1,
+    "CERTAMX": 1,
+    "CERTNAS": 1,
+    "D": 2,
+    "D/A": 1,
+    "DEF 14A": 4,
+    "DEFA14A": 1,
+    "DRS/A": 1,
+    "EFFECT": 1,
+    "N-14 8C/A": 1,
+    "N-2": 2,
+    "N-2/A": 8,
+    "N-23C-2": 1,
+    "N-54A": 4,
+    "N-6F": 1,
+    "NO ACT": 2,
+    "POS AMI": 1,
+    "POS EX": 4,
+    "PRE 14A": 1,
+    "RW": 9,
+    "SC 13D/A": 2,
+    "SC TO-I/A": 3
+  }
+}

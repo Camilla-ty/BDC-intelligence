@@ -1,0 +1,92 @@
+{
+  "cik_value_lengths": {
+    "len0": 136
+  },
+  "columns": {
+    "01 Open Gov Business Development Co List v final": {
+      "format_classes": {
+        "text": 136
+      },
+      "non_empty": 136
+    },
+    "02 ": {
+      "format_classes": {
+        "integer": 135,
+        "text": 1
+      },
+      "non_empty": 136
+    },
+    "03 ": {
+      "format_classes": {
+        "text": 136
+      },
+      "non_empty": 136
+    },
+    "04 ": {
+      "format_classes": {
+        "text": 136
+      },
+      "non_empty": 136
+    },
+    "05 ": {
+      "format_classes": {
+        "text": 136
+      },
+      "non_empty": 136
+    },
+    "06 ": {
+      "format_classes": {
+        "text": 136
+      },
+      "non_empty": 136
+    },
+    "07 ": {
+      "format_classes": {
+        "text": 136
+      },
+      "non_empty": 136
+    },
+    "08 ": {
+      "format_classes": {
+        "integer": 131,
+        "text": 5
+      },
+      "non_empty": 136
+    },
+    "09 ": {
+      "format_classes": {
+        "text": 136
+      },
+      "non_empty": 136
+    },
+    "10 ": {
+      "format_classes": {
+        "integer": 8,
+        "text": 128
+      },
+      "non_empty": 136
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F28",
+  "fixture_sha256": "69e6fa35ef2990da4ce1c45bd8eaf09589a3cbd170a54c761c66910db15af472",
+  "header": [
+    "Open Gov Business Development Co List v final",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "header_equals_verified_2026_layout": false,
+  "rows": 136,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "(empty)": 136
+  }
+}

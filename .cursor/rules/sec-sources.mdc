@@ -1,0 +1,47 @@
+---
+description: Rules for any code or docs that access, describe, or parse SEC/EDGAR sources
+globs: pipeline/**,docs/SOURCE_SCHEMAS.md,**/sec/**
+alwaysApply: false
+---
+
+# SEC sources
+
+Guardrails: G-03, G-08, G-09, G-12
+
+## Documented sources only (G-03)
+
+- Every SEC endpoint, file, and field used in code must be listed in `docs/SOURCE_SCHEMAS.md`
+  with a link to the official SEC documentation it came from.
+- Until that document exists and covers the item, do not write code that depends on it.
+- Never guess a URL pattern, column name, JSON key, unit, or scale. Verify it, or stop and ask.
+
+```text
+BAD : row["borrower_name"]   # column name assumed
+GOOD: column name taken from docs/SOURCE_SCHEMAS.md, which cites the SEC source
+```
+
+## Source hierarchy
+
+- Structured SEC datasets are a scalable bootstrap, not the final authority.
+- The original EDGAR filing is the authoritative evidence for what was disclosed.
+- Our calculations are derived analytics and are labeled as derived.
+- LLM output is never a source (G-08). Structured ingestion is deterministic code, never an LLM.
+
+## Identifiers (G-09)
+
+- A CIK identifies the SEC filing entity (typically the BDC). Keep it on BDC and filing records.
+- Never use a CIK as a borrower, legal-entity, or economic-group key.
+
+## Provenance and access (G-12)
+
+- Store every retrieved artifact immutably with source URL, retrieval time, and checksum.
+- Send a declared User-Agent read from configuration; never hard-code contact details.
+- Respect SEC fair-access limits: shared rate limiting, backoff on errors, caching.
+- Fetch (`registry:fetch`) and load (`registry:load`) stay separate. Load is offline from
+  the fetch log and content-addressed store. CI never uses the network.
+- Additional submissions pages use only the observed URL
+  `https://data.sec.gov/submissions/{files[].name}` (SOURCE_SCHEMAS 7.1). Do not invent
+  other URL shapes. Names outside the observed pattern are not fetched.
+- Never derive a registrant CIK from an accession-number prefix.
+- Do not add an npm HTTP or database package unless Node/`psql`/`COPY` is demonstrably
+  impractical; stop and ask first.

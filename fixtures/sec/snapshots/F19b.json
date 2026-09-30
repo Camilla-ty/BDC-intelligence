@@ -1,0 +1,33 @@
+{
+  "accession_prefix_differs_from_registrant_cik": 93,
+  "accessions_also_in_parent_recent": 0,
+  "array_length_equals_parent_filing_count": true,
+  "array_lengths": {
+    "98": 16
+  },
+  "filing_dates_within_parent_entry_range": true,
+  "fixture_id": "F19b",
+  "fixture_sha256": "59d472e61b3f9ab280bb711368478eff66fd3f5345287cd20b39731408e250a9",
+  "keys_equal_parent_recent_keys": true,
+  "named_in_parent_files_array": true,
+  "parent_fixture": "F12",
+  "source_type": "submissions_page_json",
+  "top_level_keys": [
+    "accessionNumber",
+    "filingDate",
+    "reportDate",
+    "acceptanceDateTime",
+    "act",
+    "form",
+    "fileNumber",
+    "filmNumber",
+    "items",
+    "core_type",
+    "size",
+    "isXBRL",
+    "isInlineXBRL",
+    "isXBRLNumeric",
+    "primaryDocument",
+    "primaryDocDescription"
+  ]
+}

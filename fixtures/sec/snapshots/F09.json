@@ -1,0 +1,20 @@
+{
+  "element_name_counts": {
+    "address_1": 212,
+    "address_2": 114,
+    "cik": 212,
+    "city": 212,
+    "company": 212,
+    "file_number": 212,
+    "last_filling_date": 212,
+    "last_filling_type": 212,
+    "registrant_name": 212,
+    "root": 1,
+    "state": 212,
+    "zip_code": 210
+  },
+  "fixture_id": "F09",
+  "fixture_sha256": "b6669d7349a9b1ea6131113c4fd5be1ad95cc3ea780bc4f3675f706187056ec8",
+  "source_type": "bdc_report_xml",
+  "xml_declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+}

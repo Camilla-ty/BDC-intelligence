@@ -1,0 +1,54 @@
+{
+  "fixture_id": "F13a",
+  "fixture_sha256": "ea70660735c605548723416df7709f4653f16afb670cc74be1e6bbc438bbb81b",
+  "item_extensions": {
+    ".css": 1,
+    ".htm": 92,
+    ".html": 2,
+    ".js": 1,
+    ".json": 1,
+    ".txt": 1,
+    ".xml": 6,
+    ".xsd": 1,
+    ".zip": 1
+  },
+  "items": 106,
+  "source_type": "filing_index_json",
+  "structure": {
+    "keys": {
+      "directory": {
+        "keys": {
+          "item": {
+            "element": {
+              "keys": {
+                "last-modified": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "length": 1,
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent-dir": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "type": "object"
+  }
+}

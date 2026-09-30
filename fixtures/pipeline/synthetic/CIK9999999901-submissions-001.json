@@ -1,0 +1,18 @@
+{
+  "accessionNumber": ["0000000000-00-000010"],
+  "filingDate": ["2099-06-15"],
+  "reportDate": ["2099-06-15"],
+  "acceptanceDateTime": ["2099-06-15T00:00:00.000Z"],
+  "act": [""],
+  "form": ["N-54A"],
+  "fileNumber": ["814-99999"],
+  "filmNumber": [""],
+  "items": [""],
+  "core_type": [""],
+  "size": [0],
+  "isXBRL": [0],
+  "isInlineXBRL": [0],
+  "isXBRLNumeric": [0],
+  "primaryDocument": ["test-only.htm"],
+  "primaryDocDescription": ["TEST ONLY"]
+}

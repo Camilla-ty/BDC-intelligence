@@ -1,0 +1,125 @@
+{
+  "cik_value_lengths": {
+    "len10": 137
+  },
+  "columns": {
+    "01 File_No": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "02 CIK": {
+      "format_classes": {
+        "integer": 137
+      },
+      "non_empty": 137
+    },
+    "03 Registrant_Name": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "04 Address_1": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "05 Address_2": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "06 City": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "07 State": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "08 Zip_Code": {
+      "format_classes": {
+        "integer": 132,
+        "text": 5
+      },
+      "non_empty": 137
+    },
+    "09 Filing Date": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "10 Filing Type": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F24",
+  "fixture_sha256": "eb0551f085a386cd42eaaa83f7d58e817183659389ba8f598d93eef48bb3cae4",
+  "header": [
+    "File_No",
+    "CIK",
+    "Registrant_Name",
+    "Address_1",
+    "Address_2",
+    "City",
+    "State",
+    "Zip_Code",
+    "Filing Date",
+    "Filing Type"
+  ],
+  "header_equals_verified_2026_layout": true,
+  "rows": 137,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "10-12B": 1,
+    "10-12G/A": 2,
+    "10-K": 3,
+    "10-Q": 4,
+    "15-12G": 1,
+    "2-E": 1,
+    "25-NSE": 1,
+    "40-17F2": 1,
+    "40-17G": 6,
+    "40-17G/A": 1,
+    "40-APP": 3,
+    "40-APP/A": 6,
+    "424B": 1,
+    "424B2": 1,
+    "424B3": 1,
+    "8-K": 51,
+    "D": 2,
+    "D/A": 2,
+    "DEF 14A": 5,
+    "DEFA14A": 3,
+    "DRS": 1,
+    "DRS/A": 1,
+    "EFFECT": 5,
+    "FWP": 1,
+    "N-14": 1,
+    "N-2": 1,
+    "N-2 POSASR": 1,
+    "N-2/A": 8,
+    "N-54A": 4,
+    "N-6F": 2,
+    "NO ACT": 2,
+    "POS 8C": 1,
+    "POS AMI": 1,
+    "RW": 8,
+    "SC 13D": 1,
+    "SC TO-I/A": 3
+  }
+}

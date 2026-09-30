@@ -1,0 +1,126 @@
+{
+  "cik_value_lengths": {
+    "len10": 176
+  },
+  "columns": {
+    "01 File_No": {
+      "format_classes": {
+        "text": 176
+      },
+      "non_empty": 176
+    },
+    "02 CIK": {
+      "format_classes": {
+        "integer": 176
+      },
+      "non_empty": 176
+    },
+    "03 Registrant_Name": {
+      "format_classes": {
+        "text": 176
+      },
+      "non_empty": 176
+    },
+    "04 Address_1": {
+      "format_classes": {
+        "text": 176
+      },
+      "non_empty": 176
+    },
+    "05 Address_2": {
+      "format_classes": {
+        "empty": 86,
+        "text": 90
+      },
+      "non_empty": 90
+    },
+    "06 City": {
+      "format_classes": {
+        "text": 176
+      },
+      "non_empty": 176
+    },
+    "07 State": {
+      "format_classes": {
+        "text": 176
+      },
+      "non_empty": 176
+    },
+    "08 Zip_Code": {
+      "format_classes": {
+        "integer": 168,
+        "text": 8
+      },
+      "non_empty": 176
+    },
+    "09 Filing Date": {
+      "format_classes": {
+        "text": 176
+      },
+      "non_empty": 176
+    },
+    "10 Filing Type": {
+      "format_classes": {
+        "integer": 2,
+        "text": 174
+      },
+      "non_empty": 176
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F21",
+  "fixture_sha256": "d4a8e824d45c608fe4a5f2eb9edd234cdf86feae5c0a725304775be2694dc1f7",
+  "header": [
+    "File_No",
+    "CIK",
+    "Registrant_Name",
+    "Address_1",
+    "Address_2",
+    "City",
+    "State",
+    "Zip_Code",
+    "Filing Date",
+    "Filing Type"
+  ],
+  "header_equals_verified_2026_layout": true,
+  "rows": 176,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "3": 1,
+    "425": 1,
+    "10-12B": 1,
+    "10-K": 1,
+    "10-Q": 27,
+    "15-12G": 1,
+    "2-E": 1,
+    "40-17F2": 1,
+    "40-17G": 12,
+    "40-APP": 3,
+    "40-APP/A": 8,
+    "424B": 1,
+    "424B1": 1,
+    "424B2": 2,
+    "424B3": 1,
+    "8-K": 56,
+    "APP ORDR": 1,
+    "APP WDG": 1,
+    "D": 1,
+    "DEF 14A": 2,
+    "DEFA14A": 4,
+    "EFFECT": 2,
+    "N-2": 3,
+    "N-2/A": 8,
+    "N-54A": 5,
+    "N-6F": 2,
+    "NO ACT": 2,
+    "POS 8C": 2,
+    "POS AMI": 1,
+    "POS EX": 1,
+    "RW": 9,
+    "SC 13D": 1,
+    "SC 13D/A": 4,
+    "SC TO-I": 6,
+    "SC TO-I/A": 3
+  }
+}

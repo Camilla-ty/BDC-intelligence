@@ -1,0 +1,53 @@
+---
+description: How to change the PostgreSQL schema, migrations, database tests, and database scripts
+globs: db/**,scripts/db/**
+alwaysApply: false
+---
+
+# Database schema and migrations
+
+Guardrails: G-04, G-05, G-09, G-10, G-11, G-12, G-13, G-16, G-17
+
+Reference: `docs/DATA_MODEL.md`, ADR 0009 and ADR 0010.
+
+## Migrations
+
+- Forward-only and checksummed. Never edit, rename, or delete an applied file in
+  `db/migrations/`; add `NNNN_name.sql` with the next number.
+- No transaction control or psql meta-commands in migration files; the runner wraps each
+  file in one transaction with its ledger row.
+- End every migration that creates tables with `SELECT ops.apply_append_only_to_all();`.
+- Regenerate `db/schema.snapshot.sql` with `npm run db:snapshot` in the same change, and run
+  `npm run db:test`.
+- No ORM and no npm database packages without approval (G-17).
+
+## Table design
+
+- History tables are append-only (G-10). Corrections are new rows with `supersedes_id` and a
+  reason, registered with `ops.add_supersession(...)`. Never grant UPDATE, DELETE, or TRUNCATE.
+- "Current" is a view (`current_*`), never a flag column.
+- Every material row has NOT NULL `evidence_id`, `run_id`, and a rule version (G-12).
+- Keep raw text next to any normalized value (G-11). Store money and rates as `numeric`,
+  never floating point; timestamps as `timestamptz`.
+- No DEFAULT on value, state, or amount columns. Unknown and Not applicable are explicit
+  states with a reason (G-04). Coverage is asserted, never implied by missing rows (G-05).
+- No unique constraint on SOI-derived business columns; SOI has no natural key. Rows are
+  identified by location (table load and line number).
+- CIK only in `registry.registrant` (G-09). Filing registrants come only from explicit
+  metadata links; never add an accession-prefix column.
+- Resolution decisions use `ref.resolution_state` (MATCHED, PROBABLE, UNRESOLVED, REJECTED),
+  a reason, evidence, a rule version, and an actor of `SYSTEM_RULE` or `HUMAN_REVIEW` (G-13).
+- No score, rank, grade, or confidence-number columns.
+
+## Views
+
+- Views must be created after every table they read. Grant `bdc_reader` SELECT on views only.
+- `bdc_pipeline_writer` gets INSERT and SELECT on history tables and SELECT on `ref`.
+
+## Tests
+
+- Add assertions in `db/tests/NN_topic.sql` for every new constraint, trigger, or view.
+- Use only the fake fixture conventions in `tests-and-fixtures.mdc`; no transaction control.
+- CI database tests use synthetic fixtures only and must not fetch SEC bytes.
+- Real SEC data may be loaded locally into the disposable Docker database (`bdc_local`)
+  from the git-ignored `.data/sec/` store. Never commit raw files, dumps, or cache.

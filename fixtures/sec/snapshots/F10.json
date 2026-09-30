@@ -1,0 +1,31 @@
+{
+  "fields": [
+    "cik",
+    "name",
+    "ticker",
+    "exchange"
+  ],
+  "fixture_id": "F10",
+  "fixture_sha256": "affa8f025ab31bab39b60e06cf0bcc401bb87f23151412d686258fc9b99ef091",
+  "rows": 10428,
+  "source_type": "sec_reference_json",
+  "top_level_keys": [
+    "fields",
+    "data"
+  ],
+  "value_types_by_field": {
+    "cik": {
+      "number": 10428
+    },
+    "exchange": {
+      "null": 166,
+      "string": 10262
+    },
+    "name": {
+      "string": 10428
+    },
+    "ticker": {
+      "string": 10428
+    }
+  }
+}

@@ -1,0 +1,64 @@
+---
+description: What data tests, fixtures, and seeds may contain; the narrow exception for fake values in arithmetic unit tests
+globs: **/*.test.*,**/fixtures/**,**/seeds/**,db/tests/**,pipeline/test/**
+alwaysApply: false
+---
+
+# Tests and fixtures
+
+Guardrails: G-02, G-03, G-12
+
+## Fake values: narrow exception (G-02)
+
+- Obviously fake numeric values are allowed only inside unit tests of deterministic arithmetic.
+- Use clearly fake names such as "TEST BORROWER A" or "TEST BDC 1".
+- Never use real borrower names, real BDC data, or realistic-looking financial data in
+  tests, fixtures, seeds, UI, demos, or shipped application code.
+
+```ts
+// GOOD (unit test of arithmetic only)
+expect(ratio({ name: "TEST BORROWER A", fairValue: 90, principal: 100 })).toBe(0.9);
+```
+
+## Database tests: second narrow exception (G-02)
+
+- Obviously fake structural values are also allowed inside `db/tests/*.sql`, which exercise
+  constraints and triggers. Each file runs in one transaction that the runner rolls back,
+  and the runner fails if any table's row count changes.
+- Fake values must be unmistakable: names like "TEST BDC 1", CIKs `9999999901` and up,
+  accession numbers `0000000000-00-0000NN`, dates in 2099, URLs under
+  `https://www.sec.gov/files/TEST-ONLY/`, and small round amounts.
+- Test files never contain transaction control (`BEGIN;`, `COMMIT;`, `ROLLBACK;`); the
+  runner owns the transaction.
+- Nothing from `db/tests/` may become a seed, a migration, a committed dump, or data in any
+  non-ephemeral database.
+
+## Pipeline synthetic fixtures (G-02)
+
+- Obviously fake registry and filing-history payloads are also allowed in
+  `fixtures/pipeline/**` and `pipeline/test/**` so parsers and the offline loader can run
+  without the network.
+- The same markers apply: "TEST BDC", CIKs `9999999901` and up, accessions
+  `0000000000-00-0000NN`, dates in 2099, and `TEST-ONLY` URLs. A guard test refuses
+  committed synthetic files that lack those markers or that contain realistic BDC names.
+- Pipeline tests never take a registrant CIK from an accession-number prefix.
+
+## Real SEC source files (G-02, G-03, G-12)
+
+- Real SEC files are downloaded only into the git-ignored `.cache/sec/` (source-schema
+  fixtures) or `.data/sec/` (registry fetch store) by `npm run sec:fetch` /
+  `npm run registry:fetch`. They are never committed, copied, or excerpted into the
+  repository.
+- The repository holds only `fixtures/sec/manifest.json` (source URL, retrieval time,
+  HTTP metadata, SHA-256) and structure-only snapshots in `fixtures/sec/snapshots/`:
+  headers, counts, and format classes, with no registrant or borrower names and no
+  financial values.
+- Tests that need real SEC content read it from `.cache/sec/` or `.data/sec/` and skip
+  when it is absent. CI uses synthetic fixtures only and is network-free.
+- Fixtures and snapshots may only describe fields documented in `docs/SOURCE_SCHEMAS.md`.
+- Never record the `SEC_USER_AGENT` value anywhere in the repository.
+
+## Seeds
+
+- Seeds may contain reference enumerations only (for example, state names). Never
+  financial or borrower data.

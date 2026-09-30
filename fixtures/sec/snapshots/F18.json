@@ -1,0 +1,15 @@
+{
+  "data_file_links": [
+    "/about/privacy/sorn/sec-26_sec_mailing,_contact_and_other_lists.pdf",
+    "/files/ocoo01-excess-pers-prop-guidance.pdf"
+  ],
+  "fair_access_phrases": [
+    "Current guidelines limit users to a total of no more than 10 requests per second, regardless of the number of machines used to submit requests.",
+    "If a user or application submits more than 10 requests per second, further requests from the IP address(es) may be limited for a brief period."
+  ],
+  "fixture_id": "F18",
+  "last_reviewed_or_updated": "Nov. 29, 2023",
+  "note": "HTML pages include dynamic markup; their checksums are expected to change on every retrieval",
+  "source_type": "sec_web_page",
+  "title": "SEC.gov | Privacy Information"
+}

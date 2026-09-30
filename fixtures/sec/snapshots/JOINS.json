@@ -1,0 +1,9 @@
+{
+  "bdc_report_ciks": 212,
+  "bdc_report_ciks_found_in_ticker_file": 49,
+  "description": "Identifier overlap between cached sources (counts only)",
+  "distinct_registrant_ciks_across_cached_soi": 177,
+  "fixture_id": "JOINS",
+  "soi_ciks_found_in_bdc_report": 152,
+  "soi_ciks_found_in_ticker_file": 53
+}

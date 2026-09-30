@@ -1,0 +1,82 @@
+import Link from "next/link";
+import { StateText } from "@/components/StateText";
+import {
+  ABSENCE_NOTE,
+  CELL_NOTE,
+  IDENTITY_NOTE,
+  LINE_NOTE,
+  Q14_NOTE,
+  SOURCE_NOTE,
+  type DateRegistrant,
+} from "@/lib/market";
+
+export function MarketDate({
+  reportedDate,
+  rows,
+  emptyMessage,
+}: {
+  reportedDate: string;
+  rows: DateRegistrant[];
+  emptyMessage: string | null;
+}) {
+  return (
+    <section>
+      <p className="text-sm"><Link href="/market" className="text-accent">Coverage</Link></p>
+      <h1 className="mt-2 text-lg font-semibold text-navy">Reported date {reportedDate}</h1>
+      <div className="mt-3 max-w-3xl space-y-1 text-sm text-muted">
+        <p>{LINE_NOTE}</p>
+        <p>{CELL_NOTE}</p>
+        <p>{Q14_NOTE}</p>
+        <p>{SOURCE_NOTE}</p>
+        <p>{ABSENCE_NOTE}</p>
+        <p>{IDENTITY_NOTE}</p>
+      </div>
+      {emptyMessage ? <p className="mt-6 text-sm"><StateText text={emptyMessage} /></p> : null}
+      {!emptyMessage && rows.length > 0 ? (
+        <div className="mt-6 overflow-x-auto">
+          <table className="record-table w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs uppercase tracking-wider text-muted">
+                <th scope="col" className="py-2 pr-4 font-semibold">CIK</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Registrant name</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Disclosed lines</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Reported maturity cell</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Unknown maturity</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Reported principal cell</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Unknown principal</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Adjusted cost basis cell</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">No adjusted cost basis cell</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">Initial fair value cell</th>
+                <th scope="col" className="py-2 pr-4 font-semibold">No initial fair value cell</th>
+                <th scope="col" className="py-2 font-semibold">SEC sources</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.cik} className="border-b border-line">
+                  <td data-label="CIK" className="py-3 pr-4">
+                    <Link href={`/portfolios/${row.cik}`} className="font-semibold text-accent">{row.cik}</Link>
+                    <div><Link href={`/maturity/${row.cik}`} className="text-accent">Maturity</Link></div>
+                  </td>
+                  <td data-label="Registrant name" className="py-3 pr-4"><StateText text={row.name} /></td>
+                  <td data-label="Disclosed lines" className="py-3 pr-4">{row.disclosedLines}</td>
+                  <td data-label="Reported maturity cell" className="py-3 pr-4">{row.maturityCell}</td>
+                  <td data-label="Unknown maturity" className="py-3 pr-4"><StateText text={row.maturityUnknown} /></td>
+                  <td data-label="Reported principal cell" className="py-3 pr-4">{row.principalCell}</td>
+                  <td data-label="Unknown principal" className="py-3 pr-4"><StateText text={row.principalUnknown} /></td>
+                  <td data-label="Adjusted cost basis cell" className="py-3 pr-4">{row.basisCell}</td>
+                  <td data-label="No adjusted cost basis cell" className="py-3 pr-4">{row.basisUnknown}</td>
+                  <td data-label="Initial fair value cell" className="py-3 pr-4">{row.initialCell}</td>
+                  <td data-label="No initial fair value cell" className="py-3 pr-4">{row.initialUnknown}</td>
+                  <td data-label="SEC sources" className="py-3">
+                    <Link href={row.sourceHref} className="text-accent">SEC sources</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
+  );
+}

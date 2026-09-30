@@ -1,0 +1,233 @@
+{
+  "fixture_id": "F12",
+  "fixture_sha256": "d6e39a9b5390beb5c604dfebdaf03cbc53e186889b8cabef70455701fd0effd4",
+  "of_which_found_in_recent_accessionNumber": 1,
+  "older_filing_file_entry_keys": [
+    "name",
+    "filingCount",
+    "filingFrom",
+    "filingTo"
+  ],
+  "older_filing_files": 1,
+  "recent_array_lengths": {
+    "1000": 16
+  },
+  "soi_accessions_for_this_cik_in_cached_datasets": 1,
+  "source_type": "submissions_json",
+  "structure": {
+    "keys": {
+      "addresses": {
+        "keys": {
+          "business": {
+            "keys": {
+              "city": {
+                "type": "string"
+              },
+              "country": {
+                "type": "null"
+              },
+              "countryCode": {
+                "type": "null"
+              },
+              "foreignStateTerritory": {
+                "type": "null"
+              },
+              "isForeignLocation": {
+                "type": "null"
+              },
+              "stateOrCountry": {
+                "type": "string"
+              },
+              "stateOrCountryDescription": {
+                "type": "string"
+              },
+              "street1": {
+                "type": "string"
+              },
+              "street2": {
+                "type": "string"
+              },
+              "zipCode": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "mailing": {
+            "keys": {
+              "city": {
+                "type": "string"
+              },
+              "country": {
+                "type": "null"
+              },
+              "countryCode": {
+                "type": "null"
+              },
+              "foreignStateTerritory": {
+                "type": "null"
+              },
+              "isForeignLocation": {
+                "type": "number"
+              },
+              "stateOrCountry": {
+                "type": "string"
+              },
+              "stateOrCountryDescription": {
+                "type": "string"
+              },
+              "street1": {
+                "type": "string"
+              },
+              "street2": {
+                "type": "string"
+              },
+              "zipCode": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "category": {
+        "type": "string"
+      },
+      "cik": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "ein": {
+        "type": "string"
+      },
+      "entityType": {
+        "type": "string"
+      },
+      "exchanges": {
+        "element": {
+          "type": "string"
+        },
+        "length": 6,
+        "type": "array"
+      },
+      "filings": {
+        "keys": {
+          "files": {
+            "element": {
+              "keys": {
+                "filingCount": {
+                  "type": "number"
+                },
+                "filingFrom": {
+                  "type": "string"
+                },
+                "filingTo": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "length": 1,
+            "type": "array"
+          },
+          "recent": {
+            "column_arrays": [
+              "accessionNumber",
+              "filingDate",
+              "reportDate",
+              "acceptanceDateTime",
+              "act",
+              "form",
+              "fileNumber",
+              "filmNumber",
+              "items",
+              "core_type",
+              "size",
+              "isXBRL",
+              "isInlineXBRL",
+              "isXBRLNumeric",
+              "primaryDocument",
+              "primaryDocDescription"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "fiscalYearEnd": {
+        "type": "string"
+      },
+      "flags": {
+        "type": "string"
+      },
+      "formerNames": {
+        "element": {
+          "keys": {
+            "from": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "length": 1,
+        "type": "array"
+      },
+      "insiderTransactionForIssuerExists": {
+        "type": "number"
+      },
+      "insiderTransactionForOwnerExists": {
+        "type": "number"
+      },
+      "investorWebsite": {
+        "type": "string"
+      },
+      "lei": {
+        "type": "null"
+      },
+      "name": {
+        "type": "string"
+      },
+      "ownerOrg": {
+        "type": "string"
+      },
+      "phone": {
+        "type": "string"
+      },
+      "sic": {
+        "type": "string"
+      },
+      "sicDescription": {
+        "type": "string"
+      },
+      "stateOfIncorporation": {
+        "type": "string"
+      },
+      "stateOfIncorporationDescription": {
+        "type": "string"
+      },
+      "tickers": {
+        "element": {
+          "type": "string"
+        },
+        "length": 6,
+        "type": "array"
+      },
+      "website": {
+        "type": "string"
+      }
+    },
+    "type": "object"
+  }
+}

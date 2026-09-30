@@ -1,0 +1,31 @@
+---
+description: Financial arithmetic must be deterministic code; LLM output is never authoritative
+globs: pipeline/**,apps/web/src/**
+alwaysApply: false
+---
+
+# Deterministic computation and the LLM boundary
+
+Guardrails: G-07, G-08
+
+## Arithmetic in code (G-07)
+
+- Ratios, aggregations, spreads, and period-over-period changes are computed by pure,
+  versioned, unit-tested functions.
+- The same inputs and rule versions must always reproduce the same outputs.
+- Derived values are labeled as derived and link to their inputs and definition version.
+- Use exact decimal handling for monetary values; never rely on floating-point rounding
+  for reported amounts.
+- A derived value whose inputs are Unknown is Unknown, not 0.
+
+## LLM boundary (G-08)
+
+- Never ask an LLM to compute, total, or restate financial figures.
+- Never treat LLM output as a financial fact, identity decision, or source.
+- LLM assistance, if approved in a later phase, produces candidates only, stored with their
+  evidence and a review status.
+
+```text
+BAD : ratio = llm("what is fair value divided by principal?")
+GOOD: ratio = computeRatio(fairValue, principal)  // tested, versioned
+```

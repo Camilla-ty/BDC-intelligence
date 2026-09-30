@@ -1,0 +1,22 @@
+{
+  "data_file_links": [
+    "/Archives/edgar/vprr/1403/index.json",
+    "/Archives/edgar/vprr/1403/index.xml",
+    "/data/company_tickers_mf.json",
+    "/files/company_tickers.json",
+    "/files/company_tickers_exchange.json",
+    "/files/ocoo01-excess-pers-prop-guidance.pdf",
+    "/info/edgar/forms/edgform.pdf",
+    "/info/edgar/specifications/pds_dissemination_spec.pdf"
+  ],
+  "fair_access_phrases": [
+    "Current max request rate: 10 requests/second.",
+    "Fair access Current max request rate: 10 requests/second.",
+    "declare your user agent in request headers: Sample Declared Bot Request Headers: User-Agent: Sample Company Name AdminContact@&lt;sample company domain&gt;."
+  ],
+  "fixture_id": "F14",
+  "last_reviewed_or_updated": "June 26, 2024",
+  "note": "HTML pages include dynamic markup; their checksums are expected to change on every retrieval",
+  "source_type": "sec_web_page",
+  "title": "SEC.gov | Accessing EDGAR Data"
+}

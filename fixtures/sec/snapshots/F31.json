@@ -1,0 +1,130 @@
+{
+  "cik_value_lengths": {
+    "len5": 2,
+    "len6": 16,
+    "len7": 122
+  },
+  "columns": {
+    "01 Reporting File Number": {
+      "format_classes": {
+        "text": 140
+      },
+      "non_empty": 140
+    },
+    "02 CIK Number": {
+      "format_classes": {
+        "integer": 140
+      },
+      "non_empty": 140
+    },
+    "03 Name of Registered Investment Company": {
+      "format_classes": {
+        "text": 140
+      },
+      "non_empty": 140
+    },
+    "04 Address_1": {
+      "format_classes": {
+        "text": 140
+      },
+      "non_empty": 140
+    },
+    "05 Address_2": {
+      "format_classes": {
+        "empty": 54,
+        "text": 86
+      },
+      "non_empty": 86
+    },
+    "06 City": {
+      "format_classes": {
+        "text": 140
+      },
+      "non_empty": 140
+    },
+    "07 State": {
+      "format_classes": {
+        "empty": 16,
+        "text": 124
+      },
+      "non_empty": 124
+    },
+    "08 Zip Code": {
+      "format_classes": {
+        "integer": 133,
+        "text": 7
+      },
+      "non_empty": 140
+    },
+    "09 Date of Last Filing": {
+      "format_classes": {
+        "date_mm/dd/yyyy": 15,
+        "text": 125
+      },
+      "non_empty": 140
+    },
+    "10 Type of Last Filing": {
+      "format_classes": {
+        "integer": 4,
+        "text": 136
+      },
+      "non_empty": 140
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F31",
+  "fixture_sha256": "7d15503ba00c1584bdba07f228d726da8036c511a88f64383e55642bb30db0fc",
+  "header": [
+    "Reporting File Number",
+    "CIK Number",
+    "Name of Registered Investment Company",
+    "Address_1",
+    "Address_2",
+    "City",
+    "State",
+    "Zip Code",
+    "Date of Last Filing",
+    "Type of Last Filing"
+  ],
+  "header_equals_verified_2026_layout": false,
+  "rows": 140,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "3": 1,
+    "15": 1,
+    "497": 2,
+    "1-E": 1,
+    "1-E/A": 1,
+    "10-K": 19,
+    "10-Q": 10,
+    "40-17F2": 4,
+    "40-17G": 7,
+    "40-APP": 1,
+    "40-APP/A": 5,
+    "424B": 1,
+    "497AD": 2,
+    "8-K": 20,
+    "APP WD": 1,
+    "APP WD/A": 1,
+    "CERTNAS": 1,
+    "DEF 14A": 2,
+    "DEF 14C": 1,
+    "DRS/A": 1,
+    "EFFECT": 2,
+    "N-2": 4,
+    "N-2/A": 13,
+    "N-54A": 5,
+    "N-6F": 4,
+    "N-6F/A": 2,
+    "NO ACT": 2,
+    "POS 8C": 4,
+    "POS AMI": 1,
+    "POS EX": 2,
+    "PRE 14A": 2,
+    "RW": 13,
+    "SC 13G": 1,
+    "SC 13G/A": 2,
+    "SC TO-I/A": 1
+  }
+}

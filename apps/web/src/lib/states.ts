@@ -1,0 +1,10 @@
+export const UNOBSERVED_DATE = "Unobserved. This reported date was not observed.";
+export const UNOBSERVED_RELEASE = "Unobserved. This release was not observed.";
+export const UNOBSERVED_YEAR = "Unobserved. This maturity year was not observed on this reported date.";
+export const UNOBSERVED_REGISTRANT = "Unobserved. This registrant is not in the stored listing.";
+export const UNOBSERVED_BORROWER = "Unobserved. This borrower is not in the stored entities.";
+export const UNAVAILABLE_RELEASE = "Unavailable. This release is unavailable. It is not zero coverage.";
+export const STATE_LEGEND_UNKNOWN = "Unknown";
+export const STATE_LEGEND_UNAVAILABLE = "Unavailable";
+export const STATE_LEGEND_UNOBSERVED = "Unobserved";
+export const STATE_LEGEND_BLOCKED = "Blocked";

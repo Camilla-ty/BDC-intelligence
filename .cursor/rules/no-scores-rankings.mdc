@@ -1,0 +1,28 @@
+---
+description: No composite scores, grades, or opaque rankings in data outputs or UI
+globs: apps/web/**,pipeline/**/derive/**
+alwaysApply: false
+---
+
+# No scores or rankings
+
+Guardrails: G-06
+
+## Not allowed
+
+- Composite or weighted scores, risk grades, health indices, or "top N" lists that combine
+  several attributes into one opaque number.
+- Labels that imply a judgment not backed by an explicit, disclosed rule.
+
+## Allowed
+
+- Sorting or filtering by one explicit, visible attribute (for example, maturity date).
+- Showing the individual observed facts or signals, each with its evidence.
+- Internal work-queue ordering that customers never see.
+- A match-confidence classification that names which deterministic rule fired. It
+  describes a resolution method and is not a credit assessment.
+
+```text
+BAD : riskScore = 0.4 * a + 0.6 * b
+GOOD: show a and b separately, each linked to its source
+```

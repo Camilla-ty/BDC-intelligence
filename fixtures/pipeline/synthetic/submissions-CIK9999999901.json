@@ -1,0 +1,34 @@
+{
+  "cik": "9999999901",
+  "name": "TEST BDC 1",
+  "formerNames": [
+    { "name": "TEST BDC OLD", "from": "2099-01-01T00:00:00.000Z", "to": "2099-02-01T00:00:00.000Z" }
+  ],
+  "tickers": ["TESTX"],
+  "exchanges": ["TEST"],
+  "fiscalYearEnd": "1231",
+  "stateOfIncorporation": "DE",
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0000000000-00-000001"],
+      "filingDate": ["2099-12-31"],
+      "reportDate": ["2099-12-31"],
+      "acceptanceDateTime": ["2099-12-31T00:00:00.000Z"],
+      "act": [""],
+      "form": ["10-K"],
+      "fileNumber": ["814-99999"],
+      "filmNumber": [""],
+      "items": [""],
+      "core_type": [""],
+      "size": [0],
+      "isXBRL": [1],
+      "isInlineXBRL": [1],
+      "isXBRLNumeric": [0],
+      "primaryDocument": ["test-only.htm"],
+      "primaryDocDescription": ["TEST ONLY"]
+    },
+    "files": [
+      { "name": "CIK9999999901-submissions-001.json", "filingCount": 1, "filingFrom": "2099-01-01", "filingTo": "2099-06-30" }
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+---
+description: Append-only history, raw value preservation, provenance, and Unknown/missing handling for data code and schemas
+globs: pipeline/**,db/**
+alwaysApply: false
+---
+
+# Data integrity and provenance
+
+Guardrails: G-01, G-04, G-05, G-10, G-11, G-12
+
+## Append-only history (G-10)
+
+- Observations and resolution decisions are never updated or deleted in place.
+- A correction creates a new version that references the one it supersedes, with reason,
+  actor, and timestamp. The previous version stays queryable.
+- Each dataset row is a historical observation, not a duplicate to be collapsed.
+
+## Raw and normalized side by side (G-11)
+
+- Keep the value exactly as disclosed, plus its unit/scale, plus the normalized value and
+  the normalization rule version. Normalization never discards the raw value.
+
+## Provenance (G-12)
+
+- Every material fact links to its source document, filing identifier, source location,
+  retrieval/extraction time, and parser or rule version.
+
+## Unknown and missing (G-01, G-04, G-05)
+
+- Store Unknown explicitly (nullable value plus a status), never as 0, an empty string, or a guess.
+- A missing period, filing, BDC, or field is recorded as missing coverage, never as zero exposure.
+- Coverage is asserted per aspect (`FILING_METADATA`, `FILING_HISTORY`); an unasserted
+  scope is Unknown, not zero.
+- Do not derive a field from unrelated fields when it is not explicitly disclosed.
+- Facts absent from a newer retrieval of the same source are counted and audited, never
+  silently deleted.
+- Cross-source disagreements stay as separate values plus a validation failure; do not
+  pick a winner.
+
+```text
+BAD : fair_value = row.value or 0
+GOOD: fair_value = None, value_status = "unknown"  # and the gap stays visible
+```

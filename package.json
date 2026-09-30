@@ -1,0 +1,44 @@
+{
+  "name": "bdc-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "lint": "npm run lint -w web",
+    "typecheck": "npm run typecheck -w web",
+    "test": "npm run test -w web",
+    "verify:reference": "node scripts/verify-reference.mjs",
+    "verify:no-reference-tracked": "node scripts/verify-no-reference-tracked.mjs",
+    "verify:guardrails": "node scripts/verify-guardrails.mjs",
+    "verify:source-schemas": "node scripts/verify-source-schemas.mjs",
+    "verify:source-fixtures": "node --env-file-if-exists=.env.local scripts/verify-source-fixtures.mjs",
+    "sec:fetch": "node --env-file-if-exists=.env.local scripts/sec/fetch-source-fixtures.mjs",
+    "sec:inspect": "node scripts/sec/inspect-source-fixtures.mjs",
+    "registry:fetch": "node --env-file-if-exists=.env.local pipeline/fetch.mjs",
+    "registry:load": "node pipeline/load/run.mjs",
+    "soi:load": "node pipeline/load/soi-run.mjs",
+    "soi:reconcile": "node pipeline/soi-reconcile.mjs",
+    "test:pipeline": "node --test pipeline/test/http.test.mjs pipeline/test/store.test.mjs pipeline/test/parse.test.mjs pipeline/test/guardrails.test.mjs pipeline/test/fetch.test.mjs pipeline/test/borrower-name.test.mjs pipeline/test/instrument-type.test.mjs pipeline/test/filing-text.test.mjs pipeline/test/p5-fetch.test.mjs pipeline/test/entity-name-match.test.mjs pipeline/test/instrument-identity.test.mjs pipeline/test/golden-observation-count.test.mjs pipeline/test/golden-gate.test.mjs pipeline/test/observation-events.test.mjs pipeline/test/p11-readiness.test.mjs",
+    "test:pipeline:integration": "node --test --test-concurrency=1 --test-timeout=180000 pipeline/test/load.integration.test.mjs pipeline/test/soi-load.integration.test.mjs pipeline/test/p4-min.integration.test.mjs pipeline/test/p5-min.integration.test.mjs pipeline/test/p6-min.integration.test.mjs pipeline/test/p7-min.integration.test.mjs",
+    "p4:golden": "node pipeline/p4-golden.mjs",
+    "p5:golden": "node --env-file-if-exists=.env.local pipeline/p5-golden.mjs",
+    "p6:golden": "node pipeline/p6-golden.mjs",
+    "p7:golden": "node pipeline/p7-golden.mjs",
+    "golden:gate": "node pipeline/golden-gate.mjs",
+    "p9:golden": "node pipeline/p9-golden.mjs",
+    "p11:readiness": "node pipeline/p11-readiness.mjs",
+    "db:up": "node scripts/db/container.mjs up",
+    "db:down": "node scripts/db/container.mjs down",
+    "db:migrate": "node scripts/db/migrate.mjs",
+    "db:snapshot": "node scripts/db/snapshot.mjs",
+    "db:test": "node scripts/db/test.mjs",
+    "verify": "npm run verify:no-reference-tracked && npm run verify:reference && npm run verify:guardrails && npm run verify:source-schemas && npm run db:test && npm run test:pipeline && npm run test:pipeline:integration && npm run lint && npm run typecheck && npm run test && npm run build"
+  }
+}

@@ -1,0 +1,3294 @@
+{
+  "archive_members": [
+    {
+      "bytes": 341737,
+      "path": "readme.htm",
+      "sha256": "de79ca26b93c752fada5b782816a62c41ca95a340b22dbd8dfc1d3f3985a455b"
+    },
+    {
+      "bytes": 39133,
+      "path": "bdc_metadata.json",
+      "sha256": "825ef7f9b9d516a791185383c6098107dadba509d3aeedaba44035aab2526f6f"
+    }
+  ],
+  "filed_window_assumed_from_file_name": [
+    "2026-08-01",
+    "2026-08-31"
+  ],
+  "fixture_id": "F07",
+  "fixture_sha256": "0529ab8920f4d5c02d4f9b1ddc933d914065d4a3acf8bed39a49f44b040f657d",
+  "metadata_dialect": {
+    "delimiter": "\t",
+    "header": true,
+    "headerRowCount": 1
+  },
+  "registrant_ciks_in_soi": 163,
+  "soi_vs_num_value_agreement": {
+    "by_soi_column": {
+      "Adjusted cost basis": {
+        "equals_num_tag": {
+          "InvestmentBasisSpreadVariableRate": 10,
+          "InvestmentInterestRate": 743,
+          "InvestmentOwnedAtCost": 106319,
+          "InvestmentOwnedAtFairValue": 15528,
+          "InvestmentOwnedBalancePrincipalAmount": 12061,
+          "InvestmentOwnedPercentOfNetAssets": 2720
+        },
+        "no_num_fact_for_key": 346,
+        "soi_values_with_identifier": 106665
+      },
+      "Initial fair value of Investment": {
+        "equals_num_tag": {
+          "InvestmentBasisSpreadVariableRate": 15,
+          "InvestmentInterestRate": 543,
+          "InvestmentOwnedAtCost": 15528,
+          "InvestmentOwnedAtFairValue": 115342,
+          "InvestmentOwnedBalancePrincipalAmount": 24117,
+          "InvestmentOwnedPercentOfNetAssets": 4844
+        },
+        "no_num_fact_for_key": 355,
+        "soi_values_with_identifier": 115697
+      },
+      "Investment Interest Rate": {
+        "equals_num_tag": {
+          "InvestmentBasisSpreadVariableRate": 271,
+          "InvestmentInterestRate": 68906,
+          "InvestmentOwnedAtCost": 743,
+          "InvestmentOwnedAtFairValue": 542,
+          "InvestmentOwnedBalancePrincipalAmount": 481,
+          "InvestmentOwnedPercentOfNetAssets": 200
+        },
+        "no_num_fact_for_key": 239,
+        "soi_values_with_identifier": 69145
+      },
+      "Investment Owned, Balance, Principal Amount": {
+        "equals_num_tag": {
+          "InvestmentBasisSpreadVariableRate": 25,
+          "InvestmentInterestRate": 481,
+          "InvestmentOwnedAtCost": 12061,
+          "InvestmentOwnedAtFairValue": 23991,
+          "InvestmentOwnedBalancePrincipalAmount": 91914,
+          "InvestmentOwnedPercentOfNetAssets": 5552
+        },
+        "no_num_fact_for_key": 337,
+        "soi_values_with_identifier": 92251
+      },
+      "Investment Owned, Cost": {
+        "equals_num_tag": {},
+        "no_num_fact_for_key": 2,
+        "soi_values_with_identifier": 2
+      },
+      "Investment Owned, Net Assets, Percentage": {
+        "equals_num_tag": {
+          "InvestmentBasisSpreadVariableRate": 59,
+          "InvestmentInterestRate": 200,
+          "InvestmentOwnedAtCost": 2716,
+          "InvestmentOwnedAtFairValue": 4786,
+          "InvestmentOwnedBalancePrincipalAmount": 5537,
+          "InvestmentOwnedPercentOfNetAssets": 58034
+        },
+        "no_num_fact_for_key": 123,
+        "soi_values_with_identifier": 58157
+      },
+      "Investment, Basis Spread, Variable Rate": {
+        "equals_num_tag": {
+          "InvestmentBasisSpreadVariableRate": 81258,
+          "InvestmentInterestRate": 271,
+          "InvestmentOwnedAtCost": 10,
+          "InvestmentOwnedAtFairValue": 15,
+          "InvestmentOwnedBalancePrincipalAmount": 25,
+          "InvestmentOwnedPercentOfNetAssets": 60
+        },
+        "no_num_fact_for_key": 242,
+        "soi_values_with_identifier": 81500
+      }
+    },
+    "method": "Counts of SOI values (rows with a non-empty identifier) equal to a NUM value of each tag with the same adsh, ddate, and InvestmentIdentifierAxis typed member. Counts only; no values recorded."
+  },
+  "source_period": "2026-08",
+  "source_type": "bdc_dataset_zip",
+  "tables": {
+    "cal.tsv": {
+      "bytes": 2107564,
+      "documented_primary_key": [
+        "adsh",
+        "grp",
+        "arc"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "header": [
+        "adsh",
+        "grp",
+        "arc",
+        "negative",
+        "ptag",
+        "pversion",
+        "ctag",
+        "cversion"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 8,
+        "documented_names_with_whitespace": [
+          "pversion "
+        ],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 8,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/cal.tsv",
+      "present": true,
+      "rows": 16432,
+      "sha256": "0678e7ef64ed9e8f000d372d9961ab59f3f814b358ea5cd7b5c983fbfba486ea"
+    },
+    "non.tsv": {
+      "bytes": 1150450,
+      "distinct_adsh": 194,
+      "documented_primary_key": null,
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "forms": {
+        "10-Q": 24,
+        "8-K": 4306,
+        "DEF 14A": 10
+      },
+      "header": [
+        "adsh",
+        "cik",
+        "name",
+        "form",
+        "filed",
+        "period",
+        "ddate",
+        "tag",
+        "version",
+        "label",
+        "segments",
+        "value",
+        "indexurl"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 13,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [
+          "segments"
+        ],
+        "missing_from_file": [
+          "segment"
+        ],
+        "observed_columns": 13,
+        "same_order_for_documented": false
+      },
+      "member_path": "datasets/non.tsv",
+      "present": true,
+      "rows": 4340,
+      "sha256": "9b0521b0c72e5ab1d18840de3a2139aba0841cf4a662988903cad6b156922298"
+    },
+    "num.tsv": {
+      "bytes": 1168589023,
+      "counters": {
+        "field_count_more_than_header": 23,
+        "value_format=decimal": 947509,
+        "value_format=empty": 2541,
+        "value_format=integer": 19
+      },
+      "documented_primary_key": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "uom",
+        "segments"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 23,
+      "footnotes_longer_than_512_bytes": 432981,
+      "header": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "uom",
+        "segments",
+        "dimn",
+        "value",
+        "footnote",
+        "footlen"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 11,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 11,
+        "same_order_for_documented": true
+      },
+      "magnitude_bands_for_soi_preset_labels_on_identifier_axis_rows": {
+        "Investment Interest Rate": {
+          "abs_1_to_lt_100": 5,
+          "abs_lt_1": 70292,
+          "zero": 1602
+        },
+        "Investment Owned, Balance, Principal Amount": {
+          "abs_100_to_lt_1e6": 22479,
+          "abs_1_to_lt_100": 35,
+          "abs_ge_1e6": 63473,
+          "zero": 8861
+        },
+        "Investment Owned, Cost": {
+          "abs_100_to_lt_1e6": 41503,
+          "abs_1_to_lt_100": 47,
+          "abs_ge_1e6": 62793,
+          "zero": 5065
+        },
+        "Investment Owned, Fair Value": {
+          "abs_100_to_lt_1e6": 41786,
+          "abs_1_to_lt_100": 147,
+          "abs_ge_1e6": 65764,
+          "zero": 11306
+        },
+        "Investment Owned, Net Assets, Percentage": {
+          "abs_1_to_lt_100": 57,
+          "abs_lt_1": 42864,
+          "zero": 18257
+        },
+        "Investment, Basis Spread, Variable Rate": {
+          "abs_1_to_lt_100": 2,
+          "abs_lt_1": 83303,
+          "zero": 120
+        }
+      },
+      "member_path": "datasets/num.tsv",
+      "present": true,
+      "qtrs": {
+        "0": 819855,
+        "1": 35906,
+        "2": 71352,
+        "3": 7292,
+        "4": 15438,
+        "5": 59,
+        "6": 16,
+        "7": 9,
+        "8": 9,
+        "9": 4,
+        "10": 5,
+        "11": 4,
+        "12": 10,
+        "13": 2,
+        "14": 11,
+        "15": 2,
+        "16": 10,
+        "17": 3,
+        "18": 13,
+        "19": 4,
+        "20": 2,
+        "21": 6,
+        "22": 3,
+        "23": 1,
+        "25": 2,
+        "27": 1,
+        "29": 4,
+        "30": 8,
+        "41": 1,
+        "43": 1,
+        "44": 7,
+        "49": 3,
+        "56": 6,
+        "57": 5,
+        "58": 7,
+        "60": 4,
+        "61": 1,
+        "77": 1,
+        "90": 2
+      },
+      "rows": 950069,
+      "sha256": "7d300fc1db7a9ba7fd95f01e3a4b6d714cc824a1026f998cf349dfdba970f071",
+      "units_for_soi_preset_labels_on_identifier_axis_rows": {
+        "Investment Interest Rate": {
+          "pure": 72030
+        },
+        "Investment Owned, Balance, Principal Amount": {
+          "AUD": 143,
+          "CAD": 313,
+          "CHF": 23,
+          "CNY": 2,
+          "DKK": 6,
+          "EGP": 1,
+          "EUR": 1216,
+          "GBP": 764,
+          "GIP": 1,
+          "JPY": 16,
+          "KRW": 2,
+          "NOK": 26,
+          "NZD": 19,
+          "SEK": 50,
+          "SGD": 2,
+          "USD": 92285
+        },
+        "Investment Owned, Cost": {
+          "AUD": 13,
+          "CAD": 84,
+          "CHF": 4,
+          "EUR": 101,
+          "GBP": 46,
+          "JPY": 1,
+          "USD": 109189
+        },
+        "Investment Owned, Fair Value": {
+          "AUD": 15,
+          "CAD": 91,
+          "CHF": 2,
+          "EUR": 189,
+          "GBP": 79,
+          "JPY": 1,
+          "NOK": 4,
+          "SEK": 8,
+          "USD": 118705
+        },
+        "Investment Owned, Net Assets, Percentage": {
+          "pure": 61214
+        },
+        "Investment, Basis Spread, Variable Rate": {
+          "pure": 83441
+        }
+      },
+      "uom_distinct": 132,
+      "uom_top": {
+        "AUD": 518,
+        "CAD": 837,
+        "CHF": 132,
+        "EUR": 2463,
+        "GBP": 1693,
+        "SEK": 124,
+        "USD": 597632,
+        "investment": 164,
+        "position": 111,
+        "pure": 322111,
+        "segment": 103,
+        "shares": 23110
+      }
+    },
+    "pre.tsv": {
+      "bytes": 18922421,
+      "counters": {
+        "stmt=(empty)": 101678,
+        "stmt=BS": 8527,
+        "stmt=CF": 7524,
+        "stmt=CI": 7,
+        "stmt=CP": 5411,
+        "stmt=EQ": 633,
+        "stmt=IS": 6523,
+        "stmt=SI": 16058,
+        "stmt=UN": 6795
+      },
+      "documented_primary_key": [
+        "adsh",
+        "report",
+        "line"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "header": [
+        "adsh",
+        "report",
+        "line",
+        "stmt",
+        "inpth",
+        "tag",
+        "version",
+        "prole",
+        "plabel",
+        "negating"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 10,
+        "documented_names_with_whitespace": [
+          "version "
+        ],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 10,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/pre.tsv",
+      "present": true,
+      "rows": 153156,
+      "sha256": "2fd8c5a8baa54692b40de37bbc9a2b95c3d3910f9382e3493690945454dac676"
+    },
+    "soi.tsv": {
+      "bytes": 108761267,
+      "columns": {
+        "001 adsh": {
+          "format_classes": {
+            "text": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "002 cik": {
+          "format_classes": {
+            "integer": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "003 name": {
+          "format_classes": {
+            "text": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "004 ddate": {
+          "format_classes": {
+            "date_yyyy-mm-dd": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "005 qtrs": {
+          "format_classes": {
+            "integer": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "006 form": {
+          "format_classes": {
+            "text": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "007 filed": {
+          "format_classes": {
+            "date_yyyy-mm-dd": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "008 period": {
+          "format_classes": {
+            "date_yyyy-mm-dd": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "009 inlineurl": {
+          "format_classes": {
+            "url": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "010 cstm": {
+          "format_classes": {
+            "integer": 181907
+          },
+          "magnitude_bands": {},
+          "non_empty": 181907
+        },
+        "011 Industry Sector Axis": {
+          "format_classes": {
+            "text": 18190
+          },
+          "magnitude_bands": {},
+          "non_empty": 18190
+        },
+        "012 Investment, Identifier Axis": {
+          "format_classes": {
+            "text": 139219
+          },
+          "magnitude_bands": {},
+          "non_empty": 139219
+        },
+        "013 Investment, Issuer Affiliation Axis": {
+          "format_classes": {
+            "text": 10049
+          },
+          "magnitude_bands": {},
+          "non_empty": 10049
+        },
+        "014 Investment Type Axis": {
+          "format_classes": {
+            "text": 16159
+          },
+          "magnitude_bands": {},
+          "non_empty": 16159
+        },
+        "015 Investment Interest Rate": {
+          "format_classes": {
+            "decimal": 69483
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 3,
+            "abs_lt_1": 67886,
+            "zero": 1594
+          },
+          "non_empty": 69483
+        },
+        "016 Investment, Basis Spread, Variable Rate": {
+          "format_classes": {
+            "decimal": 81674
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 81555,
+            "zero": 119
+          },
+          "non_empty": 81674
+        },
+        "017 Investment Maturity Date": {
+          "format_classes": {
+            "date_yyyy-mm-dd": 47200,
+            "decimal": 2
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 2
+          },
+          "non_empty": 47202
+        },
+        "018 Investment Owned, Balance, Principal Amount": {
+          "format_classes": {
+            "decimal": 95163
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 22179,
+            "abs_1_to_lt_100": 33,
+            "abs_ge_1e6": 64531,
+            "zero": 8420
+          },
+          "non_empty": 95163
+        },
+        "019 Investment Owned, Cost": {
+          "format_classes": {
+            "decimal": 2
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 1,
+            "zero": 1
+          },
+          "non_empty": 2
+        },
+        "020 Investment Owned, Fair Value": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "021 Investment Owned, Net Assets, Percentage": {
+          "format_classes": {
+            "decimal": 72282
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 5,
+            "abs_1_to_lt_100": 707,
+            "abs_lt_1": 52633,
+            "zero": 18937
+          },
+          "non_empty": 72282
+        },
+        "022 Agreement": {
+          "format_classes": {
+            "decimal": 3,
+            "text": 1
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 2,
+            "zero": 1
+          },
+          "non_empty": 4
+        },
+        "023 Asset Acquisition Axis": {
+          "format_classes": {
+            "text": 1
+          },
+          "magnitude_bands": {},
+          "non_empty": 1
+        },
+        "024 Asset Class Axis": {
+          "format_classes": {
+            "text": 956
+          },
+          "magnitude_bands": {},
+          "non_empty": 956
+        },
+        "025 Award Date Axis": {
+          "format_classes": {
+            "text": 2
+          },
+          "magnitude_bands": {},
+          "non_empty": 2
+        },
+        "026 Award Type Axis": {
+          "format_classes": {
+            "text": 327
+          },
+          "magnitude_bands": {},
+          "non_empty": 327
+        },
+        "027 Balance Sheet Location Axis": {
+          "format_classes": {
+            "text": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "028 Business Acquisition Axis": {
+          "format_classes": {
+            "text": 11
+          },
+          "magnitude_bands": {},
+          "non_empty": 11
+        },
+        "029 Cash and Cash Equivalents Axis": {
+          "format_classes": {
+            "text": 255
+          },
+          "magnitude_bands": {},
+          "non_empty": 255
+        },
+        "030 Class of Financing Receivable Axis": {
+          "format_classes": {
+            "text": 2
+          },
+          "magnitude_bands": {},
+          "non_empty": 2
+        },
+        "031 Class of Stock Axis": {
+          "format_classes": {
+            "text": 176
+          },
+          "magnitude_bands": {},
+          "non_empty": 176
+        },
+        "032 Collaborative Arrangement and Arrangement Other than Collaborative Axis": {
+          "format_classes": {
+            "text": 15
+          },
+          "magnitude_bands": {},
+          "non_empty": 15
+        },
+        "033 Collateral Held Axis": {
+          "format_classes": {
+            "text": 6
+          },
+          "magnitude_bands": {},
+          "non_empty": 6
+        },
+        "034 Concentration Risk Benchmark Axis": {
+          "format_classes": {
+            "text": 1041
+          },
+          "magnitude_bands": {},
+          "non_empty": 1041
+        },
+        "035 Concentration Risk Type Axis": {
+          "format_classes": {
+            "text": 1041
+          },
+          "magnitude_bands": {},
+          "non_empty": 1041
+        },
+        "036 Consolidated Entities Axis": {
+          "format_classes": {
+            "text": 370
+          },
+          "magnitude_bands": {},
+          "non_empty": 370
+        },
+        "037 Consolidation Items Axis": {
+          "format_classes": {
+            "text": 111
+          },
+          "magnitude_bands": {},
+          "non_empty": 111
+        },
+        "038 Counterparty Name Axis": {
+          "format_classes": {
+            "decimal": 1,
+            "text": 380
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 1
+          },
+          "non_empty": 381
+        },
+        "039 Credit Facility Axis": {
+          "format_classes": {
+            "text": 806
+          },
+          "magnitude_bands": {},
+          "non_empty": 806
+        },
+        "040 Credit Rating, Standard & Poor's Axis": {
+          "format_classes": {
+            "text": 17
+          },
+          "magnitude_bands": {},
+          "non_empty": 17
+        },
+        "041 CreditFacilityUsage": {
+          "format_classes": {
+            "text": 3
+          },
+          "magnitude_bands": {},
+          "non_empty": 3
+        },
+        "042 Currency Axis": {
+          "format_classes": {
+            "text": 8
+          },
+          "magnitude_bands": {},
+          "non_empty": 8
+        },
+        "043 Customer Axis": {
+          "format_classes": {
+            "text": 16
+          },
+          "magnitude_bands": {},
+          "non_empty": 16
+        },
+        "044 Debt Instrument Axis": {
+          "format_classes": {
+            "text": 518
+          },
+          "magnitude_bands": {},
+          "non_empty": 518
+        },
+        "045 Debt Instrument, Redemption, Period Axis": {
+          "format_classes": {
+            "text": 12
+          },
+          "magnitude_bands": {},
+          "non_empty": 12
+        },
+        "046 Derivative Instrument Axis": {
+          "format_classes": {
+            "text": 1067
+          },
+          "magnitude_bands": {},
+          "non_empty": 1067
+        },
+        "047 Equity Components Axis": {
+          "format_classes": {
+            "text": 63
+          },
+          "magnitude_bands": {},
+          "non_empty": 63
+        },
+        "048 Equity Interest Type Axis": {
+          "format_classes": {
+            "text": 1
+          },
+          "magnitude_bands": {},
+          "non_empty": 1
+        },
+        "049 Equity Method Investment, Nonconsolidated Investee Axis": {
+          "format_classes": {
+            "text": 8
+          },
+          "magnitude_bands": {},
+          "non_empty": 8
+        },
+        "050 ExemptSecurity": {
+          "format_classes": {
+            "text": 1
+          },
+          "magnitude_bands": {},
+          "non_empty": 1
+        },
+        "051 Fair Value Hierarchy and NAV Axis": {
+          "format_classes": {
+            "text": 5197
+          },
+          "magnitude_bands": {},
+          "non_empty": 5197
+        },
+        "052 Financial Instrument Axis": {
+          "format_classes": {
+            "text": 4450
+          },
+          "magnitude_bands": {},
+          "non_empty": 4450
+        },
+        "053 Financial Instrument Performance Status Axis": {
+          "format_classes": {
+            "text": 8
+          },
+          "magnitude_bands": {},
+          "non_empty": 8
+        },
+        "054 Financial Support to Nonconsolidated Legal Entity Axis": {
+          "format_classes": {
+            "text": 134
+          },
+          "magnitude_bands": {},
+          "non_empty": 134
+        },
+        "055 FinancingReceivableName": {
+          "format_classes": {
+            "text": 7
+          },
+          "magnitude_bands": {},
+          "non_empty": 7
+        },
+        "056 Geographical Axis": {
+          "format_classes": {
+            "text": 3229
+          },
+          "magnitude_bands": {},
+          "non_empty": 3229
+        },
+        "057 Hedging Designation Axis": {
+          "format_classes": {
+            "text": 144
+          },
+          "magnitude_bands": {},
+          "non_empty": 144
+        },
+        "058 Hedging Relationship Axis": {
+          "format_classes": {
+            "text": 2
+          },
+          "magnitude_bands": {},
+          "non_empty": 2
+        },
+        "059 InterestRatePeriod": {
+          "format_classes": {
+            "text": 8
+          },
+          "magnitude_bands": {},
+          "non_empty": 8
+        },
+        "060 Investee": {
+          "format_classes": {
+            "text": 766
+          },
+          "magnitude_bands": {},
+          "non_empty": 766
+        },
+        "061 Investment Axis": {
+          "format_classes": {
+            "text": 77
+          },
+          "magnitude_bands": {},
+          "non_empty": 77
+        },
+        "062 Investment Company, Nonconsolidated Subsidiary Axis": {
+          "format_classes": {
+            "text": 2940
+          },
+          "magnitude_bands": {},
+          "non_empty": 2940
+        },
+        "063 Investment Objective Axis": {
+          "format_classes": {
+            "text": 63
+          },
+          "magnitude_bands": {},
+          "non_empty": 63
+        },
+        "064 Investment, Issuer Name Axis": {
+          "format_classes": {
+            "text": 7635
+          },
+          "magnitude_bands": {},
+          "non_empty": 7635
+        },
+        "065 Investment, Name Axis": {
+          "format_classes": {
+            "text": 981
+          },
+          "magnitude_bands": {},
+          "non_empty": 981
+        },
+        "066 InvestmentBasisSpreadVariableRate": {
+          "format_classes": {
+            "text": 66
+          },
+          "magnitude_bands": {},
+          "non_empty": 66
+        },
+        "067 InvestmentHoldings": {
+          "format_classes": {
+            "text": 79
+          },
+          "magnitude_bands": {},
+          "non_empty": 79
+        },
+        "068 InvestmentInterestRateFloor": {
+          "format_classes": {
+            "text": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "069 InvestmentPerformanceStatus": {
+          "format_classes": {
+            "text": 1
+          },
+          "magnitude_bands": {},
+          "non_empty": 1
+        },
+        "070 InvestmentsClassificationByIndustry": {
+          "format_classes": {
+            "text": 17
+          },
+          "magnitude_bands": {},
+          "non_empty": 17
+        },
+        "071 InvestmentSecondaryCategorization1": {
+          "format_classes": {
+            "text": 236
+          },
+          "magnitude_bands": {},
+          "non_empty": 236
+        },
+        "072 InvestmentsIdentifier": {
+          "format_classes": {
+            "text": 842
+          },
+          "magnitude_bands": {},
+          "non_empty": 842
+        },
+        "073 InvestmentSubType": {
+          "format_classes": {
+            "text": 8
+          },
+          "magnitude_bands": {},
+          "non_empty": 8
+        },
+        "074 InvestmentVariableRateBasis": {
+          "format_classes": {
+            "text": 3
+          },
+          "magnitude_bands": {},
+          "non_empty": 3
+        },
+        "075 Legal Entity Axis": {
+          "format_classes": {
+            "text": 1246
+          },
+          "magnitude_bands": {},
+          "non_empty": 1246
+        },
+        "076 Lien Category Axis": {
+          "format_classes": {
+            "text": 12
+          },
+          "magnitude_bands": {},
+          "non_empty": 12
+        },
+        "077 LocationStatementsOfFinancialPositionBalance": {
+          "format_classes": {
+            "text": 10
+          },
+          "magnitude_bands": {},
+          "non_empty": 10
+        },
+        "078 Long-Lived Tangible Asset Axis": {
+          "format_classes": {
+            "text": 42
+          },
+          "magnitude_bands": {},
+          "non_empty": 42
+        },
+        "079 Long-term Debt, Type Axis": {
+          "format_classes": {
+            "text": 267
+          },
+          "magnitude_bands": {},
+          "non_empty": 267
+        },
+        "080 Loss Contingency Nature Axis": {
+          "format_classes": {
+            "text": 11
+          },
+          "magnitude_bands": {},
+          "non_empty": 11
+        },
+        "081 Measurement Basis Axis": {
+          "format_classes": {
+            "text": 28
+          },
+          "magnitude_bands": {},
+          "non_empty": 28
+        },
+        "082 Measurement Frequency Axis": {
+          "format_classes": {
+            "text": 450
+          },
+          "magnitude_bands": {},
+          "non_empty": 450
+        },
+        "083 Measurement Input Type Axis": {
+          "format_classes": {
+            "text": 946
+          },
+          "magnitude_bands": {},
+          "non_empty": 946
+        },
+        "084 Netting": {
+          "format_classes": {
+            "text": 2
+          },
+          "magnitude_bands": {},
+          "non_empty": 2
+        },
+        "085 Open Forward Foreign Currency Contract, Identifier Axis": {
+          "format_classes": {
+            "text": 1988
+          },
+          "magnitude_bands": {},
+          "non_empty": 1988
+        },
+        "086 Open Option Contract, Identifier Axis": {
+          "format_classes": {
+            "text": 24
+          },
+          "magnitude_bands": {},
+          "non_empty": 24
+        },
+        "087 Open Swap Contract, Identifier Axis": {
+          "format_classes": {
+            "text": 598
+          },
+          "magnitude_bands": {},
+          "non_empty": 598
+        },
+        "088 Option Indexed to Issuer's Equity Axis": {
+          "format_classes": {
+            "text": 2
+          },
+          "magnitude_bands": {},
+          "non_empty": 2
+        },
+        "089 Option Indexed to Issuer's Equity, Type Axis": {
+          "format_classes": {
+            "text": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "090 Other Commitments Axis": {
+          "format_classes": {
+            "text": 18
+          },
+          "magnitude_bands": {},
+          "non_empty": 18
+        },
+        "091 Ownership Axis": {
+          "format_classes": {
+            "text": 328
+          },
+          "magnitude_bands": {},
+          "non_empty": 328
+        },
+        "092 Plan Name Axis": {
+          "format_classes": {
+            "text": 1
+          },
+          "magnitude_bands": {},
+          "non_empty": 1
+        },
+        "093 Pledged Status Axis": {
+          "format_classes": {
+            "text": 14
+          },
+          "magnitude_bands": {},
+          "non_empty": 14
+        },
+        "094 Pledging Purpose Axis": {
+          "format_classes": {
+            "text": 12
+          },
+          "magnitude_bands": {},
+          "non_empty": 12
+        },
+        "095 Position Axis": {
+          "format_classes": {
+            "text": 40
+          },
+          "magnitude_bands": {},
+          "non_empty": 40
+        },
+        "096 PreviousValuationAndTechnique": {
+          "format_classes": {
+            "text": 23
+          },
+          "magnitude_bands": {},
+          "non_empty": 23
+        },
+        "097 Products and Services Axis": {
+          "format_classes": {
+            "text": 44
+          },
+          "magnitude_bands": {},
+          "non_empty": 44
+        },
+        "098 Range Axis": {
+          "format_classes": {
+            "text": 1264
+          },
+          "magnitude_bands": {},
+          "non_empty": 1264
+        },
+        "099 RateType": {
+          "format_classes": {
+            "text": 16
+          },
+          "magnitude_bands": {},
+          "non_empty": 16
+        },
+        "100 Real Estate, Type of Property Axis": {
+          "format_classes": {
+            "text": 25
+          },
+          "magnitude_bands": {},
+          "non_empty": 25
+        },
+        "101 Regulatory Agency Axis": {
+          "format_classes": {
+            "text": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "102 Related Party Axis": {
+          "format_classes": {
+            "text": 142
+          },
+          "magnitude_bands": {},
+          "non_empty": 142
+        },
+        "103 Related Party Transaction Axis": {
+          "format_classes": {
+            "text": 3
+          },
+          "magnitude_bands": {},
+          "non_empty": 3
+        },
+        "104 Repurchase Agreements and Similar Transactions, Maturity Periods Axis": {
+          "format_classes": {
+            "text": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "105 Research and Development Assets Acquired Other than Through Business Combination by Transaction Axis": {
+          "format_classes": {
+            "text": 11
+          },
+          "magnitude_bands": {},
+          "non_empty": 11
+        },
+        "106 Scenario Axis": {
+          "format_classes": {
+            "text": 5
+          },
+          "magnitude_bands": {},
+          "non_empty": 5
+        },
+        "107 Security Owned and Sold, Not yet Purchased, at Fair Value Axis": {
+          "format_classes": {
+            "text": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "108 Servicing Assets and Servicing Liabilities Risk Axis": {
+          "format_classes": {
+            "text": 6
+          },
+          "magnitude_bands": {},
+          "non_empty": 6
+        },
+        "109 Share Repurchase Program Axis": {
+          "format_classes": {
+            "text": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "110 Short-term Debt, Type Axis": {
+          "format_classes": {
+            "text": 161
+          },
+          "magnitude_bands": {},
+          "non_empty": 161
+        },
+        "111 Subsequent Event Type Axis": {
+          "format_classes": {
+            "text": 23
+          },
+          "magnitude_bands": {},
+          "non_empty": 23
+        },
+        "112 Title of Individual Axis": {
+          "format_classes": {
+            "text": 3
+          },
+          "magnitude_bands": {},
+          "non_empty": 3
+        },
+        "113 Trading Activity Axis": {
+          "format_classes": {
+            "text": 31
+          },
+          "magnitude_bands": {},
+          "non_empty": 31
+        },
+        "114 TypeOfIndustry": {
+          "format_classes": {
+            "text": 33
+          },
+          "magnitude_bands": {},
+          "non_empty": 33
+        },
+        "115 Valuation Approach and Technique Axis": {
+          "format_classes": {
+            "text": 1881
+          },
+          "magnitude_bands": {},
+          "non_empty": 1881
+        },
+        "116 Variable Rate Axis": {
+          "format_classes": {
+            "text": 475
+          },
+          "magnitude_bands": {},
+          "non_empty": 475
+        },
+        "117 VariableRateComponent": {
+          "format_classes": {
+            "text": 3
+          },
+          "magnitude_bands": {},
+          "non_empty": 3
+        },
+        "118 Voyatek": {
+          "format_classes": {
+            "text": 1
+          },
+          "magnitude_bands": {},
+          "non_empty": 1
+        },
+        "119 Additions to Other Assets, Amount": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 4
+          },
+          "non_empty": 4
+        },
+        "120 Adjusted cost basis": {
+          "format_classes": {
+            "decimal": 129485
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 43027,
+            "abs_1_to_lt_100": 45,
+            "abs_ge_1e6": 81103,
+            "zero": 5310
+          },
+          "non_empty": 129485
+        },
+        "121 Cash and cash equivalents": {
+          "format_classes": {
+            "decimal": 82
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 7,
+            "abs_ge_1e6": 74,
+            "zero": 1
+          },
+          "non_empty": 82
+        },
+        "122 Cash and Cash Equivalents, Fair Value Disclosure": {
+          "format_classes": {
+            "decimal": 155
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 17,
+            "abs_ge_1e6": 104,
+            "zero": 34
+          },
+          "non_empty": 155
+        },
+        "123 Cash deposits": {
+          "format_classes": {
+            "decimal": 9
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 9
+          },
+          "non_empty": 9
+        },
+        "124 Cash equivalents": {
+          "format_classes": {
+            "decimal": 116
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 17,
+            "abs_ge_1e6": 91,
+            "zero": 8
+          },
+          "non_empty": 116
+        },
+        "125 Cash, Cash Equivalent, Restricted Cash, and Restricted Cash Equivalent, Continuing Operation": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "126 Cash, Cash Equivalents, and Short-Term Investments": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "127 Change in Unrealized Gain (Loss) on Fair Value Hedging Instruments": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 4
+          },
+          "non_empty": 4
+        },
+        "128 Changes in fair value of warrant and derivative liabilities": {
+          "format_classes": {
+            "decimal": 114
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 52,
+            "abs_ge_1e6": 62
+          },
+          "non_empty": 114
+        },
+        "129 Commitments, Fair Value Disclosure": {
+          "format_classes": {
+            "decimal": 144
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 142,
+            "abs_ge_1e6": 2
+          },
+          "non_empty": 144
+        },
+        "130 Concentration percentage": {
+          "format_classes": {
+            "decimal": 913
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 49,
+            "abs_lt_1": 822,
+            "zero": 42
+          },
+          "non_empty": 913
+        },
+        "131 Credit line maximum": {
+          "format_classes": {
+            "decimal": 9
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 9
+          },
+          "non_empty": 9
+        },
+        "132 Debt and Equity Securities, Realized Gain (Loss)": {
+          "format_classes": {
+            "decimal": 466
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 23,
+            "abs_ge_1e6": 65,
+            "zero": 378
+          },
+          "non_empty": 466
+        },
+        "133 Debt and Equity Securities, Unrealized Gain (Loss)": {
+          "format_classes": {
+            "decimal": 486
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 120,
+            "abs_ge_1e6": 245,
+            "zero": 121
+          },
+          "non_empty": 486
+        },
+        "134 Debt Instrument, Basis Spread on Variable Rate": {
+          "format_classes": {
+            "decimal": 198
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 196,
+            "zero": 2
+          },
+          "non_empty": 198
+        },
+        "135 Debt Instrument, Interest Rate During Period": {
+          "format_classes": {
+            "decimal": 7
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 5,
+            "zero": 2
+          },
+          "non_empty": 7
+        },
+        "136 Debt Instrument, Interest Rate Terms": {
+          "format_classes": {
+            "text": 90
+          },
+          "magnitude_bands": {},
+          "non_empty": 90
+        },
+        "137 Derivative and Foreign Currency Transaction Price Change, Realized Gain (Loss), Operating, before Tax": {
+          "format_classes": {
+            "decimal": 237
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 20,
+            "abs_ge_1e6": 10,
+            "zero": 207
+          },
+          "non_empty": 237
+        },
+        "138 Derivative and Foreign Currency Transaction Price Change, Unrealized Gain (Loss), Operating, before Tax": {
+          "format_classes": {
+            "decimal": 306
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 133,
+            "abs_ge_1e6": 130,
+            "zero": 43
+          },
+          "non_empty": 306
+        },
+        "139 Derivative Asset": {
+          "format_classes": {
+            "decimal": 112
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 33,
+            "abs_ge_1e6": 47,
+            "zero": 32
+          },
+          "non_empty": 112
+        },
+        "140 Derivative Asset, Counterparty Name [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 1
+          },
+          "magnitude_bands": {},
+          "non_empty": 1
+        },
+        "141 Derivative Asset, Gross Asset Including Not Subject to Master Netting Arrangement": {
+          "format_classes": {
+            "decimal": 101
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 69,
+            "abs_ge_1e6": 12,
+            "zero": 20
+          },
+          "non_empty": 101
+        },
+        "142 Derivative Asset, Not Subject to Master Netting Arrangement": {
+          "format_classes": {
+            "decimal": 2
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 2
+          },
+          "non_empty": 2
+        },
+        "143 Derivative Asset, Notional Amount": {
+          "format_classes": {
+            "decimal": 1210
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 430,
+            "abs_ge_1e6": 779,
+            "zero": 1
+          },
+          "non_empty": 1210
+        },
+        "144 Derivative Asset, Subject to Master Netting Arrangement, after Offset": {
+          "format_classes": {
+            "decimal": 24
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 23,
+            "abs_ge_1e6": 1
+          },
+          "non_empty": 24
+        },
+        "145 Derivative Asset, Subject to Master Netting Arrangement, before Offset": {
+          "format_classes": {
+            "decimal": 101
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 49,
+            "abs_ge_1e6": 43,
+            "zero": 9
+          },
+          "non_empty": 101
+        },
+        "146 Derivative Asset, Subject to Master Netting Arrangement, Collateral, Obligation to Return Cash, Offset Against Derivative Asset": {
+          "format_classes": {
+            "decimal": 24
+          },
+          "magnitude_bands": {
+            "zero": 24
+          },
+          "non_empty": 24
+        },
+        "147 Derivative Asset, Subject to Master Netting Arrangement, Liability Offset": {
+          "format_classes": {
+            "decimal": 452
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 382,
+            "abs_ge_1e6": 53,
+            "zero": 17
+          },
+          "non_empty": 452
+        },
+        "148 Derivative Asset, Type [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 25
+          },
+          "magnitude_bands": {},
+          "non_empty": 25
+        },
+        "149 Derivative Liability": {
+          "format_classes": {
+            "decimal": 138
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 53,
+            "abs_ge_1e6": 25,
+            "zero": 60
+          },
+          "non_empty": 138
+        },
+        "150 Derivative Liability, Gross Liability Including Not Subject to Master Netting Arrangement": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 5,
+            "abs_ge_1e6": 1
+          },
+          "non_empty": 6
+        },
+        "151 Derivative Liability, Notional Amount": {
+          "format_classes": {
+            "decimal": 1098
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 404,
+            "abs_ge_1e6": 689,
+            "zero": 5
+          },
+          "non_empty": 1098
+        },
+        "152 Derivative Liability, Subject to Master Netting Arrangement, after Offset": {
+          "format_classes": {
+            "decimal": 16
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 10,
+            "abs_ge_1e6": 6
+          },
+          "non_empty": 16
+        },
+        "153 Derivative Liability, Subject to Master Netting Arrangement, Collateral, Right to Reclaim Cash Offset": {
+          "format_classes": {
+            "decimal": 17
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 1,
+            "zero": 16
+          },
+          "non_empty": 17
+        },
+        "154 Derivative, Basis Spread on Variable Rate": {
+          "format_classes": {
+            "decimal": 316
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 18,
+            "abs_lt_1": 298
+          },
+          "non_empty": 316
+        },
+        "155 Derivative, Contract End Date": {
+          "format_classes": {
+            "date_yyyy-mm-dd": 919
+          },
+          "magnitude_bands": {},
+          "non_empty": 919
+        },
+        "156 Derivative, Currency Bought": {
+          "format_classes": {
+            "text": 3
+          },
+          "magnitude_bands": {},
+          "non_empty": 3
+        },
+        "157 Derivative, Currency Sold": {
+          "format_classes": {
+            "text": 3
+          },
+          "magnitude_bands": {},
+          "non_empty": 3
+        },
+        "158 Derivative, Description of Terms": {
+          "format_classes": {
+            "text": 26
+          },
+          "magnitude_bands": {},
+          "non_empty": 26
+        },
+        "159 Derivative, Fair Value, Net": {
+          "format_classes": {
+            "decimal": 282
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 187,
+            "abs_ge_1e6": 90,
+            "zero": 5
+          },
+          "non_empty": 282
+        },
+        "160 Derivative, Fixed Interest Rate": {
+          "format_classes": {
+            "decimal": 349
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 349
+          },
+          "non_empty": 349
+        },
+        "161 Derivative, Gain (Loss), Statement of Income or Comprehensive Income [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 9
+          },
+          "magnitude_bands": {},
+          "non_empty": 9
+        },
+        "162 Derivative, Net Assets, Percentage": {
+          "format_classes": {
+            "decimal": 2
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 1,
+            "zero": 1
+          },
+          "non_empty": 2
+        },
+        "163 Derivative, Notional Amount": {
+          "format_classes": {
+            "decimal": 720
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 31,
+            "abs_ge_1e6": 680,
+            "zero": 9
+          },
+          "non_empty": 720
+        },
+        "164 Derivative, Number of Instruments Held": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 2,
+            "abs_ge_1e6": 4
+          },
+          "non_empty": 6
+        },
+        "165 Derivative, Premium Paid": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 4,
+            "abs_ge_1e6": 2
+          },
+          "non_empty": 6
+        },
+        "166 Derivative, Price Risk Option Strike Price": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 4,
+            "abs_lt_1": 2
+          },
+          "non_empty": 6
+        },
+        "167 Derivative, Swaption Interest Rate": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 4
+          },
+          "non_empty": 4
+        },
+        "168 Derivative, Variable Interest Rate": {
+          "format_classes": {
+            "decimal": 15
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 15
+          },
+          "non_empty": 15
+        },
+        "169 Dividend Income, Operating": {
+          "format_classes": {
+            "decimal": 463
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 52,
+            "abs_ge_1e6": 82,
+            "zero": 329
+          },
+          "non_empty": 463
+        },
+        "170 Dividend Income, Operating, Paid in Cash": {
+          "format_classes": {
+            "decimal": 48
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 7,
+            "abs_ge_1e6": 24,
+            "zero": 17
+          },
+          "non_empty": 48
+        },
+        "171 Equity interest owned": {
+          "format_classes": {
+            "decimal": 26
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 26
+          },
+          "non_empty": 26
+        },
+        "172 Equity Method Investment, Additional Information": {
+          "format_classes": {
+            "text": 67
+          },
+          "magnitude_bands": {},
+          "non_empty": 67
+        },
+        "173 Equity Method Investments": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 2,
+            "zero": 4
+          },
+          "non_empty": 6
+        },
+        "174 Equity Securities, FV-NI, Unrealized Gain (Loss)": {
+          "format_classes": {
+            "decimal": 15
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 4,
+            "abs_ge_1e6": 6,
+            "zero": 5
+          },
+          "non_empty": 15
+        },
+        "175 Equity, Attributable to Parent": {
+          "format_classes": {
+            "decimal": 14
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 4,
+            "abs_ge_1e6": 10
+          },
+          "non_empty": 14
+        },
+        "176 Exercise price": {
+          "format_classes": {
+            "decimal": 133
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 72,
+            "abs_lt_1": 59,
+            "zero": 2
+          },
+          "non_empty": 133
+        },
+        "177 Fair value of derivative": {
+          "format_classes": {
+            "decimal": 62
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 35,
+            "abs_ge_1e6": 25,
+            "zero": 2
+          },
+          "non_empty": 62
+        },
+        "178 Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset Value": {
+          "format_classes": {
+            "decimal": 42
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 40,
+            "zero": 2
+          },
+          "non_empty": 42
+        },
+        "179 Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Purchases": {
+          "format_classes": {
+            "decimal": 28
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 2,
+            "abs_ge_1e6": 23,
+            "zero": 3
+          },
+          "non_empty": 28
+        },
+        "180 Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Sales": {
+          "format_classes": {
+            "decimal": 28
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 2,
+            "abs_ge_1e6": 13,
+            "zero": 13
+          },
+          "non_empty": 28
+        },
+        "181 Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Transfers, Net": {
+          "format_classes": {
+            "decimal": 10
+          },
+          "magnitude_bands": {
+            "zero": 10
+          },
+          "non_empty": 10
+        },
+        "182 Fee Income": {
+          "format_classes": {
+            "decimal": 280
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 5,
+            "abs_ge_1e6": 13,
+            "zero": 262
+          },
+          "non_empty": 280
+        },
+        "183 Foreign Currency Contract, Asset, Fair Value Disclosure": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 1,
+            "abs_ge_1e6": 5
+          },
+          "non_empty": 6
+        },
+        "184 Initial fair value of Investment": {
+          "format_classes": {
+            "decimal": 147754
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 44185,
+            "abs_1_to_lt_100": 76,
+            "abs_ge_1e6": 90143,
+            "zero": 13350
+          },
+          "non_empty": 147754
+        },
+        "185 Interest and Dividend Income, Operating": {
+          "format_classes": {
+            "decimal": 11
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 7,
+            "abs_ge_1e6": 1,
+            "zero": 3
+          },
+          "non_empty": 11
+        },
+        "186 Interest and Dividend Income, Securities, Operating": {
+          "format_classes": {
+            "decimal": 292
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 126,
+            "abs_ge_1e6": 81,
+            "zero": 85
+          },
+          "non_empty": 292
+        },
+        "187 Interest Income, Operating": {
+          "format_classes": {
+            "decimal": 410
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 49,
+            "abs_ge_1e6": 143,
+            "zero": 218
+          },
+          "non_empty": 410
+        },
+        "188 Interest Income, Operating, Paid in Cash": {
+          "format_classes": {
+            "decimal": 38
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 4,
+            "abs_ge_1e6": 13,
+            "zero": 21
+          },
+          "non_empty": 38
+        },
+        "189 Interest Income, Operating, Paid in Kind": {
+          "format_classes": {
+            "decimal": 276
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 21,
+            "abs_ge_1e6": 48,
+            "zero": 207
+          },
+          "non_empty": 276
+        },
+        "190 Interest Rate Derivatives, at Fair Value, Net": {
+          "format_classes": {
+            "decimal": 39
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 7,
+            "abs_ge_1e6": 32
+          },
+          "non_empty": 39
+        },
+        "191 Interest-Earning Assets, Average Yield": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 6
+          },
+          "non_empty": 6
+        },
+        "192 Investment Company, Distributable Earnings (Loss), Accumulated Appreciation (Depreciation)": {
+          "format_classes": {
+            "decimal": 21
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 7,
+            "abs_ge_1e6": 13,
+            "zero": 1
+          },
+          "non_empty": 21
+        },
+        "193 Investment Company, Financial Support to Investee Contractually Required, Amount": {
+          "format_classes": {
+            "decimal": 2669
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 535,
+            "abs_ge_1e6": 1198,
+            "zero": 936
+          },
+          "non_empty": 2669
+        },
+        "194 Investment Company, Financial Support to Investee Contractually Required, Not Provided, Amount": {
+          "format_classes": {
+            "decimal": 8597
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 3591,
+            "abs_ge_1e6": 4977,
+            "zero": 29
+          },
+          "non_empty": 8597
+        },
+        "195 Investment Company, Financial Support, Type [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 338
+          },
+          "magnitude_bands": {},
+          "non_empty": 338
+        },
+        "196 Investment Company, Market Value Per Share": {
+          "format_classes": {
+            "decimal": 405
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 23,
+            "abs_1_to_lt_100": 207,
+            "abs_lt_1": 171,
+            "zero": 4
+          },
+          "non_empty": 405
+        },
+        "197 Investment Owned, Face Amount": {
+          "format_classes": {
+            "decimal": 822
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 77,
+            "abs_ge_1e6": 652,
+            "zero": 93
+          },
+          "non_empty": 822
+        },
+        "198 Investment Owned, Foreign Currency Contract, Current Value": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 3,
+            "abs_ge_1e6": 1
+          },
+          "non_empty": 4
+        },
+        "199 Investment shares": {
+          "format_classes": {
+            "decimal": 13439
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 9914,
+            "abs_1_to_lt_100": 727,
+            "abs_ge_1e6": 2316,
+            "abs_lt_1": 27,
+            "zero": 455
+          },
+          "non_empty": 13439
+        },
+        "200 Investment, Acquisition Date": {
+          "format_classes": {
+            "date_yyyy-mm-dd": 14805,
+            "decimal": 1
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 1
+          },
+          "non_empty": 14806
+        },
+        "201 Investment, Industry Sector [Extensible Enumeration]": {
+          "format_classes": {
+            "decimal": 1,
+            "url": 4483
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 1
+          },
+          "non_empty": 4484
+        },
+        "202 Investment, Interest Rate, Floor": {
+          "format_classes": {
+            "decimal": 21453
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 11,
+            "abs_lt_1": 19955,
+            "zero": 1487
+          },
+          "non_empty": 21453
+        },
+        "203 Investment, Interest Rate, Paid in Cash": {
+          "format_classes": {
+            "decimal": 5389
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 5294,
+            "zero": 95
+          },
+          "non_empty": 5389
+        },
+        "204 Investment, Interest Rate, Paid in Kind": {
+          "format_classes": {
+            "decimal": 11090
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 80,
+            "abs_lt_1": 9192,
+            "zero": 1818
+          },
+          "non_empty": 11090
+        },
+        "205 Investment, Issuer Affiliation [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 2178
+          },
+          "magnitude_bands": {},
+          "non_empty": 2178
+        },
+        "206 Investment, Issuer Geographic Region [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 2305
+          },
+          "magnitude_bands": {},
+          "non_empty": 2305
+        },
+        "207 Investment, Issuer Name [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 2996
+          },
+          "magnitude_bands": {},
+          "non_empty": 2996
+        },
+        "208 Investment, Non-income Producing [true false]": {
+          "format_classes": {
+            "boolean_text": 2033
+          },
+          "magnitude_bands": {},
+          "non_empty": 2033
+        },
+        "209 Investment, Restriction Status [true false]": {
+          "format_classes": {
+            "boolean_text": 430
+          },
+          "magnitude_bands": {},
+          "non_empty": 430
+        },
+        "210 Investment, Significant Unobservable Input [true false]": {
+          "format_classes": {
+            "boolean_text": 2138
+          },
+          "magnitude_bands": {},
+          "non_empty": 2138
+        },
+        "211 Investment, Tax Basis, Unrealized Gain": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "212 Investment, Tax Basis, Unrealized Gain (Loss)": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 6
+          },
+          "non_empty": 6
+        },
+        "213 Investment, Tax Basis, Unrealized Loss": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "214 Investment, Type [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 3214
+          },
+          "magnitude_bands": {},
+          "non_empty": 3214
+        },
+        "215 Investment, Variable Interest Rate, Type [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 40809
+          },
+          "magnitude_bands": {},
+          "non_empty": 40809
+        },
+        "216 Investments": {
+          "format_classes": {
+            "decimal": 503
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 12,
+            "abs_ge_1e6": 211,
+            "zero": 280
+          },
+          "non_empty": 503
+        },
+        "217 Investments in and Advances to Affiliates, at Fair Value, Gross Additions": {
+          "format_classes": {
+            "decimal": 825
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 139,
+            "abs_ge_1e6": 365,
+            "zero": 321
+          },
+          "non_empty": 825
+        },
+        "218 Investments in and Advances to Affiliates, at Fair Value, Gross Reductions": {
+          "format_classes": {
+            "decimal": 749
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 94,
+            "abs_ge_1e6": 201,
+            "zero": 454
+          },
+          "non_empty": 749
+        },
+        "219 Investments in and Advances to Affiliates, at Fair Value, Period Increase (Decrease)": {
+          "format_classes": {
+            "decimal": 8
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 7,
+            "abs_ge_1e6": 1
+          },
+          "non_empty": 8
+        },
+        "220 Investments, Fair Value Disclosure": {
+          "format_classes": {
+            "decimal": 460
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 186,
+            "abs_ge_1e6": 274
+          },
+          "non_empty": 460
+        },
+        "221 Limited Liability Company or Limited Partnership, Members or Limited Partners, Ownership Interest": {
+          "format_classes": {
+            "decimal": 124
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 93,
+            "abs_lt_1": 31
+          },
+          "non_empty": 124
+        },
+        "222 Line of Credit Facility, Unused Capacity, Commitment Fee Percentage": {
+          "format_classes": {
+            "decimal": 9
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 6,
+            "zero": 3
+          },
+          "non_empty": 9
+        },
+        "223 Loans Receivable, Basis Spread on Variable Rate": {
+          "format_classes": {
+            "decimal": 9
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 9
+          },
+          "non_empty": 9
+        },
+        "224 Net Assets": {
+          "format_classes": {
+            "decimal": 1
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 1
+          },
+          "non_empty": 1
+        },
+        "225 Noninvestment Asset Less Noninvestment Liability, Percent of Net Asset": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "226 Noninvestment Assets Less Noninvestment Liabilities": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 1,
+            "abs_ge_1e6": 5
+          },
+          "non_empty": 6
+        },
+        "227 Other income": {
+          "format_classes": {
+            "decimal": 148
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 55,
+            "abs_ge_1e6": 19,
+            "zero": 74
+          },
+          "non_empty": 148
+        },
+        "228 Paid-in-Kind Interest": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "zero": 4
+          },
+          "non_empty": 4
+        },
+        "229 Payments for (Proceeds from) Derivative Instrument, Financing Activities": {
+          "format_classes": {
+            "decimal": 28
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 12,
+            "abs_1_to_lt_100": 1,
+            "zero": 15
+          },
+          "non_empty": 28
+        },
+        "230 Payments for (Proceeds from) Hedge, Financing Activities": {
+          "format_classes": {
+            "decimal": 6
+          },
+          "magnitude_bands": {
+            "zero": 6
+          },
+          "non_empty": 6
+        },
+        "231 Payments for (Proceeds from) Investments": {
+          "format_classes": {
+            "decimal": 83
+          },
+          "magnitude_bands": {
+            "zero": 83
+          },
+          "non_empty": 83
+        },
+        "232 Payments for Purchase of Investment, Operating Activity": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 4
+          },
+          "non_empty": 4
+        },
+        "233 Preferred Stock, Dividend Rate, Percentage": {
+          "format_classes": {
+            "decimal": 17
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 17
+          },
+          "non_empty": 17
+        },
+        "234 Proceeds from Disposition of Investment, Operating Activity": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 4
+          },
+          "non_empty": 4
+        },
+        "235 Recognized gain (loss)": {
+          "format_classes": {
+            "decimal": 63
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 23,
+            "abs_ge_1e6": 10,
+            "zero": 30
+          },
+          "non_empty": 63
+        },
+        "236 Reductions in Other Assets, Amount": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "zero": 4
+          },
+          "non_empty": 4
+        },
+        "237 Restricted Cash and Cash Equivalent, Current": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "238 Restricted Investments, at Fair Value": {
+          "format_classes": {
+            "decimal": 2
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 2
+          },
+          "non_empty": 2
+        },
+        "239 Restricted Investments, Percent of Net Assets": {
+          "format_classes": {
+            "decimal": 2
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 2
+          },
+          "non_empty": 2
+        },
+        "240 Securities Borrowed, Counterparty Name [Extensible Enumeration]": {
+          "format_classes": {
+            "url": 4
+          },
+          "magnitude_bands": {},
+          "non_empty": 4
+        },
+        "241 Security deposit remaining": {
+          "format_classes": {
+            "decimal": 182
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 10,
+            "abs_ge_1e6": 155,
+            "zero": 17
+          },
+          "non_empty": 182
+        },
+        "242 Short-Term Investments": {
+          "format_classes": {
+            "decimal": 4
+          },
+          "magnitude_bands": {
+            "abs_ge_1e6": 4
+          },
+          "non_empty": 4
+        },
+        "243 Strike Price": {
+          "format_classes": {
+            "decimal": 1
+          },
+          "magnitude_bands": {
+            "abs_1_to_lt_100": 1
+          },
+          "non_empty": 1
+        },
+        "244 Tax basis": {
+          "format_classes": {},
+          "magnitude_bands": {},
+          "non_empty": 0
+        },
+        "245 Unrealized Gain (Loss) on Derivatives": {
+          "format_classes": {
+            "decimal": 573
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 435,
+            "abs_ge_1e6": 121,
+            "zero": 17
+          },
+          "non_empty": 573
+        },
+        "246 Unrealized Gain (Loss) on Investments": {
+          "format_classes": {
+            "decimal": 95
+          },
+          "magnitude_bands": {
+            "abs_100_to_lt_1e6": 52,
+            "abs_ge_1e6": 41,
+            "zero": 2
+          },
+          "non_empty": 95
+        },
+        "247 Warrants expiration date": {
+          "format_classes": {
+            "date_yyyy-mm-dd": 2
+          },
+          "magnitude_bands": {},
+          "non_empty": 2
+        },
+        "248 Weighted Average Rate Domestic Deposit, Money Market": {
+          "format_classes": {
+            "decimal": 10
+          },
+          "magnitude_bands": {
+            "abs_lt_1": 10
+          },
+          "non_empty": 10
+        }
+      },
+      "counters": {
+        "Investment, Issuer Name Axis present": 7635,
+        "Investment, Issuer Name [Extensible Enumeration] present": 2996,
+        "adsh_format_valid": 181907,
+        "adsh_in_sub=yes": 181907,
+        "adsh_prefix_differs_from_registrant_cik": 112138,
+        "adsh_prefix_equals_registrant_cik": 69769,
+        "cik_format=integer_len5": 1680,
+        "cik_format=integer_len6": 149,
+        "cik_format=integer_len7": 180078,
+        "cstm=0": 22158,
+        "cstm=1": 159749,
+        "ddate_vs_period=ddate_after_period": 20,
+        "ddate_vs_period=ddate_before_period": 88838,
+        "ddate_vs_period=equal": 93049,
+        "field_count_more_than_header": 4,
+        "filed_vs_file_window=within": 181907,
+        "identifier_empty": 42688,
+        "identifier_pipe_count=0": 73728,
+        "identifier_pipe_count=1": 44518,
+        "identifier_pipe_count=2": 13555,
+        "identifier_pipe_count=3": 438,
+        "identifier_pipe_count=4+": 6980,
+        "identifier_present": 139219,
+        "inlineurl_accession_equals_adsh": 181907,
+        "inlineurl_cik_equals_registrant_cik": 181907,
+        "inlineurl_cik_path_no_leading_zeros": 181907,
+        "inlineurl_pattern=ix_viewer_wrapping_archives_path": 181907,
+        "period_vs_sub_period=equal": 181907
+      },
+      "ddate_range": {
+        "max": "2028-08-31",
+        "min": "2013-04-30"
+      },
+      "documented_primary_key": null,
+      "dynamic_columns": 227,
+      "empty_file": false,
+      "field_count_mismatches": 4,
+      "filed_range": {
+        "max": "2026-08-20",
+        "min": "2026-08-03"
+      },
+      "forms": {
+        "10-K": 1537,
+        "10-Q": 180370
+      },
+      "grain": {
+        "candidate_keys": {
+          "adsh+identifier+ddate": {
+            "distinct": 122993,
+            "duplicate_rows": 58914
+          },
+          "adsh+identifier+ddate+qtrs": {
+            "distinct": 138485,
+            "duplicate_rows": 43422
+          },
+          "entire_row": {
+            "distinct": 181907,
+            "duplicate_rows": 0
+          }
+        },
+        "distinct_adsh": 163,
+        "distinct_ddate_values_per_adsh": {
+          "1": 3,
+          "2": 57,
+          "3": 42,
+          "4": 19,
+          "5": 11,
+          "6": 11,
+          "7": 5,
+          "8": 4,
+          "9": 2,
+          "10": 1,
+          "11": 1,
+          "12": 2,
+          "14": 2,
+          "15": 1,
+          "17": 2
+        },
+        "distinct_registrant_cik": 163,
+        "rows_per_adsh": {
+          "count": 163,
+          "max": 4790,
+          "median": 891,
+          "min": 57
+        }
+      },
+      "header": [
+        "adsh",
+        "cik",
+        "name",
+        "ddate",
+        "qtrs",
+        "form",
+        "filed",
+        "period",
+        "inlineurl",
+        "cstm",
+        "Industry Sector Axis",
+        "Investment, Identifier Axis",
+        "Investment, Issuer Affiliation Axis",
+        "Investment Type Axis",
+        "Investment Interest Rate",
+        "Investment, Basis Spread, Variable Rate",
+        "Investment Maturity Date",
+        "Investment Owned, Balance, Principal Amount",
+        "Investment Owned, Cost",
+        "Investment Owned, Fair Value",
+        "Investment Owned, Net Assets, Percentage",
+        "Agreement",
+        "Asset Acquisition Axis",
+        "Asset Class Axis",
+        "Award Date Axis",
+        "Award Type Axis",
+        "Balance Sheet Location Axis",
+        "Business Acquisition Axis",
+        "Cash and Cash Equivalents Axis",
+        "Class of Financing Receivable Axis",
+        "Class of Stock Axis",
+        "Collaborative Arrangement and Arrangement Other than Collaborative Axis",
+        "Collateral Held Axis",
+        "Concentration Risk Benchmark Axis",
+        "Concentration Risk Type Axis",
+        "Consolidated Entities Axis",
+        "Consolidation Items Axis",
+        "Counterparty Name Axis",
+        "Credit Facility Axis",
+        "Credit Rating, Standard & Poor's Axis",
+        "CreditFacilityUsage",
+        "Currency Axis",
+        "Customer Axis",
+        "Debt Instrument Axis",
+        "Debt Instrument, Redemption, Period Axis",
+        "Derivative Instrument Axis",
+        "Equity Components Axis",
+        "Equity Interest Type Axis",
+        "Equity Method Investment, Nonconsolidated Investee Axis",
+        "ExemptSecurity",
+        "Fair Value Hierarchy and NAV Axis",
+        "Financial Instrument Axis",
+        "Financial Instrument Performance Status Axis",
+        "Financial Support to Nonconsolidated Legal Entity Axis",
+        "FinancingReceivableName",
+        "Geographical Axis",
+        "Hedging Designation Axis",
+        "Hedging Relationship Axis",
+        "InterestRatePeriod",
+        "Investee",
+        "Investment Axis",
+        "Investment Company, Nonconsolidated Subsidiary Axis",
+        "Investment Objective Axis",
+        "Investment, Issuer Name Axis",
+        "Investment, Name Axis",
+        "InvestmentBasisSpreadVariableRate",
+        "InvestmentHoldings",
+        "InvestmentInterestRateFloor",
+        "InvestmentPerformanceStatus",
+        "InvestmentsClassificationByIndustry",
+        "InvestmentSecondaryCategorization1",
+        "InvestmentsIdentifier",
+        "InvestmentSubType",
+        "InvestmentVariableRateBasis",
+        "Legal Entity Axis",
+        "Lien Category Axis",
+        "LocationStatementsOfFinancialPositionBalance",
+        "Long-Lived Tangible Asset Axis",
+        "Long-term Debt, Type Axis",
+        "Loss Contingency Nature Axis",
+        "Measurement Basis Axis",
+        "Measurement Frequency Axis",
+        "Measurement Input Type Axis",
+        "Netting",
+        "Open Forward Foreign Currency Contract, Identifier Axis",
+        "Open Option Contract, Identifier Axis",
+        "Open Swap Contract, Identifier Axis",
+        "Option Indexed to Issuer's Equity Axis",
+        "Option Indexed to Issuer's Equity, Type Axis",
+        "Other Commitments Axis",
+        "Ownership Axis",
+        "Plan Name Axis",
+        "Pledged Status Axis",
+        "Pledging Purpose Axis",
+        "Position Axis",
+        "PreviousValuationAndTechnique",
+        "Products and Services Axis",
+        "Range Axis",
+        "RateType",
+        "Real Estate, Type of Property Axis",
+        "Regulatory Agency Axis",
+        "Related Party Axis",
+        "Related Party Transaction Axis",
+        "Repurchase Agreements and Similar Transactions, Maturity Periods Axis",
+        "Research and Development Assets Acquired Other than Through Business Combination by Transaction Axis",
+        "Scenario Axis",
+        "Security Owned and Sold, Not yet Purchased, at Fair Value Axis",
+        "Servicing Assets and Servicing Liabilities Risk Axis",
+        "Share Repurchase Program Axis",
+        "Short-term Debt, Type Axis",
+        "Subsequent Event Type Axis",
+        "Title of Individual Axis",
+        "Trading Activity Axis",
+        "TypeOfIndustry",
+        "Valuation Approach and Technique Axis",
+        "Variable Rate Axis",
+        "VariableRateComponent",
+        "Voyatek",
+        "Additions to Other Assets, Amount",
+        "Adjusted cost basis",
+        "Cash and cash equivalents",
+        "Cash and Cash Equivalents, Fair Value Disclosure",
+        "Cash deposits",
+        "Cash equivalents",
+        "Cash, Cash Equivalent, Restricted Cash, and Restricted Cash Equivalent, Continuing Operation",
+        "Cash, Cash Equivalents, and Short-Term Investments",
+        "Change in Unrealized Gain (Loss) on Fair Value Hedging Instruments",
+        "Changes in fair value of warrant and derivative liabilities",
+        "Commitments, Fair Value Disclosure",
+        "Concentration percentage",
+        "Credit line maximum",
+        "Debt and Equity Securities, Realized Gain (Loss)",
+        "Debt and Equity Securities, Unrealized Gain (Loss)",
+        "Debt Instrument, Basis Spread on Variable Rate",
+        "Debt Instrument, Interest Rate During Period",
+        "Debt Instrument, Interest Rate Terms",
+        "Derivative and Foreign Currency Transaction Price Change, Realized Gain (Loss), Operating, before Tax",
+        "Derivative and Foreign Currency Transaction Price Change, Unrealized Gain (Loss), Operating, before Tax",
+        "Derivative Asset",
+        "Derivative Asset, Counterparty Name [Extensible Enumeration]",
+        "Derivative Asset, Gross Asset Including Not Subject to Master Netting Arrangement",
+        "Derivative Asset, Not Subject to Master Netting Arrangement",
+        "Derivative Asset, Notional Amount",
+        "Derivative Asset, Subject to Master Netting Arrangement, after Offset",
+        "Derivative Asset, Subject to Master Netting Arrangement, before Offset",
+        "Derivative Asset, Subject to Master Netting Arrangement, Collateral, Obligation to Return Cash, Offset Against Derivative Asset",
+        "Derivative Asset, Subject to Master Netting Arrangement, Liability Offset",
+        "Derivative Asset, Type [Extensible Enumeration]",
+        "Derivative Liability",
+        "Derivative Liability, Gross Liability Including Not Subject to Master Netting Arrangement",
+        "Derivative Liability, Notional Amount",
+        "Derivative Liability, Subject to Master Netting Arrangement, after Offset",
+        "Derivative Liability, Subject to Master Netting Arrangement, Collateral, Right to Reclaim Cash Offset",
+        "Derivative, Basis Spread on Variable Rate",
+        "Derivative, Contract End Date",
+        "Derivative, Currency Bought",
+        "Derivative, Currency Sold",
+        "Derivative, Description of Terms",
+        "Derivative, Fair Value, Net",
+        "Derivative, Fixed Interest Rate",
+        "Derivative, Gain (Loss), Statement of Income or Comprehensive Income [Extensible Enumeration]",
+        "Derivative, Net Assets, Percentage",
+        "Derivative, Notional Amount",
+        "Derivative, Number of Instruments Held",
+        "Derivative, Premium Paid",
+        "Derivative, Price Risk Option Strike Price",
+        "Derivative, Swaption Interest Rate",
+        "Derivative, Variable Interest Rate",
+        "Dividend Income, Operating",
+        "Dividend Income, Operating, Paid in Cash",
+        "Equity interest owned",
+        "Equity Method Investment, Additional Information",
+        "Equity Method Investments",
+        "Equity Securities, FV-NI, Unrealized Gain (Loss)",
+        "Equity, Attributable to Parent",
+        "Exercise price",
+        "Fair value of derivative",
+        "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset Value",
+        "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Purchases",
+        "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Sales",
+        "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Transfers, Net",
+        "Fee Income",
+        "Foreign Currency Contract, Asset, Fair Value Disclosure",
+        "Initial fair value of Investment",
+        "Interest and Dividend Income, Operating",
+        "Interest and Dividend Income, Securities, Operating",
+        "Interest Income, Operating",
+        "Interest Income, Operating, Paid in Cash",
+        "Interest Income, Operating, Paid in Kind",
+        "Interest Rate Derivatives, at Fair Value, Net",
+        "Interest-Earning Assets, Average Yield",
+        "Investment Company, Distributable Earnings (Loss), Accumulated Appreciation (Depreciation)",
+        "Investment Company, Financial Support to Investee Contractually Required, Amount",
+        "Investment Company, Financial Support to Investee Contractually Required, Not Provided, Amount",
+        "Investment Company, Financial Support, Type [Extensible Enumeration]",
+        "Investment Company, Market Value Per Share",
+        "Investment Owned, Face Amount",
+        "Investment Owned, Foreign Currency Contract, Current Value",
+        "Investment shares",
+        "Investment, Acquisition Date",
+        "Investment, Industry Sector [Extensible Enumeration]",
+        "Investment, Interest Rate, Floor",
+        "Investment, Interest Rate, Paid in Cash",
+        "Investment, Interest Rate, Paid in Kind",
+        "Investment, Issuer Affiliation [Extensible Enumeration]",
+        "Investment, Issuer Geographic Region [Extensible Enumeration]",
+        "Investment, Issuer Name [Extensible Enumeration]",
+        "Investment, Non-income Producing [true false]",
+        "Investment, Restriction Status [true false]",
+        "Investment, Significant Unobservable Input [true false]",
+        "Investment, Tax Basis, Unrealized Gain",
+        "Investment, Tax Basis, Unrealized Gain (Loss)",
+        "Investment, Tax Basis, Unrealized Loss",
+        "Investment, Type [Extensible Enumeration]",
+        "Investment, Variable Interest Rate, Type [Extensible Enumeration]",
+        "Investments",
+        "Investments in and Advances to Affiliates, at Fair Value, Gross Additions",
+        "Investments in and Advances to Affiliates, at Fair Value, Gross Reductions",
+        "Investments in and Advances to Affiliates, at Fair Value, Period Increase (Decrease)",
+        "Investments, Fair Value Disclosure",
+        "Limited Liability Company or Limited Partnership, Members or Limited Partners, Ownership Interest",
+        "Line of Credit Facility, Unused Capacity, Commitment Fee Percentage",
+        "Loans Receivable, Basis Spread on Variable Rate",
+        "Net Assets",
+        "Noninvestment Asset Less Noninvestment Liability, Percent of Net Asset",
+        "Noninvestment Assets Less Noninvestment Liabilities",
+        "Other income",
+        "Paid-in-Kind Interest",
+        "Payments for (Proceeds from) Derivative Instrument, Financing Activities",
+        "Payments for (Proceeds from) Hedge, Financing Activities",
+        "Payments for (Proceeds from) Investments",
+        "Payments for Purchase of Investment, Operating Activity",
+        "Preferred Stock, Dividend Rate, Percentage",
+        "Proceeds from Disposition of Investment, Operating Activity",
+        "Recognized gain (loss)",
+        "Reductions in Other Assets, Amount",
+        "Restricted Cash and Cash Equivalent, Current",
+        "Restricted Investments, at Fair Value",
+        "Restricted Investments, Percent of Net Assets",
+        "Securities Borrowed, Counterparty Name [Extensible Enumeration]",
+        "Security deposit remaining",
+        "Short-Term Investments",
+        "Strike Price",
+        "Tax basis",
+        "Unrealized Gain (Loss) on Derivatives",
+        "Unrealized Gain (Loss) on Investments",
+        "Warrants expiration date",
+        "Weighted Average Rate Domestic Deposit, Money Market"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 21,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [
+          "Agreement",
+          "Asset Acquisition Axis",
+          "Asset Class Axis",
+          "Award Date Axis",
+          "Award Type Axis",
+          "Balance Sheet Location Axis",
+          "Business Acquisition Axis",
+          "Cash and Cash Equivalents Axis",
+          "Class of Financing Receivable Axis",
+          "Class of Stock Axis",
+          "Collaborative Arrangement and Arrangement Other than Collaborative Axis",
+          "Collateral Held Axis",
+          "Concentration Risk Benchmark Axis",
+          "Concentration Risk Type Axis",
+          "Consolidated Entities Axis",
+          "Consolidation Items Axis",
+          "Counterparty Name Axis",
+          "Credit Facility Axis",
+          "Credit Rating, Standard & Poor's Axis",
+          "CreditFacilityUsage",
+          "Currency Axis",
+          "Customer Axis",
+          "Debt Instrument Axis",
+          "Debt Instrument, Redemption, Period Axis",
+          "Derivative Instrument Axis",
+          "Equity Components Axis",
+          "Equity Interest Type Axis",
+          "Equity Method Investment, Nonconsolidated Investee Axis",
+          "ExemptSecurity",
+          "Fair Value Hierarchy and NAV Axis",
+          "Financial Instrument Axis",
+          "Financial Instrument Performance Status Axis",
+          "Financial Support to Nonconsolidated Legal Entity Axis",
+          "FinancingReceivableName",
+          "Geographical Axis",
+          "Hedging Designation Axis",
+          "Hedging Relationship Axis",
+          "InterestRatePeriod",
+          "Investee",
+          "Investment Axis",
+          "Investment Company, Nonconsolidated Subsidiary Axis",
+          "Investment Objective Axis",
+          "Investment, Issuer Name Axis",
+          "Investment, Name Axis",
+          "InvestmentBasisSpreadVariableRate",
+          "InvestmentHoldings",
+          "InvestmentInterestRateFloor",
+          "InvestmentPerformanceStatus",
+          "InvestmentsClassificationByIndustry",
+          "InvestmentSecondaryCategorization1",
+          "InvestmentsIdentifier",
+          "InvestmentSubType",
+          "InvestmentVariableRateBasis",
+          "Legal Entity Axis",
+          "Lien Category Axis",
+          "LocationStatementsOfFinancialPositionBalance",
+          "Long-Lived Tangible Asset Axis",
+          "Long-term Debt, Type Axis",
+          "Loss Contingency Nature Axis",
+          "Measurement Basis Axis",
+          "Measurement Frequency Axis",
+          "Measurement Input Type Axis",
+          "Netting",
+          "Open Forward Foreign Currency Contract, Identifier Axis",
+          "Open Option Contract, Identifier Axis",
+          "Open Swap Contract, Identifier Axis",
+          "Option Indexed to Issuer's Equity Axis",
+          "Option Indexed to Issuer's Equity, Type Axis",
+          "Other Commitments Axis",
+          "Ownership Axis",
+          "Plan Name Axis",
+          "Pledged Status Axis",
+          "Pledging Purpose Axis",
+          "Position Axis",
+          "PreviousValuationAndTechnique",
+          "Products and Services Axis",
+          "Range Axis",
+          "RateType",
+          "Real Estate, Type of Property Axis",
+          "Regulatory Agency Axis",
+          "Related Party Axis",
+          "Related Party Transaction Axis",
+          "Repurchase Agreements and Similar Transactions, Maturity Periods Axis",
+          "Research and Development Assets Acquired Other than Through Business Combination by Transaction Axis",
+          "Scenario Axis",
+          "Security Owned and Sold, Not yet Purchased, at Fair Value Axis",
+          "Servicing Assets and Servicing Liabilities Risk Axis",
+          "Share Repurchase Program Axis",
+          "Short-term Debt, Type Axis",
+          "Subsequent Event Type Axis",
+          "Title of Individual Axis",
+          "Trading Activity Axis",
+          "TypeOfIndustry",
+          "Valuation Approach and Technique Axis",
+          "Variable Rate Axis",
+          "VariableRateComponent",
+          "Voyatek",
+          "Additions to Other Assets, Amount",
+          "Adjusted cost basis",
+          "Cash and cash equivalents",
+          "Cash and Cash Equivalents, Fair Value Disclosure",
+          "Cash deposits",
+          "Cash equivalents",
+          "Cash, Cash Equivalent, Restricted Cash, and Restricted Cash Equivalent, Continuing Operation",
+          "Cash, Cash Equivalents, and Short-Term Investments",
+          "Change in Unrealized Gain (Loss) on Fair Value Hedging Instruments",
+          "Changes in fair value of warrant and derivative liabilities",
+          "Commitments, Fair Value Disclosure",
+          "Concentration percentage",
+          "Credit line maximum",
+          "Debt and Equity Securities, Realized Gain (Loss)",
+          "Debt and Equity Securities, Unrealized Gain (Loss)",
+          "Debt Instrument, Basis Spread on Variable Rate",
+          "Debt Instrument, Interest Rate During Period",
+          "Debt Instrument, Interest Rate Terms",
+          "Derivative and Foreign Currency Transaction Price Change, Realized Gain (Loss), Operating, before Tax",
+          "Derivative and Foreign Currency Transaction Price Change, Unrealized Gain (Loss), Operating, before Tax",
+          "Derivative Asset",
+          "Derivative Asset, Counterparty Name [Extensible Enumeration]",
+          "Derivative Asset, Gross Asset Including Not Subject to Master Netting Arrangement",
+          "Derivative Asset, Not Subject to Master Netting Arrangement",
+          "Derivative Asset, Notional Amount",
+          "Derivative Asset, Subject to Master Netting Arrangement, after Offset",
+          "Derivative Asset, Subject to Master Netting Arrangement, before Offset",
+          "Derivative Asset, Subject to Master Netting Arrangement, Collateral, Obligation to Return Cash, Offset Against Derivative Asset",
+          "Derivative Asset, Subject to Master Netting Arrangement, Liability Offset",
+          "Derivative Asset, Type [Extensible Enumeration]",
+          "Derivative Liability",
+          "Derivative Liability, Gross Liability Including Not Subject to Master Netting Arrangement",
+          "Derivative Liability, Notional Amount",
+          "Derivative Liability, Subject to Master Netting Arrangement, after Offset",
+          "Derivative Liability, Subject to Master Netting Arrangement, Collateral, Right to Reclaim Cash Offset",
+          "Derivative, Basis Spread on Variable Rate",
+          "Derivative, Contract End Date",
+          "Derivative, Currency Bought",
+          "Derivative, Currency Sold",
+          "Derivative, Description of Terms",
+          "Derivative, Fair Value, Net",
+          "Derivative, Fixed Interest Rate",
+          "Derivative, Gain (Loss), Statement of Income or Comprehensive Income [Extensible Enumeration]",
+          "Derivative, Net Assets, Percentage",
+          "Derivative, Notional Amount",
+          "Derivative, Number of Instruments Held",
+          "Derivative, Premium Paid",
+          "Derivative, Price Risk Option Strike Price",
+          "Derivative, Swaption Interest Rate",
+          "Derivative, Variable Interest Rate",
+          "Dividend Income, Operating",
+          "Dividend Income, Operating, Paid in Cash",
+          "Equity interest owned",
+          "Equity Method Investment, Additional Information",
+          "Equity Method Investments",
+          "Equity Securities, FV-NI, Unrealized Gain (Loss)",
+          "Equity, Attributable to Parent",
+          "Exercise price",
+          "Fair value of derivative",
+          "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset Value",
+          "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Purchases",
+          "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Sales",
+          "Fair Value, Measurement with Unobservable Inputs Reconciliation, Recurring Basis, Asset, Transfers, Net",
+          "Fee Income",
+          "Foreign Currency Contract, Asset, Fair Value Disclosure",
+          "Initial fair value of Investment",
+          "Interest and Dividend Income, Operating",
+          "Interest and Dividend Income, Securities, Operating",
+          "Interest Income, Operating",
+          "Interest Income, Operating, Paid in Cash",
+          "Interest Income, Operating, Paid in Kind",
+          "Interest Rate Derivatives, at Fair Value, Net",
+          "Interest-Earning Assets, Average Yield",
+          "Investment Company, Distributable Earnings (Loss), Accumulated Appreciation (Depreciation)",
+          "Investment Company, Financial Support to Investee Contractually Required, Amount",
+          "Investment Company, Financial Support to Investee Contractually Required, Not Provided, Amount",
+          "Investment Company, Financial Support, Type [Extensible Enumeration]",
+          "Investment Company, Market Value Per Share",
+          "Investment Owned, Face Amount",
+          "Investment Owned, Foreign Currency Contract, Current Value",
+          "Investment shares",
+          "Investment, Acquisition Date",
+          "Investment, Industry Sector [Extensible Enumeration]",
+          "Investment, Interest Rate, Floor",
+          "Investment, Interest Rate, Paid in Cash",
+          "Investment, Interest Rate, Paid in Kind",
+          "Investment, Issuer Affiliation [Extensible Enumeration]",
+          "Investment, Issuer Geographic Region [Extensible Enumeration]",
+          "Investment, Issuer Name [Extensible Enumeration]",
+          "Investment, Non-income Producing [true false]",
+          "Investment, Restriction Status [true false]",
+          "Investment, Significant Unobservable Input [true false]",
+          "Investment, Tax Basis, Unrealized Gain",
+          "Investment, Tax Basis, Unrealized Gain (Loss)",
+          "Investment, Tax Basis, Unrealized Loss",
+          "Investment, Type [Extensible Enumeration]",
+          "Investment, Variable Interest Rate, Type [Extensible Enumeration]",
+          "Investments",
+          "Investments in and Advances to Affiliates, at Fair Value, Gross Additions",
+          "Investments in and Advances to Affiliates, at Fair Value, Gross Reductions",
+          "Investments in and Advances to Affiliates, at Fair Value, Period Increase (Decrease)",
+          "Investments, Fair Value Disclosure",
+          "Limited Liability Company or Limited Partnership, Members or Limited Partners, Ownership Interest",
+          "Line of Credit Facility, Unused Capacity, Commitment Fee Percentage",
+          "Loans Receivable, Basis Spread on Variable Rate",
+          "Net Assets",
+          "Noninvestment Asset Less Noninvestment Liability, Percent of Net Asset",
+          "Noninvestment Assets Less Noninvestment Liabilities",
+          "Other income",
+          "Paid-in-Kind Interest",
+          "Payments for (Proceeds from) Derivative Instrument, Financing Activities",
+          "Payments for (Proceeds from) Hedge, Financing Activities",
+          "Payments for (Proceeds from) Investments",
+          "Payments for Purchase of Investment, Operating Activity",
+          "Preferred Stock, Dividend Rate, Percentage",
+          "Proceeds from Disposition of Investment, Operating Activity",
+          "Recognized gain (loss)",
+          "Reductions in Other Assets, Amount",
+          "Restricted Cash and Cash Equivalent, Current",
+          "Restricted Investments, at Fair Value",
+          "Restricted Investments, Percent of Net Assets",
+          "Securities Borrowed, Counterparty Name [Extensible Enumeration]",
+          "Security deposit remaining",
+          "Short-Term Investments",
+          "Strike Price",
+          "Tax basis",
+          "Unrealized Gain (Loss) on Derivatives",
+          "Unrealized Gain (Loss) on Investments",
+          "Warrants expiration date",
+          "Weighted Average Rate Domestic Deposit, Money Market"
+        ],
+        "missing_from_file": [],
+        "observed_columns": 248,
+        "same_order_for_documented": true
+      },
+      "member_path": "soi.tsv",
+      "period_range": {
+        "max": "2026-06-30",
+        "min": "2026-06-30"
+      },
+      "present": true,
+      "preset_columns_present": 21,
+      "qtrs": {
+        "0": 162530,
+        "1": 232,
+        "2": 8698,
+        "3": 1520,
+        "4": 8898,
+        "5": 27,
+        "8": 1,
+        "12": 1
+      },
+      "rows": 181907,
+      "sha256": "e20ac84b6bd5aae2d058cb24331d0a4bd234fa942fc3840f97b83515c528b8d0"
+    },
+    "sub.tsv": {
+      "bytes": 72451,
+      "counters": {
+        "accepted_format=datetime": 174,
+        "adsh_format_valid": 174,
+        "cik_format=integer_len5": 2,
+        "cik_format=integer_len6": 1,
+        "cik_format=integer_len7": 171,
+        "detail=1": 174,
+        "filed_format=digits_8": 174,
+        "fp=FY": 1,
+        "fp=Q1": 2,
+        "fp=Q2": 156,
+        "fp=Q3": 15,
+        "period_format=digits_8": 174,
+        "prevrpt=0": 174
+      },
+      "distinct_adsh": 174,
+      "documented_primary_key": "adsh",
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "filed_range": {
+        "max": "2026-08-20",
+        "min": "2026-08-03"
+      },
+      "forms": {
+        "10-K": 1,
+        "10-Q": 173
+      },
+      "header": [
+        "adsh",
+        "cik",
+        "name",
+        "countryba",
+        "stprba",
+        "cityba",
+        "zipba",
+        "bas1",
+        "bas2",
+        "baph",
+        "countryma",
+        "stprma",
+        "cityma",
+        "zipma",
+        "mas1",
+        "mas2",
+        "countryinc",
+        "stprinc",
+        "ein",
+        "former",
+        "changed",
+        "afs",
+        "wksi",
+        "fye",
+        "form",
+        "period",
+        "fy",
+        "fp",
+        "filed",
+        "fileNumber",
+        "accepted",
+        "prevrpt",
+        "detail",
+        "instance",
+        "pubfloatusd",
+        "floatdate",
+        "inlineurl"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 36,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [
+          "fileNumber"
+        ],
+        "missing_from_file": [],
+        "observed_columns": 37,
+        "same_order_for_documented": false
+      },
+      "member_path": "datasets/sub.tsv",
+      "present": true,
+      "rows": 174,
+      "sha256": "ed333e6ad2044c8537972b47df935ff1c89431def5b9973fda7cb42defb89a13"
+    },
+    "tag.tsv": {
+      "bytes": 7205739,
+      "counters": {
+        "custom=0": 4788,
+        "custom=1": 37272
+      },
+      "documented_primary_key": [
+        "tag",
+        "version"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "header": [
+        "tag",
+        "version",
+        "custom",
+        "abstract",
+        "datatype",
+        "iord",
+        "crdr",
+        "tlabel",
+        "doc"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 9,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 9,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/tag.tsv",
+      "present": true,
+      "rows": 42060,
+      "sha256": "264bea87de293e2e5190be4859ebe4a816b5ac226f74de5ca463d6d0178d81bd",
+      "standard_tags_for_soi_preset_labels": {
+        "Investment Interest Rate": [
+          "InvestmentInterestRate"
+        ],
+        "Investment Owned, Balance, Principal Amount": [
+          "InvestmentOwnedBalancePrincipalAmount"
+        ],
+        "Investment Owned, Cost": [
+          "InvestmentOwnedAtCost"
+        ],
+        "Investment Owned, Fair Value": [
+          "InvestmentOwnedAtFairValue"
+        ],
+        "Investment Owned, Net Assets, Percentage": [
+          "InvestmentOwnedPercentOfNetAssets"
+        ],
+        "Investment, Basis Spread, Variable Rate": [
+          "InvestmentBasisSpreadVariableRate"
+        ]
+      }
+    },
+    "txt.tsv": {
+      "bytes": 175718599,
+      "counters": {},
+      "documented_primary_key": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "segments"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "footnotes_longer_than_512_bytes": 53094,
+      "header": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "segments",
+        "dimn",
+        "value",
+        "txtlen",
+        "footnote",
+        "footlen"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 11,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 11,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/txt.tsv",
+      "present": true,
+      "qtrs": {
+        "0": 115357,
+        "1": 1285,
+        "2": 30051,
+        "3": 4070,
+        "4": 15844,
+        "9": 1,
+        "16": 1,
+        "18": 1
+      },
+      "rows": 166610,
+      "sha256": "ccc161a56646dfca0afdfe60ec86d2c8b46cab96a7fe53cd739ec669ac752360"
+    }
+  }
+}

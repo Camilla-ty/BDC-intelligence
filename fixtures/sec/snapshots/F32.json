@@ -1,0 +1,142 @@
+{
+  "cik_value_lengths": {
+    "len10": 137
+  },
+  "columns": {
+    "01 ": {
+      "format_classes": {
+        "integer": 137
+      },
+      "non_empty": 137
+    },
+    "02  File_No": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "03                      CIK": {
+      "format_classes": {
+        "integer": 137
+      },
+      "non_empty": 137
+    },
+    "04           Registrant_Name": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "05 Address_1": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "06 Address_2": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "07 City": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "08 State": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "09 Zip_Code": {
+      "format_classes": {
+        "integer": 123,
+        "text": 14
+      },
+      "non_empty": 137
+    },
+    "10 sub_type": {
+      "format_classes": {
+        "integer": 6,
+        "text": 131
+      },
+      "non_empty": 137
+    },
+    "11 last_filing_date": {
+      "format_classes": {
+        "text": 137
+      },
+      "non_empty": 137
+    },
+    "12  ": {
+      "format_classes": {
+        "empty": 137
+      },
+      "non_empty": 0
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F32",
+  "fixture_sha256": "128c62a11ee1a18e1e49820b311d6621c719b03c5dd3c101adbd8e757f52acbc",
+  "header": [
+    "",
+    " File_No",
+    "                     CIK",
+    "          Registrant_Name",
+    "Address_1",
+    "Address_2",
+    "City",
+    "State",
+    "Zip_Code",
+    "sub_type",
+    "last_filing_date",
+    " "
+  ],
+  "header_equals_verified_2026_layout": false,
+  "rows": 137,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "3": 1,
+    "15": 1,
+    "497": 4,
+    "1-E": 1,
+    "10-K": 1,
+    "10-K/A": 1,
+    "10-Q": 9,
+    "40-17F2": 2,
+    "40-17G": 6,
+    "40-APP": 4,
+    "40-APP/A": 2,
+    "424B": 1,
+    "8-K": 33,
+    "8-K/A": 1,
+    "APP WD": 2,
+    "APP WD/A": 1,
+    "CERTNAS": 1,
+    "CORRESP": 9,
+    "COUPDAT": 2,
+    "DEF 14A": 2,
+    "DEFA14A": 2,
+    "DRS/A": 1,
+    "ID-PASSUPD": 1,
+    "N-2": 5,
+    "N-2/A": 6,
+    "N-54A": 5,
+    "N-54C": 1,
+    "N-6F": 2,
+    "N-6F/A": 2,
+    "NO ACT": 2,
+    "POS 8C": 3,
+    "POS AMI": 1,
+    "POS EX": 3,
+    "REVOKED": 2,
+    "RW": 14,
+    "S-8": 1,
+    "SC 13D/A": 1,
+    "SC 13G": 1
+  }
+}

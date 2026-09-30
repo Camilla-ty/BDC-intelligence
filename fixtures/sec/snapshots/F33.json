@@ -1,0 +1,127 @@
+{
+  "cik_value_lengths": {
+    "len5": 3,
+    "len6": 31,
+    "len7": 101
+  },
+  "columns": {
+    "01 file_number": {
+      "format_classes": {
+        "text": 135
+      },
+      "non_empty": 135
+    },
+    "02 cik": {
+      "format_classes": {
+        "integer": 135
+      },
+      "non_empty": 135
+    },
+    "03 registrant_name": {
+      "format_classes": {
+        "text": 135
+      },
+      "non_empty": 135
+    },
+    "04 address_1": {
+      "format_classes": {
+        "text": 135
+      },
+      "non_empty": 135
+    },
+    "05 address_2": {
+      "format_classes": {
+        "text": 135
+      },
+      "non_empty": 135
+    },
+    "06 city": {
+      "format_classes": {
+        "text": 135
+      },
+      "non_empty": 135
+    },
+    "07 state": {
+      "format_classes": {
+        "text": 135
+      },
+      "non_empty": 135
+    },
+    "08 zip_code": {
+      "format_classes": {
+        "integer": 126,
+        "text": 9
+      },
+      "non_empty": 135
+    },
+    "09 last_filling_date": {
+      "format_classes": {
+        "empty": 10,
+        "text": 125
+      },
+      "non_empty": 125
+    },
+    "10 last_filling_type": {
+      "format_classes": {
+        "integer": 2,
+        "text": 133
+      },
+      "non_empty": 135
+    }
+  },
+  "field_count_mismatches": 0,
+  "fixture_id": "F33",
+  "fixture_sha256": "f884c213447fd9d64601b78223f175a6bd7c6ecacc6a906164fdd28145473942",
+  "header": [
+    "file_number",
+    "cik",
+    "registrant_name",
+    "address_1",
+    "address_2",
+    "city",
+    "state",
+    "zip_code",
+    "last_filling_date",
+    "last_filling_type"
+  ],
+  "header_equals_verified_2026_layout": false,
+  "rows": 135,
+  "source_type": "bdc_report_csv",
+  "starts_with_byte_order_mark": false,
+  "type_last_filing_values": {
+    "15": 1,
+    "497": 1,
+    "1-E": 1,
+    "1-E/A": 1,
+    "10-K": 1,
+    "10-Q": 6,
+    "10-Q/A": 2,
+    "10QSB/A": 1,
+    "40-17F2": 3,
+    "40-17G": 4,
+    "40-APP": 1,
+    "40-APP/A": 3,
+    "424B": 1,
+    "497AD": 3,
+    "8-K": 35,
+    "8-K/A": 2,
+    "APP WD": 2,
+    "CERTNAS": 1,
+    "DEF 14A": 2,
+    "DEF 14C": 1,
+    "EFFECT": 2,
+    "N-2": 4,
+    "N-2/A": 15,
+    "N-54A": 5,
+    "N-6F": 3,
+    "N-6F/A": 4,
+    "NO ACT": 2,
+    "NT 10-K": 2,
+    "NT 10-Q": 1,
+    "POS 8C": 2,
+    "POS AMI": 1,
+    "RW": 10,
+    "SC 13D/A": 1,
+    "[NULL]": 11
+  }
+}

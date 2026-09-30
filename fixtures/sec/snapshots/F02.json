@@ -1,0 +1,9 @@
+{
+  "bytes": 355310,
+  "fixture_id": "F02",
+  "fixture_sha256": "661838034b6251d8a939e303fab8a975b285c7e08b28485fab6972fc60a799d6",
+  "note": "Transcribed manually into docs/SOURCE_SCHEMAS.md; not parsed by this script",
+  "page_objects": 15,
+  "pdf_header": "%PDF-1.6",
+  "source_type": "sec_documentation_pdf"
+}

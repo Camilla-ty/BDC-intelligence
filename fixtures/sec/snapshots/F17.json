@@ -1,0 +1,17 @@
+{
+  "data_file_links": [
+    "/Archives/edgar/data/1768986/000176898619000001/primary_doc.xml",
+    "/files/company_tickers.json",
+    "/files/ocoo01-excess-pers-prop-guidance.pdf",
+    "/info/edgar/specifications/pds_dissemination_spec.pdf"
+  ],
+  "fair_access_phrases": [
+    "declare your user agent in request headers: Sample Declared Bot Request Headers: User-Agent: Sample Company Name AdminContact@&lt;sample company domain&gt;.",
+    "gov content and have some resources for developers: Accessing EDGAR Data Developer Resources Note that our current maximum access rate is 10 requests per second."
+  ],
+  "fixture_id": "F17",
+  "last_reviewed_or_updated": "Aug. 23, 2024",
+  "note": "HTML pages include dynamic markup; their checksums are expected to change on every retrieval",
+  "source_type": "sec_web_page",
+  "title": "SEC.gov | Webmaster Frequently Asked Questions"
+}

@@ -1,0 +1,33 @@
+{
+  "data_file_links": [
+    "/files/bdc_readme.pdf",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2022q4_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2023q1_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2023q2_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2023q3_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2023q4_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2024q1_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2024q2_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2024q3_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2024q4_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2025q1_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2025q2_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2025q3_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2025q4_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_01_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_02_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_03_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_04_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_05_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_06_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_07_bdc.zip",
+    "/files/datastandardsinnovation/data/business-development-company-bdc-data-sets/2026_08_bdc.zip",
+    "/files/ocoo01-excess-pers-prop-guidance.pdf"
+  ],
+  "fair_access_phrases": [],
+  "fixture_id": "F01",
+  "last_reviewed_or_updated": "Aug. 31, 2026",
+  "note": "HTML pages include dynamic markup; their checksums are expected to change on every retrieval",
+  "source_type": "sec_web_page",
+  "title": "SEC.gov | Business Development Company (BDC) Data Sets"
+}

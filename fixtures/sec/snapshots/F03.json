@@ -1,0 +1,376 @@
+{
+  "archive_members": [
+    {
+      "bytes": 341737,
+      "path": "readme.htm",
+      "sha256": "de79ca26b93c752fada5b782816a62c41ca95a340b22dbd8dfc1d3f3985a455b"
+    },
+    {
+      "bytes": 39133,
+      "path": "bdc_metadata.json",
+      "sha256": "825ef7f9b9d516a791185383c6098107dadba509d3aeedaba44035aab2526f6f"
+    }
+  ],
+  "filed_window_assumed_from_file_name": [
+    "2026-06-01",
+    "2026-06-30"
+  ],
+  "fixture_id": "F03",
+  "fixture_sha256": "d14a5a7446473209f24e125e539d0d154a6157a43a87a85f46ca7a3fb7d01bf8",
+  "metadata_dialect": {
+    "delimiter": "\t",
+    "header": true,
+    "headerRowCount": 1
+  },
+  "registrant_ciks_in_soi": 0,
+  "soi_vs_num_value_agreement": {
+    "by_soi_column": {},
+    "method": "Counts of SOI values (rows with a non-empty identifier) equal to a NUM value of each tag with the same adsh, ddate, and InvestmentIdentifierAxis typed member. Counts only; no values recorded."
+  },
+  "source_period": "2026-06",
+  "source_type": "bdc_dataset_zip",
+  "tables": {
+    "cal.tsv": {
+      "bytes": 50,
+      "documented_primary_key": [
+        "adsh",
+        "grp",
+        "arc"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "header": [
+        "adsh",
+        "grp",
+        "arc",
+        "negative",
+        "ptag",
+        "pversion",
+        "ctag",
+        "cversion"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 8,
+        "documented_names_with_whitespace": [
+          "pversion "
+        ],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 8,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/cal.tsv",
+      "present": true,
+      "rows": 0,
+      "sha256": "2d5394982f1b76a40e42759f0286400a97d4c0753535740d0f431909eeeaa1c2"
+    },
+    "non.tsv": {
+      "bytes": 1168670,
+      "distinct_adsh": 204,
+      "documented_primary_key": null,
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "forms": {
+        "8-K": 4353,
+        "8-K/A": 21,
+        "DEF 14A": 37
+      },
+      "header": [
+        "adsh",
+        "cik",
+        "name",
+        "form",
+        "filed",
+        "period",
+        "ddate",
+        "tag",
+        "version",
+        "label",
+        "segments",
+        "value",
+        "indexurl"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 13,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [
+          "segments"
+        ],
+        "missing_from_file": [
+          "segment"
+        ],
+        "observed_columns": 13,
+        "same_order_for_documented": false
+      },
+      "member_path": "datasets/non.tsv",
+      "present": true,
+      "rows": 4411,
+      "sha256": "2a755ac9e0e80d9ce61ad935419cd63aec4bc150c8855ba42d1dce64ee892f82"
+    },
+    "num.tsv": {
+      "bytes": 69,
+      "counters": {},
+      "documented_primary_key": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "uom",
+        "segments"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "footnotes_longer_than_512_bytes": 0,
+      "header": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "uom",
+        "segments",
+        "dimn",
+        "value",
+        "footnote",
+        "footlen"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 11,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 11,
+        "same_order_for_documented": true
+      },
+      "magnitude_bands_for_soi_preset_labels_on_identifier_axis_rows": {},
+      "member_path": "datasets/num.tsv",
+      "present": true,
+      "qtrs": {},
+      "rows": 0,
+      "sha256": "32e93a02e50500dba700e00659cbf89f9e6e4caed8845ebd619c0ecaa83a317a",
+      "units_for_soi_preset_labels_on_identifier_axis_rows": {},
+      "uom_distinct": 0,
+      "uom_top": {}
+    },
+    "pre.tsv": {
+      "bytes": 62,
+      "counters": {},
+      "documented_primary_key": [
+        "adsh",
+        "report",
+        "line"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "header": [
+        "adsh",
+        "report",
+        "line",
+        "stmt",
+        "inpth",
+        "tag",
+        "version",
+        "prole",
+        "plabel",
+        "negating"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 10,
+        "documented_names_with_whitespace": [
+          "version "
+        ],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 10,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/pre.tsv",
+      "present": true,
+      "rows": 0,
+      "sha256": "686d35c9172106f6e579b156bf1d3988e502f7e686d9d80ea6e824383a88b74f"
+    },
+    "soi.tsv": {
+      "bytes": 0,
+      "documented_primary_key": null,
+      "empty_file": true,
+      "field_count_mismatches": 0,
+      "header": null,
+      "header_vs_bdc_metadata": {
+        "documented_columns": 21,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [],
+        "missing_from_file": [
+          "adsh",
+          "cik",
+          "name",
+          "ddate",
+          "qtrs",
+          "form",
+          "filed",
+          "period",
+          "inlineurl",
+          "cstm",
+          "Industry Sector Axis",
+          "Investment, Identifier Axis",
+          "Investment, Issuer Affiliation Axis",
+          "Investment Type Axis",
+          "Investment Interest Rate",
+          "Investment, Basis Spread, Variable Rate",
+          "Investment Maturity Date",
+          "Investment Owned, Balance, Principal Amount",
+          "Investment Owned, Cost",
+          "Investment Owned, Fair Value",
+          "Investment Owned, Net Assets, Percentage"
+        ],
+        "observed_columns": 0,
+        "same_order_for_documented": false
+      },
+      "member_path": "soi.tsv",
+      "present": true,
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "sub.tsv": {
+      "bytes": 250,
+      "counters": {},
+      "distinct_adsh": 0,
+      "documented_primary_key": "adsh",
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "filed_range": {
+        "max": null,
+        "min": null
+      },
+      "forms": {},
+      "header": [
+        "adsh",
+        "cik",
+        "name",
+        "countryba",
+        "stprba",
+        "cityba",
+        "zipba",
+        "bas1",
+        "bas2",
+        "baph",
+        "countryma",
+        "stprma",
+        "cityma",
+        "zipma",
+        "mas1",
+        "mas2",
+        "countryinc",
+        "stprinc",
+        "ein",
+        "former",
+        "changed",
+        "afs",
+        "wksi",
+        "fye",
+        "form",
+        "period",
+        "fy",
+        "fp",
+        "filed",
+        "fileNumber",
+        "accepted",
+        "prevrpt",
+        "detail",
+        "instance",
+        "pubfloatusd",
+        "floatdate",
+        "inlineurl"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 36,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [
+          "fileNumber"
+        ],
+        "missing_from_file": [],
+        "observed_columns": 37,
+        "same_order_for_documented": false
+      },
+      "member_path": "datasets/sub.tsv",
+      "present": true,
+      "rows": 0,
+      "sha256": "7d2070f9e47bc7a99b33a0732302c0937b3326373888814f54fee8cb69fec5c7"
+    },
+    "tag.tsv": {
+      "bytes": 58,
+      "counters": {},
+      "documented_primary_key": [
+        "tag",
+        "version"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "header": [
+        "tag",
+        "version",
+        "custom",
+        "abstract",
+        "datatype",
+        "iord",
+        "crdr",
+        "tlabel",
+        "doc"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 9,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 9,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/tag.tsv",
+      "present": true,
+      "rows": 0,
+      "sha256": "8c67effa54dfde54500a7f3eeeab71d8d3c15b3e4c29fc5b7c19187b3a227244",
+      "standard_tags_for_soi_preset_labels": {}
+    },
+    "txt.tsv": {
+      "bytes": 72,
+      "counters": {},
+      "documented_primary_key": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "segments"
+      ],
+      "empty_file": false,
+      "field_count_mismatches": 0,
+      "footnotes_longer_than_512_bytes": 0,
+      "header": [
+        "adsh",
+        "tag",
+        "version",
+        "ddate",
+        "qtrs",
+        "segments",
+        "dimn",
+        "value",
+        "txtlen",
+        "footnote",
+        "footlen"
+      ],
+      "header_vs_bdc_metadata": {
+        "documented_columns": 11,
+        "documented_names_with_whitespace": [],
+        "extra_in_file": [],
+        "missing_from_file": [],
+        "observed_columns": 11,
+        "same_order_for_documented": true
+      },
+      "member_path": "datasets/txt.tsv",
+      "present": true,
+      "qtrs": {},
+      "rows": 0,
+      "sha256": "5ace4ea2ec074ac941711d3fdc9047c98ef9e1311e215b1bb543cfc33f09218e"
+    }
+  }
+}

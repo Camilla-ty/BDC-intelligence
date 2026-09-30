@@ -1,0 +1,27 @@
+{
+  "accession": "0001628280-26-050307",
+  "bytes": 24846131,
+  "fixture_id": "F13b",
+  "fixture_sha256": "e500d1f0705d582e58edd7746b3c7026b30a1c8c63676783d7f6349e598f4630",
+  "has_ix_header": true,
+  "inline_xbrl_fact_elements": {
+    "nonFraction": 22756,
+    "nonNumeric": 192
+  },
+  "level2_identifier_presence": {
+    "distinct_soi_identifiers": 2889,
+    "found_as_whole_string": 2889,
+    "found_only_as_separate_parts": 0,
+    "method": "Distinct non-empty SOI identifier strings for this accession across cached datasets, entity-decoded and whitespace-normalized, searched in the tag-stripped document text. Counts only.",
+    "not_found": 0
+  },
+  "selected_investment_concepts_present": [
+    "us-gaap:InvestmentInterestRate",
+    "us-gaap:InvestmentBasisSpreadVariableRate",
+    "us-gaap:InvestmentOwnedBalancePrincipalAmount",
+    "us-gaap:InvestmentOwnedAtCost",
+    "us-gaap:InvestmentOwnedAtFairValue",
+    "us-gaap:InvestmentOwnedPercentOfNetAssets"
+  ],
+  "source_type": "filing_primary_document"
+}

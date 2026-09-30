@@ -1,0 +1,42 @@
+---
+description: Non-negotiable data-integrity and scope guardrails for every task in this repository
+alwaysApply: true
+---
+
+# Core guardrails
+
+Guardrails: G-01, G-02, G-03, G-04, G-05, G-06, G-07, G-08, G-09, G-10, G-11, G-12, G-13, G-14, G-15, G-16, G-17
+
+Full descriptions: root `AGENTS.md`. Scoped detail: other files in `.cursor/rules/`.
+
+- G-01 Evidence over inference: state only what a source document supports.
+- G-02 No fabricated financial data anywhere (unit tests of arithmetic excepted; see `tests-and-fixtures.mdc`).
+- G-03 No invented SEC endpoints, files, or fields; use only officially documented ones.
+- G-04 Unknown and Unresolved are valid states; never default, guess, zero, or blank them.
+- G-05 Missing coverage is not zero exposure.
+- G-06 No composite scores, grades, or opaque rankings.
+- G-07 Deterministic arithmetic stays in versioned, tested code.
+- G-08 An LLM is never authoritative for financial facts or arithmetic.
+- G-09 CIK identifies the SEC registrant (the BDC), never a portfolio borrower.
+- G-10 Never silently overwrite historical observations or resolution decisions.
+- G-11 Preserve raw source values next to normalized values.
+- G-12 Retain source provenance for every material fact.
+- G-13 Resolution states are exactly MATCHED, PROBABLE, UNRESOLVED, REJECTED.
+- G-14 Legal entity, economic group, and instrument are separate concepts.
+- G-15 Same borrower does not imply same instrument.
+- G-16 `/reference/` and `docs/IMPLEMENTATION_PLAN.md` are local-only: never modify, commit, or force-add.
+- G-17 Build only the approved phase and scope; no unapproved features or dependencies.
+
+## Precedence
+
+Guardrails > approved phase scope > `docs/adr/` > scoped rules > framework notes.
+If a request conflicts with a guardrail, say so and ask. Never comply or work around it silently.
+
+## Stop and ask
+
+- An SEC endpoint, file, or field is not documented from an official source.
+- Evidence is insufficient for a resolution decision.
+- A new dependency, service, or data source seems necessary.
+- The work is outside the current phase, or touches a local-only file.
+
+Label unresolved gaps as OPEN QUESTION, ENGINEERING DECISION, or FUTURE / NOT MVP.
