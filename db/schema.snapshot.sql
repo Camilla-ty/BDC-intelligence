@@ -162,6 +162,32 @@ CREATE TYPE ref.mapping_target AS ENUM (
     'RAW_ONLY'
 );
 
+CREATE TYPE ref.maturity_inspection_state AS ENUM (
+    'FILING_DISPLAYED',
+    'UNAVAILABLE',
+    'UNRESOLVED',
+    'NOT_BOUND'
+);
+
+CREATE TYPE ref.maturity_no_bind_reason AS ENUM (
+    'NO_MATCH',
+    'MULTIPLE_ROWS',
+    'SHARED_ROW',
+    'CONTEXT_NOT_SINGLE_ROW',
+    'NO_COMPARABLE_FIELD',
+    'NO_REPORTED_DATE'
+);
+
+CREATE TYPE ref.maturity_provenance_state AS ENUM (
+    'REPORTED_STRUCTURED',
+    'FILING_DISPLAYED',
+    'UNAVAILABLE',
+    'UNKNOWN',
+    'UNRESOLVED'
+);
+
+COMMENT ON TYPE ref.maturity_provenance_state IS 'Source of the product maturity. Since 0025, UNAVAILABLE is not produced: an UNAVAILABLE inspection with no structured date is UNKNOWN, and inspection_state carries UNAVAILABLE.';
+
 CREATE TYPE ref.parse_status AS ENUM (
     'OK',
     'FIELD_COUNT_MISMATCH',
@@ -186,8 +212,12 @@ CREATE TYPE ref.resolution_state AS ENUM (
 CREATE TYPE ref.row_kind AS ENUM (
     'IDENTIFIER_ROW',
     'NO_IDENTIFIER_ROW',
-    'UNCLASSIFIED'
+    'UNCLASSIFIED',
+    'SUBTOTAL_ROW',
+    'DIMENSION_FACT_ROW'
 );
+
+COMMENT ON TYPE ref.row_kind IS 'IDENTIFIER_ROW: this row''s Investment, Identifier Axis cell is non-empty. NO_IDENTIFIER_ROW: historical classification of an empty identifier cell; existing rows stay stored. SUBTOTAL_ROW and DIMENSION_FACT_ROW: filing-evidence kinds recorded by a superseding classification, only when that cell is empty. UNCLASSIFIED: the evidence does not assign one of those kinds. A blank identifier is not copied from another row.';
 
 CREATE TYPE ref.scale_state AS ENUM (
     'KNOWN',
@@ -428,6 +458,120 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION obs.check_maturity_inspection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+  origin bigint;
+  displayed date;
+BEGIN
+  SELECT p.origin_soi_row_observation_id INTO origin
+  FROM obs.position_observation p
+  WHERE p.id = NEW.position_observation_id;
+  IF origin IS NULL OR origin IS DISTINCT FROM NEW.soi_row_observation_id THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'maturity inspection must use the position origin SOI row';
+  END IF;
+
+  IF NEW.inspection_state = 'NOT_BOUND' THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM evidence.evidence e
+      JOIN registry.filing_document_artifact fda ON fda.artifact_id = e.artifact_id
+      JOIN registry.filing_document fd ON fd.id = fda.filing_document_id
+      JOIN obs.position_observation p ON p.id = NEW.position_observation_id
+      WHERE e.id = NEW.evidence_id
+        AND e.evidence_level = 'L2_ORIGINAL_FILING'
+        AND e.locator_type = 'DOCUMENT'
+        AND fd.filing_id = p.filing_id
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'NOT_BOUND requires L2 DOCUMENT evidence on the position filing artifact';
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM validation.validation_result v
+      JOIN evidence.evidence ve ON ve.id = v.evidence_id
+      JOIN evidence.evidence doc ON doc.id = NEW.evidence_id
+      WHERE v.subject_table = 'obs.position_observation'
+        AND v.subject_id = NEW.position_observation_id
+        AND v.outcome = 'FAIL'
+        AND v.rule_version_id = NEW.rule_version_id
+        AND v.run_id = NEW.run_id
+        AND v.detail = NEW.no_bind_reason::text
+        AND ve.evidence_level = 'L2_ORIGINAL_FILING'
+        AND ve.artifact_id = doc.artifact_id
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'NOT_BOUND requires a FAIL validation of the same rule version and run whose detail is no_bind_reason';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.inspection_state = 'FILING_DISPLAYED' THEN
+    IF NEW.raw_value !~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$' THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_DISPLAYED raw_value must be a month/day/year date';
+    END IF;
+    displayed := to_date(NEW.raw_value, 'FMMM/FMDD/YYYY');
+    IF NEW.normalized_date IS DISTINCT FROM displayed THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'normalized_date must equal the displayed month/day/year';
+    END IF;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM evidence.evidence e
+    JOIN registry.filing_document_artifact fda ON fda.artifact_id = e.artifact_id
+    JOIN registry.filing_document fd ON fd.id = fda.filing_document_id
+    JOIN obs.position_observation p ON p.id = NEW.position_observation_id
+    WHERE e.id = NEW.evidence_id
+      AND e.evidence_level = 'L2_ORIGINAL_FILING'
+      AND e.locator_type = 'HTML_ANCHOR'
+      AND e.html_anchor = 'ix-context-row:' || NEW.filing_context_id
+      AND fd.filing_id = p.filing_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'maturity inspection requires an L2 ix-context-row anchor on the position filing';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM validation.validation_result v
+    JOIN evidence.evidence fact ON fact.id = v.evidence_id
+    JOIN evidence.evidence anchor ON anchor.id = NEW.evidence_id
+    WHERE v.subject_table = 'obs.position_observation'
+      AND v.subject_id = NEW.position_observation_id
+      AND v.outcome = 'PASS'
+      AND v.detail = NEW.filing_context_id
+      AND fact.evidence_level = 'L2_ORIGINAL_FILING'
+      AND fact.locator_type = 'IXBRL_FACT'
+      AND fact.artifact_id = anchor.artifact_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'maturity inspection requires a PASS validation of an IXBRL_FACT on the same filing artifact for this context';
+  END IF;
+  RETURN NEW;
+END
+$_$;
+
+CREATE FUNCTION obs.check_maturity_inspection_candidate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM obs.maturity_inspection i
+    WHERE i.id = NEW.maturity_inspection_id AND i.inspection_state = 'UNRESOLVED'
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'maturity candidates belong only to an UNRESOLVED inspection';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
 CREATE FUNCTION obs.check_num_fact_observation() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -511,8 +655,21 @@ CREATE FUNCTION obs.check_position_observation() RETURNS trigger
     AS $$
 DECLARE
   s obs.soi_row_observation;
+  cell text;
 BEGIN
   SELECT * INTO s FROM obs.soi_row_observation WHERE id = NEW.origin_soi_row_observation_id;
+  IF s.id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'position observation origin SOI row does not exist';
+  END IF;
+  cell := nullif(obs.cell_by_label(s.tabular_row_id, 'Investment, Identifier Axis'), '');
+  IF cell IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'a blank identifier cell cannot become a position';
+  END IF;
+  IF NEW.holding_descriptor_raw IS DISTINCT FROM cell THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'holding_descriptor_raw must equal the origin identifier cell';
+  END IF;
   IF s.filing_id <> NEW.filing_id
      OR s.reported_date IS DISTINCT FROM NEW.reported_date
      OR s.date_precision <> NEW.date_precision
@@ -521,7 +678,17 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1',
       MESSAGE = 'position observation must match its origin SOI row (filing, date, duration, identifier)';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM evidence.evidence e WHERE e.id = NEW.evidence_id AND e.tabular_row_id = s.tabular_row_id) THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM obs.current_soi_row_classification c
+    WHERE c.soi_row_observation_id = s.id AND c.row_kind = 'IDENTIFIER_ROW'
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'a position origin must be IDENTIFIER_ROW';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM evidence.evidence e
+    WHERE e.id = NEW.evidence_id AND e.tabular_row_id = s.tabular_row_id
+  ) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'evidence must point at the origin SOI row';
   END IF;
   RETURN NEW;
@@ -563,6 +730,54 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM evidence.evidence e WHERE e.id = p_evidence_id AND e.tabular_row_id = p_row_id) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'evidence must point at the same source row';
   END IF;
+END
+$$;
+
+CREATE FUNCTION obs.check_soi_row_classification() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  ident text;
+BEGIN
+  SELECT o.identifier_raw INTO ident
+  FROM obs.soi_row_observation o
+  WHERE o.id = NEW.soi_row_observation_id;
+
+  IF NEW.row_kind::text = 'IDENTIFIER_ROW' AND ident IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'IDENTIFIER_ROW requires a non-empty origin identifier cell';
+  END IF;
+  IF NEW.row_kind::text IN ('NO_IDENTIFIER_ROW', 'SUBTOTAL_ROW', 'DIMENSION_FACT_ROW') AND ident IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'this row kind requires an empty origin identifier cell';
+  END IF;
+  IF NEW.row_kind::text IS DISTINCT FROM 'IDENTIFIER_ROW'
+     AND EXISTS (
+       SELECT 1 FROM obs.position_observation p
+       WHERE p.origin_soi_row_observation_id = NEW.soi_row_observation_id
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'a position origin must stay IDENTIFIER_ROW';
+  END IF;
+  IF NEW.row_kind::text IN ('SUBTOTAL_ROW', 'DIMENSION_FACT_ROW') AND NEW.evidence_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'SUBTOTAL_ROW and DIMENSION_FACT_ROW require filing evidence';
+  END IF;
+  IF NEW.row_kind::text IN ('SUBTOTAL_ROW', 'DIMENSION_FACT_ROW') AND NOT EXISTS (
+    SELECT 1
+    FROM evidence.evidence e
+    JOIN registry.filing_document_artifact fda ON fda.artifact_id = e.artifact_id
+    JOIN registry.filing_document fd ON fd.id = fda.filing_document_id
+    JOIN obs.soi_row_observation o ON o.id = NEW.soi_row_observation_id
+    WHERE e.id = NEW.evidence_id
+      AND e.evidence_level = 'L2_ORIGINAL_FILING'
+      AND e.locator_type IN ('IXBRL_FACT', 'HTML_ANCHOR')
+      AND fd.filing_id = o.filing_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'filing evidence must be L2 IXBRL_FACT or HTML_ANCHOR on the same filing';
+  END IF;
+  RETURN NEW;
 END
 $$;
 
@@ -1231,15 +1446,17 @@ $_$;
 
 COMMENT ON FUNCTION registry.market_release_date(p_label text) IS 'Disclosed-line counts by registrant and reported date inside one release. A label outside the release pattern returns no rows. An empty release returns no rows.';
 
-CREATE FUNCTION registry.maturity_coverage(p_cik text) RETURNS TABLE(reported_date date, disclosed_line_count integer, maturity_reported_count integer, maturity_unknown_count integer, maturity_multiple_count integer)
+CREATE FUNCTION registry.maturity_coverage(p_cik text) RETURNS TABLE(reported_date date, disclosed_line_count integer, maturity_reported_count integer, maturity_structured_count integer, maturity_filing_count integer, maturity_unknown_count integer, maturity_unresolved_count integer)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'registry', 'obs'
     AS $$
   SELECT s.reported_date,
          count(*)::integer,
-         count(*) FILTER (WHERE s.maturity_state = 'REPORTED')::integer,
-         count(*) FILTER (WHERE s.maturity_state = 'UNKNOWN')::integer,
-         count(*) FILTER (WHERE s.maturity_state = 'MULTIPLE_VALUES')::integer
+         count(*) FILTER (WHERE s.maturity_date IS NOT NULL)::integer,
+         count(*) FILTER (WHERE s.maturity_source = 'REPORTED_STRUCTURED')::integer,
+         count(*) FILTER (WHERE s.maturity_source = 'FILING_DISPLAYED')::integer,
+         count(*) FILTER (WHERE s.maturity_source = 'UNKNOWN')::integer,
+         count(*) FILTER (WHERE s.maturity_source = 'UNRESOLVED')::integer
   FROM registry.maturity_position_for_cik(p_cik) s
   GROUP BY s.reported_date
 $$;
@@ -1251,18 +1468,18 @@ CREATE FUNCTION registry.maturity_line_count(p_cik text, p_date date, p_kind tex
   SELECT count(*)::integer
   FROM registry.maturity_position_for_cik(p_cik) s
   WHERE s.reported_date = p_date
-    AND p_kind IN ('all', 'unknown', 'multiple', 'year')
+    AND p_kind IN ('all', 'unknown', 'unresolved', 'year')
     AND (
       p_kind = 'all'
-      OR (p_kind = 'unknown' AND s.maturity_state = 'UNKNOWN')
-      OR (p_kind = 'multiple' AND s.maturity_state = 'MULTIPLE_VALUES')
+      OR (p_kind = 'unknown' AND s.maturity_source = 'UNKNOWN')
+      OR (p_kind = 'unresolved' AND s.maturity_source = 'UNRESOLVED')
       OR (p_kind = 'year' AND p_year BETWEEN 0 AND 9999
-          AND s.maturity_state = 'REPORTED'
+          AND s.maturity_date IS NOT NULL
           AND extract(YEAR FROM s.maturity_date)::integer = p_year)
     )
 $$;
 
-CREATE FUNCTION registry.maturity_line_page(p_cik text, p_date date, p_kind text, p_year integer, p_limit integer, p_offset integer) RETURNS TABLE(position_observation_id bigint, disclosed_line_text text, principal_state text, principal_raw text, principal_currency_state text, maturity_state text, maturity_raw text, maturity_year integer, accession_number text, evidence_level text, form_state text, form_raw text, filed_date_state text, filed_date_raw text, inline_url_state text, inline_url text, document_url text, release_state text, release_label text)
+CREATE FUNCTION registry.maturity_line_page(p_cik text, p_date date, p_kind text, p_year integer, p_limit integer, p_offset integer) RETURNS TABLE(position_observation_id bigint, disclosed_line_text text, principal_state text, principal_raw text, principal_currency_state text, maturity_source text, maturity_raw text, maturity_year integer, maturity_inspection_state text, maturity_no_bind_reason text, maturity_filing_verified boolean, maturity_document_url text, accession_number text, evidence_level text, form_state text, form_raw text, filed_date_state text, filed_date_raw text, inline_url_state text, inline_url text, document_url text, release_state text, release_label text)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'registry', 'obs'
     AS $$
@@ -1271,10 +1488,13 @@ CREATE FUNCTION registry.maturity_line_page(p_cik text, p_date date, p_kind text
          principal.principal_state,
          principal.principal_raw,
          'UNKNOWN'::text,
-         page.maturity_state,
+         page.maturity_source,
          page.maturity_raw,
-         CASE WHEN page.maturity_state = 'REPORTED'
-              THEN extract(YEAR FROM page.maturity_date)::integer END,
+         extract(YEAR FROM page.maturity_date)::integer,
+         page.inspection_state,
+         page.no_bind_reason,
+         page.filing_verified,
+         page.maturity_document_url,
          f.accession_number,
          e.evidence_level::text,
          form.form_state,
@@ -1287,16 +1507,17 @@ CREATE FUNCTION registry.maturity_line_page(p_cik text, p_date date, p_kind text
          rel.release_state,
          rel.release_label
   FROM (
-    SELECT s.position_observation_id, s.maturity_state, s.maturity_raw, s.maturity_date
+    SELECT s.position_observation_id, s.maturity_source, s.maturity_raw, s.maturity_date,
+           s.inspection_state, s.no_bind_reason, s.filing_verified, s.maturity_document_url
     FROM registry.maturity_position_for_cik(p_cik) s
     WHERE s.reported_date = p_date
-      AND p_kind IN ('all', 'unknown', 'multiple', 'year')
+      AND p_kind IN ('all', 'unknown', 'unresolved', 'year')
       AND (
         p_kind = 'all'
-        OR (p_kind = 'unknown' AND s.maturity_state = 'UNKNOWN')
-        OR (p_kind = 'multiple' AND s.maturity_state = 'MULTIPLE_VALUES')
+        OR (p_kind = 'unknown' AND s.maturity_source = 'UNKNOWN')
+        OR (p_kind = 'unresolved' AND s.maturity_source = 'UNRESOLVED')
         OR (p_kind = 'year' AND p_year BETWEEN 0 AND 9999
-            AND s.maturity_state = 'REPORTED'
+            AND s.maturity_date IS NOT NULL
             AND extract(YEAR FROM s.maturity_date)::integer = p_year)
       )
     ORDER BY s.position_observation_id
@@ -1370,39 +1591,22 @@ CREATE FUNCTION registry.maturity_line_page(p_cik text, p_date date, p_kind text
   ORDER BY page.position_observation_id
 $$;
 
-CREATE FUNCTION registry.maturity_position_for_cik(p_cik text) RETURNS TABLE(position_observation_id bigint, reported_date date, maturity_state text, maturity_raw text, maturity_date date)
+CREATE FUNCTION registry.maturity_position_for_cik(p_cik text) RETURNS TABLE(position_observation_id bigint, reported_date date, maturity_date date, maturity_raw text, maturity_source text, inspection_state text, no_bind_reason text, filing_verified boolean, maturity_document_url text)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'registry', 'obs'
     AS $_$
-  SELECT p.id,
-         p.reported_date,
-         CASE
-           WHEN count(fv.id) = 0 THEN 'UNKNOWN'
-           WHEN count(DISTINCT fv.raw_value) > 1 OR count(DISTINCT fv.normalized_date) > 1 THEN 'MULTIPLE_VALUES'
-           WHEN bool_and(fv.value_state = 'REPORTED') AND min(fv.normalized_date) IS NOT NULL THEN 'REPORTED'
-           ELSE 'MULTIPLE_VALUES'
-         END,
-         CASE
-           WHEN count(fv.id) = 1
-            AND bool_and(fv.value_state = 'REPORTED')
-            AND min(fv.normalized_date) IS NOT NULL
-           THEN min(fv.raw_value)
-         END,
-         CASE
-           WHEN count(DISTINCT fv.normalized_date) = 1
-            AND count(DISTINCT fv.raw_value) = 1
-            AND bool_and(fv.value_state = 'REPORTED')
-           THEN min(fv.normalized_date)
-         END
-  FROM obs.position_observation p
-  JOIN registry.portfolio_filing_registrant fr
-    ON fr.filing_id = p.filing_id
-   AND fr.registrant_link_status = 'LINKED'
-   AND fr.registrant_cik = p_cik
-  LEFT JOIN obs.current_position_field_value fv
-    ON fv.position_observation_id = p.id AND fv.field_code = 'MATURITY_DATE'
-  WHERE p_cik ~ '^[0-9]{10}$'
-  GROUP BY p.id, p.reported_date
+  SELECT mp.position_observation_id,
+         mp.reported_date,
+         mp.maturity_date,
+         mp.maturity_raw,
+         mp.maturity_source,
+         mp.inspection_state,
+         mp.no_bind_reason,
+         mp.filing_verified,
+         mp.maturity_document_url
+  FROM registry.maturity_position mp
+  WHERE mp.registrant_cik = p_cik
+    AND p_cik ~ '^[0-9]{10}$'
 $_$;
 
 CREATE FUNCTION registry.maturity_years(p_cik text) RETURNS TABLE(reported_date date, maturity_year integer, disclosed_line_count integer)
@@ -1413,7 +1617,7 @@ CREATE FUNCTION registry.maturity_years(p_cik text) RETURNS TABLE(reported_date 
          extract(YEAR FROM s.maturity_date)::integer,
          count(*)::integer
   FROM registry.maturity_position_for_cik(p_cik) s
-  WHERE s.maturity_state = 'REPORTED' AND s.maturity_date IS NOT NULL
+  WHERE s.maturity_date IS NOT NULL
   GROUP BY s.reported_date, extract(YEAR FROM s.maturity_date)
 $$;
 
@@ -1572,6 +1776,7 @@ CREATE TABLE evidence.evidence (
     artifact_member_id bigint,
     CONSTRAINT evidence_column_position_check CHECK ((column_position >= 1)),
     CONSTRAINT evidence_json_path_check CHECK ((json_path ~ '^\$'::text)),
+    CONSTRAINT evidence_l2_html_anchor_context_row CHECK (((evidence_level <> 'L2_ORIGINAL_FILING'::ref.evidence_level) OR (locator_type <> 'HTML_ANCHOR'::ref.locator_type) OR (html_anchor ~ '^ix-context-row:[A-Za-z0-9_-]+$'::text))),
     CONSTRAINT evidence_level_locator CHECK (
 CASE evidence_level
     WHEN 'L1_STRUCTURED_DATASET'::ref.evidence_level THEN ((locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type])) OR ((locator_type = 'DOCUMENT'::ref.locator_type) AND (artifact_member_id IS NOT NULL)))
@@ -1892,10 +2097,14 @@ CREATE TABLE obs.soi_row_classification (
     supersedes_id bigint,
     supersede_reason text,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_id bigint,
+    CONSTRAINT soi_row_classification_filing_evidence_check CHECK ((((row_kind)::text <> ALL (ARRAY['SUBTOTAL_ROW'::text, 'DIMENSION_FACT_ROW'::text])) OR (evidence_id IS NOT NULL))),
     CONSTRAINT soi_row_classification_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id))
 );
 
-COMMENT ON TABLE obs.soi_row_classification IS 'Rule-versioned classification of a SOI row. Selecting current holdings is OPEN QUESTION Q6; UNRESOLVED is valid.';
+COMMENT ON TABLE obs.soi_row_classification IS 'Rule-versioned classification of a SOI row. Historical NO_IDENTIFIER_ROW rows stay stored with null evidence_id. SUBTOTAL_ROW and DIMENSION_FACT_ROW are new rows that supersede them and cite L2 filing evidence. Selecting current holdings is OPEN QUESTION Q6; UNRESOLVED is valid.';
+
+COMMENT ON COLUMN obs.soi_row_classification.evidence_id IS 'Filing evidence for SUBTOTAL_ROW and DIMENSION_FACT_ROW. Null on IDENTIFIER_ROW, historical NO_IDENTIFIER_ROW, and UNCLASSIFIED. The SOI row observation keeps its own TSV evidence.';
 
 CREATE VIEW obs.current_soi_row_classification AS
  SELECT id,
@@ -1906,7 +2115,8 @@ CREATE VIEW obs.current_soi_row_classification AS
     run_id,
     supersedes_id,
     supersede_reason,
-    recorded_at
+    recorded_at,
+    evidence_id
    FROM obs.soi_row_classification c
   WHERE (NOT (EXISTS ( SELECT 1
            FROM obs.soi_row_classification s
@@ -2005,6 +2215,155 @@ ALTER TABLE obs.field_value_corroboration ALTER COLUMN id ADD GENERATED ALWAYS A
     CACHE 1
 );
 
+CREATE TABLE obs.maturity_inspection (
+    id bigint NOT NULL,
+    position_observation_id bigint NOT NULL,
+    soi_row_observation_id bigint NOT NULL,
+    inspection_state ref.maturity_inspection_state NOT NULL,
+    filing_context_id text,
+    raw_value text,
+    normalized_date date,
+    evidence_id bigint NOT NULL,
+    rule_version_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    supersedes_id bigint,
+    supersede_reason text,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    no_bind_reason ref.maturity_no_bind_reason,
+    CONSTRAINT maturity_inspection_check CHECK ((supersedes_id IS DISTINCT FROM id)),
+    CONSTRAINT maturity_inspection_filing_context_id_check CHECK ((filing_context_id ~ '^[A-Za-z0-9_-]+$'::text)),
+    CONSTRAINT maturity_inspection_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id)),
+    CONSTRAINT maturity_inspection_state_shape CHECK (
+CASE (inspection_state)::text
+    WHEN 'FILING_DISPLAYED'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (raw_value IS NOT NULL) AND (normalized_date IS NOT NULL))
+    WHEN 'UNAVAILABLE'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (raw_value IS NULL) AND (normalized_date IS NULL))
+    WHEN 'UNRESOLVED'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (normalized_date IS NULL))
+    WHEN 'NOT_BOUND'::text THEN ((filing_context_id IS NULL) AND (no_bind_reason IS NOT NULL) AND (raw_value IS NULL) AND (normalized_date IS NULL))
+    ELSE false
+END)
+);
+
+COMMENT ON TABLE obs.maturity_inspection IS 'Append-only inspection of one position origin. No row means the filing row has not been inspected. FILING_DISPLAYED is not a MATURITY_DATE field value.';
+
+COMMENT ON COLUMN obs.maturity_inspection.evidence_id IS 'Bound states: L2 HTML_ANCHOR ix-context-row:<filing_context_id> on the position filing, and a PASS validation on the position cites a same-artifact IXBRL_FACT for that context. NOT_BOUND: L2 DOCUMENT on the position filing artifact, and a FAIL validation of the same rule version and run carries no_bind_reason.';
+
+COMMENT ON COLUMN obs.maturity_inspection.no_bind_reason IS 'Why no filing row was accepted. Set only for NOT_BOUND.';
+
+CREATE TABLE obs.maturity_inspection_candidate (
+    id bigint NOT NULL,
+    maturity_inspection_id bigint NOT NULL,
+    raw_value text NOT NULL,
+    normalized_date date,
+    evidence_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT maturity_inspection_candidate_raw_value_check CHECK ((btrim(raw_value) <> ''::text))
+);
+
+COMMENT ON TABLE obs.maturity_inspection_candidate IS 'One candidate displayed date for an UNRESOLVED inspection. None of the candidates is selected.';
+
+ALTER TABLE obs.maturity_inspection_candidate ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME obs.maturity_inspection_candidate_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+ALTER TABLE obs.maturity_inspection ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME obs.maturity_inspection_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE TABLE obs.position_observation (
+    id bigint NOT NULL,
+    origin_soi_row_observation_id bigint NOT NULL,
+    filing_id bigint NOT NULL,
+    reported_date date,
+    date_precision text NOT NULL,
+    duration_kind ref.duration_kind NOT NULL,
+    holding_descriptor_raw text NOT NULL,
+    rule_version_id bigint NOT NULL,
+    evidence_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT position_observation_date_precision_check CHECK ((date_precision = 'MONTH_END_ROUNDED'::text)),
+    CONSTRAINT position_observation_holding_descriptor_raw_check CHECK ((holding_descriptor_raw <> ''::text))
+);
+
+COMMENT ON TABLE obs.position_observation IS 'One identifier-bearing SOI row. The current classification of the origin is IDENTIFIER_ROW, and holding_descriptor_raw equals that row''s identifier cell. It is not an economically usable investment. Instrument and position links exist only as resolution decisions.';
+
+CREATE VIEW obs.maturity_provenance AS
+ SELECT position_observation_id,
+    provenance_state,
+    inspection_id,
+    inspection_state,
+    filing_context_id,
+    structured_raw,
+    structured_date,
+    displayed_raw,
+    displayed_date,
+    evidence_id,
+    no_bind_reason,
+        CASE provenance_state
+            WHEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state THEN structured_date
+            WHEN 'FILING_DISPLAYED'::ref.maturity_provenance_state THEN displayed_date
+            ELSE NULL::date
+        END AS maturity_date,
+        CASE provenance_state
+            WHEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state THEN structured_raw
+            WHEN 'FILING_DISPLAYED'::ref.maturity_provenance_state THEN displayed_raw
+            ELSE NULL::text
+        END AS maturity_raw,
+    ((provenance_state = 'REPORTED_STRUCTURED'::ref.maturity_provenance_state) AND (NOT (inspection_state IS DISTINCT FROM 'FILING_DISPLAYED'::ref.maturity_inspection_state))) AS filing_verified,
+    structured_field_value_id
+   FROM ( SELECT p.id AS position_observation_id,
+                CASE
+                    WHEN ((structured.n = 1) AND (structured.distinct_dates = 1) AND ((i.id IS NULL) OR (i.inspection_state = ANY (ARRAY['NOT_BOUND'::ref.maturity_inspection_state, 'UNAVAILABLE'::ref.maturity_inspection_state])) OR ((i.inspection_state = 'FILING_DISPLAYED'::ref.maturity_inspection_state) AND (i.normalized_date = structured.maturity_date)))) THEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state
+                    WHEN ((structured.n = 0) AND ((i.id IS NULL) OR (i.inspection_state = ANY (ARRAY['NOT_BOUND'::ref.maturity_inspection_state, 'UNAVAILABLE'::ref.maturity_inspection_state])))) THEN 'UNKNOWN'::ref.maturity_provenance_state
+                    WHEN ((structured.n = 0) AND (i.inspection_state = 'FILING_DISPLAYED'::ref.maturity_inspection_state)) THEN 'FILING_DISPLAYED'::ref.maturity_provenance_state
+                    ELSE 'UNRESOLVED'::ref.maturity_provenance_state
+                END AS provenance_state,
+            i.id AS inspection_id,
+            i.inspection_state,
+            i.filing_context_id,
+            structured.raw_value AS structured_raw,
+            structured.maturity_date AS structured_date,
+            i.raw_value AS displayed_raw,
+            i.normalized_date AS displayed_date,
+            i.evidence_id,
+            i.no_bind_reason,
+            structured.field_value_id AS structured_field_value_id
+           FROM ((obs.position_observation p
+             LEFT JOIN obs.maturity_inspection i ON (((i.position_observation_id = p.id) AND (NOT (EXISTS ( SELECT 1
+                   FROM obs.maturity_inspection s
+                  WHERE (s.supersedes_id = i.id)))))))
+             LEFT JOIN LATERAL ( SELECT (count(fv.id))::integer AS n,
+                    (count(DISTINCT fv.normalized_date))::integer AS distinct_dates,
+                    min(fv.normalized_date) AS maturity_date,
+                    min(fv.raw_value) AS raw_value,
+                        CASE
+                            WHEN (count(fv.id) = 1) THEN min(fv.id)
+                            ELSE NULL::bigint
+                        END AS field_value_id
+                   FROM obs.current_position_field_value fv
+                  WHERE ((fv.position_observation_id = p.id) AND (fv.field_code = 'MATURITY_DATE'::text) AND (fv.value_state = 'REPORTED'::ref.value_state))) structured ON (true))) b;
+
+COMMENT ON VIEW obs.maturity_provenance IS 'One product maturity per position. maturity_date comes from the structured MATURITY_DATE (REPORTED_STRUCTURED) or from the current FILING_DISPLAYED inspection (FILING_DISPLAYED); it is NULL for UNKNOWN and UNRESOLVED. Superseded inspections are never read. inspection_state and no_bind_reason say why a filing supplied no date; filing_context_id does not. FILING_DISPLAYED is not copied into MATURITY_DATE.';
+
+COMMENT ON COLUMN obs.maturity_provenance.maturity_date IS 'Product maturity. Source is provenance_state. NULL when UNKNOWN or UNRESOLVED.';
+
+COMMENT ON COLUMN obs.maturity_provenance.maturity_raw IS 'The value exactly as disclosed by the source named in provenance_state.';
+
+COMMENT ON COLUMN obs.maturity_provenance.filing_verified IS 'The structured date is the product maturity and the current filing inspection displays the same date.';
+
+COMMENT ON COLUMN obs.maturity_provenance.structured_field_value_id IS 'The single current REPORTED MATURITY_DATE field value, when there is exactly one.';
+
 CREATE TABLE obs.num_fact_observation (
     id bigint NOT NULL,
     tabular_row_id bigint NOT NULL,
@@ -2072,24 +2431,6 @@ ALTER TABLE obs.observation_equivalence ALTER COLUMN id ADD GENERATED ALWAYS AS 
     NO MAXVALUE
     CACHE 1
 );
-
-CREATE TABLE obs.position_observation (
-    id bigint NOT NULL,
-    origin_soi_row_observation_id bigint NOT NULL,
-    filing_id bigint NOT NULL,
-    reported_date date,
-    date_precision text NOT NULL,
-    duration_kind ref.duration_kind NOT NULL,
-    holding_descriptor_raw text NOT NULL,
-    rule_version_id bigint NOT NULL,
-    evidence_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT position_observation_date_precision_check CHECK ((date_precision = 'MONTH_END_ROUNDED'::text)),
-    CONSTRAINT position_observation_holding_descriptor_raw_check CHECK ((holding_descriptor_raw <> ''::text))
-);
-
-COMMENT ON TABLE obs.position_observation IS 'A registrant''s disclosed holding line in one filing, from exactly one SOI row. Instrument and position links exist only as resolution decisions.';
 
 CREATE VIEW obs.position_field_status AS
  SELECT p.id AS position_observation_id,
@@ -3633,30 +3974,51 @@ CREATE VIEW registry.market_reported_date AS
 
 COMMENT ON VIEW registry.market_reported_date IS 'Registrants observed on one reported date. A date that is absent was not observed. The count is co-presence, not a sum of lines or exposure.';
 
+CREATE VIEW registry.maturity_read AS
+ SELECT mp.position_observation_id,
+    mp.maturity_date,
+    mp.maturity_raw,
+    (mp.provenance_state)::text AS maturity_source,
+    (mp.inspection_state)::text AS inspection_state,
+    (mp.no_bind_reason)::text AS no_bind_reason,
+    mp.filing_verified,
+    doc.document_url AS maturity_document_url
+   FROM ((obs.maturity_provenance mp
+     JOIN obs.position_observation p ON ((p.id = mp.position_observation_id)))
+     LEFT JOIN LATERAL ( SELECT
+                CASE
+                    WHEN (count(DISTINCT fd.document_url) = 1) THEN min(fd.document_url)
+                    ELSE NULL::text
+                END AS document_url
+           FROM ((evidence.evidence e
+             JOIN registry.filing_document_artifact fda ON ((fda.artifact_id = e.artifact_id)))
+             JOIN registry.filing_document fd ON (((fd.id = fda.filing_document_id) AND (fd.filing_id = p.filing_id))))
+          WHERE ((e.id = mp.evidence_id) AND ((mp.provenance_state = 'FILING_DISPLAYED'::ref.maturity_provenance_state) OR mp.filing_verified))) doc ON (true));
+
+COMMENT ON VIEW registry.maturity_read IS 'The product maturity of one disclosed line, read from obs.maturity_provenance. maturity_date is NULL unless maturity_source is REPORTED_STRUCTURED or FILING_DISPLAYED.';
+
+COMMENT ON COLUMN registry.maturity_read.maturity_raw IS 'The maturity exactly as disclosed by the source named in maturity_source.';
+
+COMMENT ON COLUMN registry.maturity_read.maturity_source IS 'obs.maturity_provenance.provenance_state: REPORTED_STRUCTURED, FILING_DISPLAYED, UNKNOWN, or UNRESOLVED.';
+
+COMMENT ON COLUMN registry.maturity_read.maturity_document_url IS 'The EDGAR document of the current filing inspection, when that inspection supplies or confirms the maturity.';
+
 CREATE VIEW registry.maturity_position AS
  SELECT p.id AS position_observation_id,
     fr.registrant_cik,
     p.reported_date,
-        CASE
-            WHEN (count(fv.id) = 0) THEN 'UNKNOWN'::text
-            WHEN ((count(DISTINCT fv.raw_value) > 1) OR (count(DISTINCT fv.normalized_date) > 1)) THEN 'MULTIPLE_VALUES'::text
-            WHEN (bool_and((fv.value_state = 'REPORTED'::ref.value_state)) AND (min(fv.normalized_date) IS NOT NULL)) THEN 'REPORTED'::text
-            ELSE 'MULTIPLE_VALUES'::text
-        END AS maturity_state,
-        CASE
-            WHEN ((count(fv.id) = 1) AND bool_and((fv.value_state = 'REPORTED'::ref.value_state)) AND (min(fv.normalized_date) IS NOT NULL)) THEN min(fv.raw_value)
-            ELSE NULL::text
-        END AS maturity_raw,
-        CASE
-            WHEN ((count(DISTINCT fv.normalized_date) = 1) AND (count(DISTINCT fv.raw_value) = 1) AND bool_and((fv.value_state = 'REPORTED'::ref.value_state))) THEN min(fv.normalized_date)
-            ELSE NULL::date
-        END AS maturity_date
+    mr.maturity_date,
+    mr.maturity_raw,
+    mr.maturity_source,
+    mr.inspection_state,
+    mr.no_bind_reason,
+    mr.filing_verified,
+    mr.maturity_document_url
    FROM ((obs.position_observation p
      JOIN registry.portfolio_filing_registrant fr ON (((fr.filing_id = p.filing_id) AND (fr.registrant_link_status = 'LINKED'::text))))
-     LEFT JOIN obs.current_position_field_value fv ON (((fv.position_observation_id = p.id) AND (fv.field_code = 'MATURITY_DATE'::text))))
-  GROUP BY p.id, fr.registrant_cik, p.reported_date;
+     JOIN registry.maturity_read mr ON ((mr.position_observation_id = p.id)));
 
-COMMENT ON VIEW registry.maturity_position IS 'One disclosed line and its maturity state. REPORTED requires one normalized date. No maturity row is UNKNOWN, not a year and not zero.';
+COMMENT ON VIEW registry.maturity_position IS 'One disclosed line of a linked registrant and its product maturity from registry.maturity_read. A line with no maturity_date is not a year and not zero.';
 
 CREATE VIEW registry.portfolio_line AS
  SELECT p.id AS position_observation_id,
@@ -3671,8 +4033,13 @@ CREATE VIEW registry.portfolio_line AS
     attrs.principal_state,
     attrs.principal_raw,
     'UNKNOWN'::text AS principal_currency_state,
-    attrs.maturity_state,
-    attrs.maturity_raw,
+    mr.maturity_source,
+    mr.maturity_raw,
+    mr.maturity_date,
+    mr.inspection_state AS maturity_inspection_state,
+    mr.no_bind_reason AS maturity_no_bind_reason,
+    mr.filing_verified AS maturity_filing_verified,
+    mr.maturity_document_url,
     attrs.instrument_type_state,
     attrs.instrument_type_raw,
     attrs.industry_state,
@@ -3697,11 +4064,12 @@ CREATE VIEW registry.portfolio_line AS
     doc.document_url,
     rel.release_state,
     rel.release_label
-   FROM (((((((((((obs.position_observation p
+   FROM ((((((((((((obs.position_observation p
      JOIN obs.soi_row_observation o ON ((o.id = p.origin_soi_row_observation_id)))
      JOIN registry.filing f ON ((f.id = p.filing_id)))
      JOIN evidence.evidence e ON ((e.id = p.evidence_id)))
      JOIN registry.portfolio_filing_registrant fr ON (((fr.filing_id = p.filing_id) AND (fr.registrant_link_status = 'LINKED'::text))))
+     JOIN registry.maturity_read mr ON ((mr.position_observation_id = p.id)))
      LEFT JOIN obs.current_soi_row_classification cl ON ((cl.soi_row_observation_id = o.id)))
      LEFT JOIN LATERAL ( SELECT
                 CASE
@@ -3713,15 +4081,6 @@ CREATE VIEW registry.portfolio_line AS
                     WHEN (count(DISTINCT fv.raw_value) FILTER (WHERE (fv.field_code = 'PRINCIPAL_AMOUNT'::text)) = 1) THEN min(fv.raw_value) FILTER (WHERE (fv.field_code = 'PRINCIPAL_AMOUNT'::text))
                     ELSE NULL::text
                 END AS principal_raw,
-                CASE
-                    WHEN (count(DISTINCT fv.raw_value) FILTER (WHERE (fv.field_code = 'MATURITY_DATE'::text)) = 1) THEN 'REPORTED'::text
-                    WHEN (count(*) FILTER (WHERE (fv.field_code = 'MATURITY_DATE'::text)) = 0) THEN 'UNKNOWN'::text
-                    ELSE 'MULTIPLE_VALUES'::text
-                END AS maturity_state,
-                CASE
-                    WHEN (count(DISTINCT fv.raw_value) FILTER (WHERE (fv.field_code = 'MATURITY_DATE'::text)) = 1) THEN min(fv.raw_value) FILTER (WHERE (fv.field_code = 'MATURITY_DATE'::text))
-                    ELSE NULL::text
-                END AS maturity_raw,
                 CASE
                     WHEN (count(DISTINCT fv.raw_value) FILTER (WHERE (fv.field_code = 'INSTRUMENT_TYPE'::text)) = 1) THEN 'REPORTED'::text
                     WHEN (count(*) FILTER (WHERE (fv.field_code = 'INSTRUMENT_TYPE'::text)) = 0) THEN 'UNKNOWN'::text
@@ -3786,7 +4145,7 @@ CREATE VIEW registry.portfolio_line AS
                     ELSE NULL::text
                 END AS reference_uri_raw
            FROM obs.current_position_field_value fv
-          WHERE ((fv.position_observation_id = p.id) AND (fv.field_code = ANY (ARRAY['PRINCIPAL_AMOUNT'::text, 'MATURITY_DATE'::text, 'INSTRUMENT_TYPE'::text, 'INDUSTRY'::text, 'ISSUER_AFFILIATION'::text, 'GEOGRAPHY'::text, 'ACQUISITION_DATE'::text, 'RESTRICTED'::text, 'REFERENCE_RATE'::text])))) attrs ON (true))
+          WHERE ((fv.position_observation_id = p.id) AND (fv.field_code = ANY (ARRAY['PRINCIPAL_AMOUNT'::text, 'INSTRUMENT_TYPE'::text, 'INDUSTRY'::text, 'ISSUER_AFFILIATION'::text, 'GEOGRAPHY'::text, 'ACQUISITION_DATE'::text, 'RESTRICTED'::text, 'REFERENCE_RATE'::text])))) attrs ON (true))
      LEFT JOIN LATERAL ( SELECT
                 CASE
                     WHEN (count(DISTINCT fa.normalized_text) = 1) THEN 'REPORTED'::text
@@ -3849,7 +4208,7 @@ CREATE VIEW registry.portfolio_line AS
              JOIN registry.dataset_release dr ON ((dr.id = dra.dataset_release_id)))
           WHERE (tr.id = o.tabular_row_id)) rel ON (true));
 
-COMMENT ON VIEW registry.portfolio_line IS 'One disclosed SOI position line. Principal currency is UNKNOWN. Cost, fair value, rates, and spreads are omitted. period_role stays the stored classification.';
+COMMENT ON VIEW registry.portfolio_line IS 'One disclosed SOI position line. Maturity is the product maturity from registry.maturity_read. Principal currency is UNKNOWN. Cost, fair value, rates, and spreads are omitted. period_role stays the stored classification.';
 
 CREATE VIEW registry.maturity_line AS
  SELECT mp.position_observation_id,
@@ -3859,13 +4218,12 @@ CREATE VIEW registry.maturity_line AS
     pl.principal_state,
     pl.principal_raw,
     pl.principal_currency_state,
-    mp.maturity_state,
+    mp.maturity_source,
     mp.maturity_raw,
     mp.maturity_date,
-        CASE
-            WHEN (mp.maturity_state = 'REPORTED'::text) THEN (EXTRACT(year FROM mp.maturity_date))::integer
-            ELSE NULL::integer
-        END AS maturity_year,
+    (EXTRACT(year FROM mp.maturity_date))::integer AS maturity_year,
+    mp.filing_verified,
+    mp.maturity_document_url,
     pl.accession_number,
     pl.evidence_level,
     pl.form_state,
@@ -3881,19 +4239,21 @@ CREATE VIEW registry.maturity_line AS
    FROM (registry.maturity_position mp
      JOIN registry.portfolio_line pl ON ((pl.position_observation_id = mp.position_observation_id)));
 
-COMMENT ON VIEW registry.maturity_line IS 'One disclosed line for the maturity wall: maturity date, principal, and SEC filing attributes. Principal currency stays UNKNOWN.';
+COMMENT ON VIEW registry.maturity_line IS 'One disclosed line for the maturity wall: product maturity and its source, principal, and SEC filing attributes. Principal currency stays UNKNOWN.';
 
 CREATE VIEW registry.maturity_reported_date AS
  SELECT registrant_cik,
     reported_date,
     (count(*))::integer AS disclosed_line_count,
-    (count(*) FILTER (WHERE (maturity_state = 'REPORTED'::text)))::integer AS maturity_reported_count,
-    (count(*) FILTER (WHERE (maturity_state = 'UNKNOWN'::text)))::integer AS maturity_unknown_count,
-    (count(*) FILTER (WHERE (maturity_state = 'MULTIPLE_VALUES'::text)))::integer AS maturity_multiple_count
+    (count(*) FILTER (WHERE (maturity_date IS NOT NULL)))::integer AS maturity_reported_count,
+    (count(*) FILTER (WHERE (maturity_source = 'REPORTED_STRUCTURED'::text)))::integer AS maturity_structured_count,
+    (count(*) FILTER (WHERE (maturity_source = 'FILING_DISPLAYED'::text)))::integer AS maturity_filing_count,
+    (count(*) FILTER (WHERE (maturity_source = 'UNKNOWN'::text)))::integer AS maturity_unknown_count,
+    (count(*) FILTER (WHERE (maturity_source = 'UNRESOLVED'::text)))::integer AS maturity_unresolved_count
    FROM registry.maturity_position
   GROUP BY registrant_cik, reported_date;
 
-COMMENT ON VIEW registry.maturity_reported_date IS 'Disclosed-line counts by registrant and reported date. Counts are rows. Unknown maturity is a row count, not zero maturity.';
+COMMENT ON VIEW registry.maturity_reported_date IS 'Disclosed-line counts by registrant and reported date. maturity_reported_count is structured plus filing-displayed lines. Unknown and unresolved maturity are row counts, not zero maturity.';
 
 CREATE VIEW registry.maturity_year AS
  SELECT registrant_cik,
@@ -3901,10 +4261,10 @@ CREATE VIEW registry.maturity_year AS
     (EXTRACT(year FROM maturity_date))::integer AS maturity_year,
     (count(*))::integer AS disclosed_line_count
    FROM registry.maturity_position
-  WHERE ((maturity_state = 'REPORTED'::text) AND (maturity_date IS NOT NULL))
+  WHERE (maturity_date IS NOT NULL)
   GROUP BY registrant_cik, reported_date, (EXTRACT(year FROM maturity_date));
 
-COMMENT ON VIEW registry.maturity_year IS 'Disclosed lines with one reported maturity date, counted by the year of that date. Unknown maturity is omitted here and kept on maturity_reported_date.';
+COMMENT ON VIEW registry.maturity_year IS 'Disclosed lines with one product maturity date, counted by the year of that date. Unknown and unresolved maturity are omitted here and kept on maturity_reported_date.';
 
 CREATE VIEW registry.portfolio_empty_period AS
  SELECT dr.release_label
@@ -4259,6 +4619,12 @@ ALTER TABLE ONLY obs.borrower_name_observation
 ALTER TABLE ONLY obs.field_value_corroboration
     ADD CONSTRAINT field_value_corroboration_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY obs.maturity_inspection_candidate
+    ADD CONSTRAINT maturity_inspection_candidate_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY obs.maturity_inspection
+    ADD CONSTRAINT maturity_inspection_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY obs.num_fact_observation
     ADD CONSTRAINT num_fact_observation_pkey PRIMARY KEY (id);
 
@@ -4513,6 +4879,10 @@ CREATE UNIQUE INDEX instrument_attribute_assertion_supersedes_once ON identity.i
 
 CREATE UNIQUE INDEX legal_entity_alias_supersedes_once ON identity.legal_entity_alias USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
+CREATE INDEX maturity_inspection_subject_idx ON obs.maturity_inspection USING btree (position_observation_id);
+
+CREATE UNIQUE INDEX maturity_inspection_supersedes_once ON obs.maturity_inspection USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
+
 CREATE INDEX position_field_value_subject_idx ON obs.position_field_value USING btree (position_observation_id, field_code, source_column_label);
 
 CREATE UNIQUE INDEX position_field_value_supersedes_once ON obs.position_field_value USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
@@ -4651,6 +5021,10 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.borrower_name_obse
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.field_value_corroboration FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.maturity_inspection FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.maturity_inspection_candidate FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.num_fact_observation FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.observation_equivalence FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
@@ -4672,6 +5046,10 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.soi_row_observatio
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.borrower_name_observation FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.field_value_corroboration FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.maturity_inspection FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.maturity_inspection_candidate FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.num_fact_observation FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -4695,6 +5073,10 @@ CREATE TRIGGER check_field_value_corroboration BEFORE INSERT ON obs.field_value_
 
 CREATE TRIGGER check_group_member BEFORE INSERT ON obs.position_observation_group_member FOR EACH ROW EXECUTE FUNCTION obs.check_group_member();
 
+CREATE TRIGGER check_maturity_inspection BEFORE INSERT ON obs.maturity_inspection FOR EACH ROW EXECUTE FUNCTION obs.check_maturity_inspection();
+
+CREATE TRIGGER check_maturity_inspection_candidate BEFORE INSERT ON obs.maturity_inspection_candidate FOR EACH ROW EXECUTE FUNCTION obs.check_maturity_inspection_candidate();
+
 CREATE TRIGGER check_num_fact_observation BEFORE INSERT ON obs.num_fact_observation FOR EACH ROW EXECUTE FUNCTION obs.check_num_fact_observation();
 
 CREATE TRIGGER check_observation_equivalence BEFORE INSERT ON obs.observation_equivalence FOR EACH ROW EXECUTE FUNCTION obs.check_observation_equivalence();
@@ -4705,7 +5087,11 @@ CREATE TRIGGER check_position_observation BEFORE INSERT ON obs.position_observat
 
 CREATE TRIGGER check_position_observation_source BEFORE INSERT ON obs.position_observation_source FOR EACH ROW EXECUTE FUNCTION obs.check_position_observation_source();
 
+CREATE TRIGGER check_soi_row_classification BEFORE INSERT ON obs.soi_row_classification FOR EACH ROW EXECUTE FUNCTION obs.check_soi_row_classification();
+
 CREATE TRIGGER check_soi_row_observation BEFORE INSERT ON obs.soi_row_observation FOR EACH ROW EXECUTE FUNCTION obs.check_soi_row_observation();
+
+CREATE TRIGGER check_supersession BEFORE INSERT ON obs.maturity_inspection FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('position_observation_id', 'single_chain');
 
 CREATE TRIGGER check_supersession BEFORE INSERT ON obs.position_field_value FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('position_observation_id,field_code,source_column_label', 'single_chain');
 
@@ -5087,6 +5473,33 @@ ALTER TABLE ONLY obs.field_value_corroboration
 ALTER TABLE ONLY obs.field_value_corroboration
     ADD CONSTRAINT field_value_corroboration_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
 
+ALTER TABLE ONLY obs.maturity_inspection_candidate
+    ADD CONSTRAINT maturity_inspection_candidate_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
+
+ALTER TABLE ONLY obs.maturity_inspection_candidate
+    ADD CONSTRAINT maturity_inspection_candidate_maturity_inspection_id_fkey FOREIGN KEY (maturity_inspection_id) REFERENCES obs.maturity_inspection(id);
+
+ALTER TABLE ONLY obs.maturity_inspection_candidate
+    ADD CONSTRAINT maturity_inspection_candidate_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY obs.maturity_inspection
+    ADD CONSTRAINT maturity_inspection_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
+
+ALTER TABLE ONLY obs.maturity_inspection
+    ADD CONSTRAINT maturity_inspection_position_observation_id_fkey FOREIGN KEY (position_observation_id) REFERENCES obs.position_observation(id);
+
+ALTER TABLE ONLY obs.maturity_inspection
+    ADD CONSTRAINT maturity_inspection_rule_version_id_fkey FOREIGN KEY (rule_version_id) REFERENCES ops.rule_version(id);
+
+ALTER TABLE ONLY obs.maturity_inspection
+    ADD CONSTRAINT maturity_inspection_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY obs.maturity_inspection
+    ADD CONSTRAINT maturity_inspection_soi_row_observation_id_fkey FOREIGN KEY (soi_row_observation_id) REFERENCES obs.soi_row_observation(id);
+
+ALTER TABLE ONLY obs.maturity_inspection
+    ADD CONSTRAINT maturity_inspection_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES obs.maturity_inspection(id);
+
 ALTER TABLE ONLY obs.num_fact_observation
     ADD CONSTRAINT num_fact_observation_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
 
@@ -5179,6 +5592,9 @@ ALTER TABLE ONLY obs.position_observation_source
 
 ALTER TABLE ONLY obs.position_observation_source
     ADD CONSTRAINT position_observation_source_soi_row_observation_id_fkey FOREIGN KEY (soi_row_observation_id) REFERENCES obs.soi_row_observation(id);
+
+ALTER TABLE ONLY obs.soi_row_classification
+    ADD CONSTRAINT soi_row_classification_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
 
 ALTER TABLE ONLY obs.soi_row_classification
     ADD CONSTRAINT soi_row_classification_rule_version_id_fkey FOREIGN KEY (rule_version_id) REFERENCES ops.rule_version(id);
@@ -5773,6 +6189,19 @@ GRANT SELECT,INSERT ON TABLE obs.field_value_corroboration TO bdc_pipeline_write
 
 GRANT USAGE ON SEQUENCE obs.field_value_corroboration_id_seq TO bdc_pipeline_writer;
 
+GRANT SELECT,INSERT ON TABLE obs.maturity_inspection TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE obs.maturity_inspection_candidate TO bdc_pipeline_writer;
+
+GRANT USAGE ON SEQUENCE obs.maturity_inspection_candidate_id_seq TO bdc_pipeline_writer;
+
+GRANT USAGE ON SEQUENCE obs.maturity_inspection_id_seq TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE obs.position_observation TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE obs.maturity_provenance TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE obs.maturity_provenance TO bdc_reader;
+
 GRANT SELECT,INSERT ON TABLE obs.num_fact_observation TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE obs.num_fact_observation_id_seq TO bdc_pipeline_writer;
@@ -5780,8 +6209,6 @@ GRANT USAGE ON SEQUENCE obs.num_fact_observation_id_seq TO bdc_pipeline_writer;
 GRANT SELECT,INSERT ON TABLE obs.observation_equivalence TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE obs.observation_equivalence_id_seq TO bdc_pipeline_writer;
-
-GRANT SELECT,INSERT ON TABLE obs.position_observation TO bdc_pipeline_writer;
 
 GRANT SELECT ON TABLE obs.position_field_status TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE obs.position_field_status TO bdc_reader;
@@ -5996,6 +6423,9 @@ GRANT SELECT ON TABLE registry.market_release_coverage TO bdc_reader;
 
 GRANT SELECT ON TABLE registry.market_reported_date TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.market_reported_date TO bdc_reader;
+
+GRANT SELECT ON TABLE registry.maturity_read TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE registry.maturity_read TO bdc_reader;
 
 GRANT SELECT ON TABLE registry.maturity_position TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.maturity_position TO bdc_reader;

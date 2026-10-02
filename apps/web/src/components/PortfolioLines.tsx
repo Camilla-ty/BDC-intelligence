@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MaturityText } from "@/components/MaturityText";
 import { PortfolioLimits } from "@/components/PortfolioLimits";
 import { SecLink } from "@/components/SecLink";
 import { StateText } from "@/components/StateText";
@@ -66,7 +67,7 @@ export function PortfolioLines({
                 </div>
                 <div>
                   <dt className="text-muted">Maturity</dt>
-                  <dd><StateText text={line.maturity} /></dd>
+                  <dd><MaturityText maturity={line.maturity} source={line.maturitySource} documentUrl={line.maturityDocumentUrl} /></dd>
                 </div>
                 {line.attributes.map((attribute) => (
                   <div key={attribute.label}>

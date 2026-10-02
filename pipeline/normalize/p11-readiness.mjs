@@ -152,7 +152,7 @@ export function buildP11Audit(measured) {
   if (instrumentSum !== positions) throw new Error("instrument-resolution states do not cover every position observation");
 
   if (measured.universe.position_observations + measured.universe.no_identifier_rows !== measured.universe.soi_rows) {
-    throw new Error("SOI rows do not equal position observations plus rows with no identifier");
+    throw new Error("SOI rows do not equal position observations plus rows with an empty identifier");
   }
 
   const releases = measured.releases.map(releaseCoverage);
@@ -196,7 +196,7 @@ export function buildP11Audit(measured) {
         maturity_date: "UNAVAILABLE",
         principal_amount: "UNAVAILABLE",
         instrument_type: "UNAVAILABLE",
-        reason: "NO_IDENTIFIER_ROW has no position observation. The row is not zero maturity or zero principal.",
+        reason: "An empty identifier cell has no position observation. The row is not zero maturity or zero principal.",
       },
       dataset_releases: measured.universe.releases,
     },

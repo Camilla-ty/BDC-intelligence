@@ -3,8 +3,8 @@ import { PortfolioLimits } from "@/components/PortfolioLimits";
 import { StateText } from "@/components/StateText";
 import {
   BOUNDARY_NOTE,
-  MULTIPLE_MATURITY_NOTE,
   UNKNOWN_MATURITY_NOTE,
+  UNRESOLVED_MATURITY_NOTE,
   WALL_NOTE,
   type MaturityDate,
   type MaturityYear,
@@ -42,7 +42,7 @@ export function MaturityDetail({
       <div className="mt-3 max-w-3xl space-y-1 text-sm text-muted">
         <p>{WALL_NOTE}</p>
         <p>{UNKNOWN_MATURITY_NOTE}</p>
-        <p>{MULTIPLE_MATURITY_NOTE}</p>
+        <p>{UNRESOLVED_MATURITY_NOTE}</p>
         <p>{BOUNDARY_NOTE}</p>
       </div>
       <PortfolioLimits emptyPeriods={emptyPeriods} />
@@ -91,6 +91,14 @@ export function MaturityDetail({
                     <dd>{date.reportedMaturityLines}</dd>
                   </div>
                   <div>
+                    <dt className="text-muted">Maturity from the structured SEC data set</dt>
+                    <dd>{date.structuredMaturityLines}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Maturity from the original EDGAR filing</dt>
+                    <dd>{date.filingMaturityLines}</dd>
+                  </div>
+                  <div>
                     <dt className="text-muted">Unknown maturity</dt>
                     <dd>
                       <Link
@@ -102,13 +110,13 @@ export function MaturityDetail({
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-muted">More than one maturity date</dt>
+                    <dt className="text-muted">Unresolved maturity</dt>
                     <dd>
                       <Link
-                        href={`/maturity/${registrant.registrant_cik}/lines?date=${date.reportedDate}&year=multiple`}
+                        href={`/maturity/${registrant.registrant_cik}/lines?date=${date.reportedDate}&year=unresolved`}
                         className="text-accent"
                       >
-                        {date.multipleMaturityLines}
+                        {date.unresolvedMaturityLines}
                       </Link>
                     </dd>
                   </div>

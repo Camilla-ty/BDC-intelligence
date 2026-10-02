@@ -1,5 +1,6 @@
 // Maps portfolio-listing rows into display models. No financial arithmetic.
-// A missing principal or maturity stays Unknown. Line counts are disclosed rows, not amounts.
+// A missing principal or maturity stays Unknown; an unresolved maturity stays Unresolved.
+// Line counts are disclosed rows, not amounts.
 
 export const EDGAR_ARCHIVES_PREFIX = "https://www.sec.gov/Archives/edgar/data/";
 export const EDGAR_VIEWER_PREFIX = "https://www.sec.gov/ix?doc=/Archives/edgar/data/";
@@ -55,8 +56,10 @@ export type LineRow = {
   principal_state: string;
   principal_raw: string | null;
   principal_currency_state: string;
-  maturity_state: string;
+  maturity_source: string;
   maturity_raw: string | null;
+  maturity_filing_verified: boolean;
+  maturity_document_url: string | null;
   instrument_type_state: string;
   instrument_type_raw: string | null;
   industry_state: string;
@@ -110,6 +113,8 @@ export type PortfolioLine = {
   principal: string;
   currency: string | null;
   maturity: string;
+  maturitySource: string | null;
+  maturityDocumentUrl: string | null;
   attributes: AttributeDisplay[];
   accessionNumber: string;
   documentUrl: string | null;
@@ -154,6 +159,23 @@ function reportedValue(state: string, raw: string | null): string {
   if (state === "REPORTED" && raw != null && raw.trim() !== "") return raw;
   if (state === "MULTIPLE_VALUES") return "Multiple values";
   return "Unknown";
+}
+
+// maturity_source is the provenance state from registry.maturity_read; only these two carry a date.
+const DATED_MATURITY_SOURCE = new Set(["REPORTED_STRUCTURED", "FILING_DISPLAYED"]);
+
+export function maturityValue(source: string, raw: string | null): string {
+  if (DATED_MATURITY_SOURCE.has(source) && raw != null && raw.trim() !== "") return raw;
+  if (source === "UNRESOLVED") return "Unresolved";
+  return "Unknown";
+}
+
+export function maturitySourceLabel(source: string, filingVerified: boolean): string | null {
+  if (source === "REPORTED_STRUCTURED") {
+    return filingVerified ? "Structured SEC data set; the original EDGAR filing shows the same date" : "Structured SEC data set";
+  }
+  if (source === "FILING_DISPLAYED") return "Original EDGAR filing";
+  return null;
 }
 
 export function listPortfolios(rows: RegistrantRow[], query: string): PortfolioSummary[] {
@@ -206,7 +228,9 @@ export function portfolioLine(row: LineRow): PortfolioLine {
     periodRole: displayState(row.period_role),
     principal: reportedValue(row.principal_state, row.principal_raw),
     currency: principalReported ? CURRENCY_NOTE : null,
-    maturity: reportedValue(row.maturity_state, row.maturity_raw),
+    maturity: maturityValue(row.maturity_source, row.maturity_raw),
+    maturitySource: maturitySourceLabel(row.maturity_source, row.maturity_filing_verified),
+    maturityDocumentUrl: secUrl(row.maturity_document_url),
     attributes: [
       attribute("Instrument type", row.instrument_type_state, row.instrument_type_raw),
       attribute("Industry", row.industry_state, row.industry_raw),

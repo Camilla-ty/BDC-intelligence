@@ -6,7 +6,7 @@ SELECT pg_temp.check('a reported date with no maturity keeps both lines and crea
      AND bool_and(disclosed_line_count = 2)
      AND bool_and(maturity_reported_count = 0)
      AND bool_and(maturity_unknown_count = 2)
-     AND bool_and(maturity_multiple_count = 0)
+     AND bool_and(maturity_unresolved_count = 0)
   FROM registry.maturity_reported_date));
 
 SELECT pg_temp.check('unknown maturity is omitted from the year counts', (
@@ -14,7 +14,7 @@ SELECT pg_temp.check('unknown maturity is omitted from the year counts', (
 
 SELECT pg_temp.check('maturity lines keep unknown maturity and do not carry other field amounts', (
   SELECT count(*) = 2
-     AND count(*) FILTER (WHERE maturity_state = 'UNKNOWN' AND maturity_raw IS NULL AND maturity_year IS NULL) = 2
+     AND count(*) FILTER (WHERE maturity_source = 'UNKNOWN' AND maturity_raw IS NULL AND maturity_year IS NULL) = 2
      AND count(*) FILTER (WHERE principal_state = 'REPORTED' AND principal_raw = '100' AND principal_currency_state = 'UNKNOWN') = 1
      AND count(*) FILTER (WHERE principal_state = 'UNKNOWN' AND principal_raw IS NULL) = 1
      AND count(*) FILTER (WHERE principal_raw IN ('90', '0.05', '0.01')) = 0

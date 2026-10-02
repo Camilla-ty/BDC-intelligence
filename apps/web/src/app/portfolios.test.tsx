@@ -53,8 +53,10 @@ function line(overrides: Partial<LineRow> = {}): LineRow {
     principal_state: "REPORTED",
     principal_raw: "1000",
     principal_currency_state: "UNKNOWN",
-    maturity_state: "UNKNOWN",
+    maturity_source: "UNKNOWN",
     maturity_raw: null,
+    maturity_filing_verified: false,
+    maturity_document_url: null,
     instrument_type_state: "UNKNOWN",
     instrument_type_raw: null,
     industry_state: "UNKNOWN",
@@ -138,7 +140,7 @@ describe("disclosed lines", () => {
       position_observation_id: "2",
       principal_state: "REPORTED",
       principal_raw: "0",
-      maturity_state: "REPORTED",
+      maturity_source: "REPORTED_STRUCTURED",
       maturity_raw: "2099-12-31",
       document_url: "https://example.com/not-sec",
       inline_url: "https://example.com/not-sec",
@@ -174,6 +176,41 @@ describe("disclosed lines", () => {
     expect(screen.queryByRole("term", { name: /interest rate|spread|fair value|cost/i })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\$/);
     expect(document.body.textContent).not.toMatch(/qtrs/);
+  });
+
+  it("shows a filing-displayed maturity with its source and no date for unknown or unresolved maturity", () => {
+    const filing = portfolioLine(line({
+      maturity_source: "FILING_DISPLAYED",
+      maturity_raw: "4/13/2099",
+      maturity_document_url: "https://www.sec.gov/Archives/edgar/data/1/0001/test-maturity.htm",
+      acquisition_date_state: "REPORTED",
+      acquisition_date_raw: "1/2/2099",
+    }));
+    const unknown = portfolioLine(line({ position_observation_id: "2", maturity_source: "UNKNOWN" }));
+    const unresolved = portfolioLine(line({ position_observation_id: "3", maturity_source: "UNRESOLVED" }));
+    expect(filing.maturity).toBe("4/13/2099");
+    expect(filing.maturitySource).toBe("Original EDGAR filing");
+    expect(filing.maturityDocumentUrl).toBe("https://www.sec.gov/Archives/edgar/data/1/0001/test-maturity.htm");
+    expect(filing.attributes.find((attribute) => attribute.label === "Acquisition date")?.text).toBe("1/2/2099");
+    expect(unknown.maturity).toBe("Unknown");
+    expect(unknown.maturitySource).toBeNull();
+    expect(unresolved.maturity).toBe("Unresolved");
+    expect(unresolved.maturitySource).toBeNull();
+    render(
+      <PortfolioLines
+        cik="0000000001"
+        reportedDate="2099-03-31"
+        lines={[filing, unknown]}
+        page={1}
+        hasPrevious={false}
+        hasNext={false}
+        pastEnd={false}
+        emptyPeriods={[]}
+      />,
+    );
+    expect(screen.getByText("4/13/2099")).toBeInTheDocument();
+    expect(screen.getByText(/Original EDGAR filing/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Filing document" })).toHaveAttribute("href", filing.maturityDocumentUrl);
   });
 
   it("does not treat a missing date as zero lines", () => {

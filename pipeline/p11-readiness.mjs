@@ -75,7 +75,7 @@ export function measureP11(database) {
   GROUP BY 1, 2, 3
   ORDER BY 1, 2, 3;`);
 
-  const noIdentifier = integer(queryRows(database, `SELECT count(*) FROM obs.current_soi_row_classification WHERE row_kind = 'NO_IDENTIFIER_ROW';`)[0][0], "no identifier");
+  const noIdentifier = integer(queryRows(database, `SELECT count(*) FROM obs.soi_row_observation WHERE identifier_raw IS NULL;`)[0][0], "no identifier");
   const dateRow = queryRows(database, `SELECT count(*) FILTER (WHERE reported_date IS NULL), count(DISTINCT reported_date) FROM obs.position_observation;`)[0];
   const reportedDateMissing = integer(dateRow[0], "null reported date");
   const distinctDates = integer(dateRow[1], "distinct dates");

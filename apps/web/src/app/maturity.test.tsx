@@ -7,6 +7,7 @@ import { Shell } from "@/components/Shell";
 import {
   BOUNDARY_NOTE,
   UNKNOWN_MATURITY_NOTE,
+  UNRESOLVED_MATURITY_NOTE,
   WALL_NOTE,
   maturityDates,
   maturityLine,
@@ -41,9 +42,11 @@ function line(overrides: Partial<MaturityLineRow> = {}): MaturityLineRow {
     principal_state: "REPORTED",
     principal_raw: "1000",
     principal_currency_state: "UNKNOWN",
-    maturity_state: "REPORTED",
+    maturity_source: "REPORTED_STRUCTURED",
     maturity_raw: "1899-12-31",
     maturity_year: 1899,
+    maturity_filing_verified: false,
+    maturity_document_url: null,
     accession_number: "0000000000-99-000001",
     evidence_level: "L1_STRUCTURED_DATASET",
     form_state: "REPORTED",
@@ -84,8 +87,10 @@ describe("maturity wall", () => {
       reported_date: "2099-12-31",
       disclosed_line_count: 3,
       maturity_reported_count: 2,
+      maturity_structured_count: 1,
+      maturity_filing_count: 1,
       maturity_unknown_count: 1,
-      maturity_multiple_count: 0,
+      maturity_unresolved_count: 0,
     }]);
     const years = maturityYears([
       { reported_date: "2099-12-31", maturity_year: 3032, disclosed_line_count: 1 },
@@ -111,6 +116,14 @@ describe("maturity wall", () => {
       "href",
       "/maturity/0000000001/lines?date=2099-12-31&year=unknown",
     );
+    expect(screen.getByText("Maturity from the structured SEC data set")).toBeInTheDocument();
+    expect(screen.getByText("Maturity from the original EDGAR filing")).toBeInTheDocument();
+    expect(screen.getByText(UNRESOLVED_MATURITY_NOTE)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "0" })).toHaveAttribute(
+      "href",
+      "/maturity/0000000001/lines?date=2099-12-31&year=unresolved",
+    );
+    expect(document.body.textContent).not.toMatch(/Multiple values/);
     expect(screen.queryByRole("link", { name: "2099" })).not.toBeInTheDocument();
     expect(screen.getByText("Cost and fair value remain an open question and are not shown.")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\$/);
@@ -122,7 +135,7 @@ describe("maturity wall", () => {
       position_observation_id: "2",
       principal_state: "UNKNOWN",
       principal_raw: null,
-      maturity_state: "UNKNOWN",
+      maturity_source: "UNKNOWN",
       maturity_raw: null,
       maturity_year: null,
       document_url: "https://example.com/not-sec",
@@ -182,6 +195,54 @@ describe("maturity wall", () => {
     expect(screen.getByRole("link", { name: "Maturity" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("href", "/market");
     expect(screen.queryByRole("link", { name: /refinancing/i })).not.toBeInTheDocument();
+  });
+
+  it("labels each maturity by its source and shows no date for unknown or unresolved maturity", () => {
+    const structured = maturityLine(line());
+    const filing = maturityLine(line({
+      position_observation_id: "2",
+      maturity_source: "FILING_DISPLAYED",
+      maturity_raw: "4/13/2099",
+      maturity_year: 2099,
+      maturity_document_url: "https://www.sec.gov/Archives/edgar/data/1/0001/test-maturity.htm",
+    }));
+    const verified = maturityLine(line({
+      position_observation_id: "3",
+      maturity_filing_verified: true,
+      maturity_document_url: "https://www.sec.gov/Archives/edgar/data/1/0001/test-maturity.htm",
+    }));
+    const unknown = maturityLine(line({ position_observation_id: "4", maturity_source: "UNKNOWN", maturity_raw: null, maturity_year: null }));
+    const unresolved = maturityLine(line({ position_observation_id: "5", maturity_source: "UNRESOLVED", maturity_raw: null, maturity_year: null }));
+    expect(structured.maturitySource).toBe("Structured SEC data set");
+    expect(structured.maturityDocumentUrl).toBeNull();
+    expect(filing.maturity).toBe("4/13/2099");
+    expect(filing.maturitySource).toBe("Original EDGAR filing");
+    expect(filing.maturityDocumentUrl).toBe("https://www.sec.gov/Archives/edgar/data/1/0001/test-maturity.htm");
+    expect(verified.maturitySource).toBe("Structured SEC data set; the original EDGAR filing shows the same date");
+    expect(unknown.maturity).toBe("Unknown");
+    expect(unknown.maturitySource).toBeNull();
+    expect(unresolved.maturity).toBe("Unresolved");
+    expect(unresolved.maturitySource).toBeNull();
+    const raw = maturityLine(line({ position_observation_id: "6", maturity_source: "UNKNOWN", maturity_raw: "Expiration - December 18, 2099" }));
+    expect(raw.maturity).toBe("Unknown");
+    render(
+      <MaturityLines
+        cik="0000000001"
+        reportedDate="2099-12-31"
+        yearLabel="All disclosed lines"
+        lines={[structured, filing, unknown, unresolved]}
+        page={1}
+        hasPrevious={false}
+        hasNext={false}
+        pastEnd={false}
+        emptyMessage={null}
+        emptyPeriods={[]}
+      />,
+    );
+    expect(screen.getByText("4/13/2099")).toBeInTheDocument();
+    expect(screen.getByText(/Original EDGAR filing/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Filing document" })).toHaveAttribute("href", filing.maturityDocumentUrl);
+    expect(screen.getByText("Unresolved")).toBeInTheDocument();
   });
 
   it("rejects a valuation field on a maturity line", () => {

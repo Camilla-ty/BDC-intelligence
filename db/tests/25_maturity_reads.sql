@@ -6,14 +6,14 @@ SELECT pg_temp.check('coverage for the fixture registrant matches the view', (
      AND bool_and(disclosed_line_count = 2)
      AND bool_and(maturity_reported_count = 0)
      AND bool_and(maturity_unknown_count = 2)
-     AND bool_and(maturity_multiple_count = 0)
+     AND bool_and(maturity_unresolved_count = 0)
   FROM registry.maturity_coverage('9999999901')
   WHERE NOT EXISTS (
-    SELECT reported_date, disclosed_line_count, maturity_reported_count, maturity_unknown_count, maturity_multiple_count
+    SELECT reported_date, disclosed_line_count, maturity_reported_count, maturity_unknown_count, maturity_unresolved_count
     FROM registry.maturity_reported_date
     WHERE registrant_cik = '9999999901'
     EXCEPT
-    SELECT reported_date, disclosed_line_count, maturity_reported_count, maturity_unknown_count, maturity_multiple_count
+    SELECT reported_date, disclosed_line_count, maturity_reported_count, maturity_unknown_count, maturity_unresolved_count
     FROM registry.maturity_coverage('9999999901'))));
 
 SELECT pg_temp.check('a cik that is not ten digits returns no coverage', (
@@ -26,12 +26,12 @@ SELECT pg_temp.check('unknown lines are counted and a missing year counts as zer
   SELECT registry.maturity_line_count('9999999901', '2099-12-31', 'all', NULL) = 2
      AND registry.maturity_line_count('9999999901', '2099-12-31', 'unknown', NULL) = 2
      AND registry.maturity_line_count('9999999901', '2099-12-31', 'year', 1899) = 0
-     AND registry.maturity_line_count('9999999901', '2099-12-31', 'multiple', NULL) = 0
+     AND registry.maturity_line_count('9999999901', '2099-12-31', 'unresolved', NULL) = 0
      AND registry.maturity_line_count('not-a-cik', '2099-12-31', 'all', NULL) = 0));
 
 SELECT pg_temp.check('a maturity page keeps unknown maturity and drops other field amounts', (
   SELECT count(*) = 2
-     AND count(*) FILTER (WHERE maturity_state = 'UNKNOWN' AND maturity_raw IS NULL AND maturity_year IS NULL) = 2
+     AND count(*) FILTER (WHERE maturity_source = 'UNKNOWN' AND maturity_raw IS NULL AND maturity_year IS NULL) = 2
      AND count(*) FILTER (WHERE principal_state = 'REPORTED' AND principal_raw = '100' AND principal_currency_state = 'UNKNOWN') = 1
      AND count(*) FILTER (WHERE principal_raw IN ('90', '0.05', '0.01')) = 0
   FROM registry.maturity_line_page('9999999901', '2099-12-31', 'all', NULL, 50, 0)));

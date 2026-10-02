@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 function yearLabel(year: string): string {
   if (year === "") return "All disclosed lines";
   if (year === "unknown") return "Unknown";
-  if (year === "multiple") return "Multiple values";
+  if (year === "unresolved") return "Unresolved";
   return year;
 }
 
@@ -28,7 +28,7 @@ export default async function MaturityLinesPage({
   const year = typeof query.year === "string" ? query.year : "";
   const requested = Number(query.page ?? "1");
   if (!/^[0-9]{10}$/.test(cik) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(reportedDate)
-    || (year !== "" && !/^(?:unknown|multiple|[0-9]{4})$/.test(year))) {
+    || (year !== "" && !/^(?:unknown|unresolved|[0-9]{4})$/.test(year))) {
     return <MissingRecord message={UNOBSERVED_DATE} href="/maturity" label="Maturity" />;
   }
   const periods = await loadEmptyPeriods();
@@ -44,12 +44,12 @@ export default async function MaturityLinesPage({
   }
   const emptyMessage = !first.dateFound
     ? UNOBSERVED_DATE
-    : total === 0 && year !== "" && year !== "unknown" && year !== "multiple"
+    : total === 0 && year !== "" && year !== "unknown" && year !== "unresolved"
       ? UNOBSERVED_YEAR
       : total === 0 && year === "unknown"
         ? "No disclosed line on this reported date has an unknown maturity."
-        : total === 0 && year === "multiple"
-          ? "No disclosed line on this reported date has more than one maturity date."
+        : total === 0 && year === "unresolved"
+          ? "No disclosed line on this reported date has an unresolved maturity."
           : null;
   return (
     <MaturityLines

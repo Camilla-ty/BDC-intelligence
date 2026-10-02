@@ -668,6 +668,16 @@ documentation status in `ref.registry_field_mapping`.
 - **Level 2 check (Observed, F13b):** all 2,889 distinct SOI identifier strings for this accession
   occur verbatim in the document text after entity decoding and whitespace normalization (2,889
   found, 0 missing). Only the counts are recorded.
+- **Inline XBRL fact format and context period (Documented, EDGAR XBRL Guide
+  https://www.sec.gov/files/edgar/filer-information/specifications/xbrl-guide-2026-05-15.pdf
+  section 11.12; Observed in one stored 10-Q primary document).** EDGAR instances follow Inline
+  XBRL 1.1 and may use XBRL International Transformation Registry versions 2020-02-12 to
+  2022-02-16. In that registry `ixt:fixed-zero` maps any displayed string to the value 0. The
+  observed document binds `ixt` to the 2020-02-12 registry namespace; 1,096 of its 1,103
+  `ixt:fixed-zero` facts display an em dash and the other 7 display words. The maturity binder
+  reads only the em dash display as 0. Each `xbrli:context` period is an `xbrli:instant` or an
+  `xbrli:startDate`/`xbrli:endDate` pair; the binder compares the instant or end date with SOI
+  `ddate` as the same `yyyy-mm-dd` with no rounding (5.5).
 
 ## 9. Identifiers and join keys
 
@@ -890,3 +900,4 @@ retrieval.
 |---|---|
 | 2026-09-28 | Initial verified version (Phase 0.2). |
 | 2026-09-28 | Version 2: BDC Report yearly layouts (6.1), additional submissions pages (7.1), registry field register (7.2), fixtures F19a–F33, discrepancies 18–20, questions Q21–Q24. Corrections: the Data Sets page lists 21 ZIPs, not 22 (3.2); the 2012–2015 BDC Report links have no "Updated" label (6). |
+| 2026-10-02 | Section 8: Inline XBRL `ixt:fixed-zero` format and context period end, as used by the maturity binder. |

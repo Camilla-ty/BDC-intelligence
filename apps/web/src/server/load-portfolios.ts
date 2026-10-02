@@ -141,7 +141,8 @@ SELECT json_build_object(
              accession_number,
              evidence_level,
              principal_state, principal_raw, principal_currency_state,
-             maturity_state, maturity_raw,
+             maturity_source, maturity_raw,
+             maturity_filing_verified, maturity_document_url,
              instrument_type_state, instrument_type_raw,
              industry_state, industry_raw,
              affiliation_state, affiliation_raw,
@@ -204,5 +205,7 @@ function isLine(item: unknown): item is LineRow {
   return typeof row.position_observation_id === "string"
     && typeof row.disclosed_line_text === "string"
     && typeof row.principal_state === "string"
-    && row.principal_currency_state === "UNKNOWN";
+    && row.principal_currency_state === "UNKNOWN"
+    && typeof row.maturity_source === "string"
+    && typeof row.maturity_filing_verified === "boolean";
 }

@@ -227,6 +227,8 @@ SELECT s.tabular_row_id, s.filing_id, s.reported_date_raw, s.reported_date, 'MON
 FROM _row_src s JOIN _row_ev e ON e.tabular_row_id = s.tabular_row_id
 ORDER BY s.ord;
 
+-- Cell-only kind. SUBTOTAL_ROW and DIMENSION_FACT_ROW are later superseding
+-- classifications that cite filing evidence. An empty identifier cell stays null.
 INSERT INTO obs.soi_row_classification (soi_row_observation_id, row_kind, period_role, rule_version_id, run_id)
 SELECT o.id,
        (CASE WHEN o.identifier_raw IS NULL THEN 'NO_IDENTIFIER_ROW' ELSE 'IDENTIFIER_ROW' END)::ref.row_kind,

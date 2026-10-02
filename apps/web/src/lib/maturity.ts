@@ -1,23 +1,32 @@
 // Maps maturity-wall rows into display models. No financial arithmetic.
 // Year counts arrive from the database. A missing maturity stays Unknown.
 
-import { displayState, secUrl, CURRENCY_NOTE, assertPortfolioFields } from "@/lib/portfolios";
+import {
+  displayState,
+  secUrl,
+  CURRENCY_NOTE,
+  assertPortfolioFields,
+  maturitySourceLabel,
+  maturityValue,
+} from "@/lib/portfolios";
 
 export const WALL_NOTE =
-  "A year count is the number of disclosed lines with one reported maturity date in that year.";
+  "A year count is the number of disclosed lines with one maturity date in that year, from the structured SEC data set or from the original EDGAR filing.";
 export const UNKNOWN_MATURITY_NOTE =
   "A disclosed line with no maturity date stays Unknown. It is omitted from the year counts, and it is not zero maturity.";
 export const BOUNDARY_NOTE =
   "Borrower-level maturity, current holdings, instrument identity, a refinancing pipeline, and portfolio totals stay blocked.";
-export const MULTIPLE_MATURITY_NOTE =
-  "More than one maturity date on a line stays Multiple values. Those lines are not placed in a year.";
+export const UNRESOLVED_MATURITY_NOTE =
+  "A line whose maturity sources disagree, or whose filing shows more than one candidate date, stays Unresolved. Those lines are not placed in a year.";
 
 export type CoverageRow = {
   reported_date: string;
   disclosed_line_count: number;
   maturity_reported_count: number;
+  maturity_structured_count: number;
+  maturity_filing_count: number;
   maturity_unknown_count: number;
-  maturity_multiple_count: number;
+  maturity_unresolved_count: number;
 };
 
 export type YearRow = {
@@ -32,9 +41,11 @@ export type MaturityLineRow = {
   principal_state: string;
   principal_raw: string | null;
   principal_currency_state: string;
-  maturity_state: string;
+  maturity_source: string;
   maturity_raw: string | null;
   maturity_year: number | null;
+  maturity_filing_verified: boolean;
+  maturity_document_url: string | null;
   accession_number: string;
   evidence_level: string;
   form_state: string;
@@ -52,8 +63,10 @@ export type MaturityDate = {
   reportedDate: string;
   disclosedLines: string;
   reportedMaturityLines: string;
+  structuredMaturityLines: string;
+  filingMaturityLines: string;
   unknownMaturityLines: string;
-  multipleMaturityLines: string;
+  unresolvedMaturityLines: string;
 };
 
 export type MaturityYear = {
@@ -68,6 +81,8 @@ export type MaturityLine = {
   principal: string;
   currency: string | null;
   maturity: string;
+  maturitySource: string | null;
+  maturityDocumentUrl: string | null;
   accessionNumber: string;
   documentUrl: string | null;
   inlineUrl: string | null;
@@ -94,8 +109,10 @@ export function maturityDates(rows: CoverageRow[]): MaturityDate[] {
       reportedDate: row.reported_date,
       disclosedLines: countLabel(row.disclosed_line_count),
       reportedMaturityLines: countLabel(row.maturity_reported_count),
+      structuredMaturityLines: countLabel(row.maturity_structured_count),
+      filingMaturityLines: countLabel(row.maturity_filing_count),
       unknownMaturityLines: countLabel(row.maturity_unknown_count),
-      multipleMaturityLines: countLabel(row.maturity_multiple_count),
+      unresolvedMaturityLines: countLabel(row.maturity_unresolved_count),
     }))
     .sort((a, b) => a.reportedDate.localeCompare(b.reportedDate));
 }
@@ -118,7 +135,9 @@ export function maturityLine(row: MaturityLineRow): MaturityLine {
     disclosedLineText: row.disclosed_line_text,
     principal: reportedValue(row.principal_state, row.principal_raw),
     currency: principalReported ? CURRENCY_NOTE : null,
-    maturity: reportedValue(row.maturity_state, row.maturity_raw),
+    maturity: maturityValue(row.maturity_source, row.maturity_raw),
+    maturitySource: maturitySourceLabel(row.maturity_source, row.maturity_filing_verified),
+    maturityDocumentUrl: secUrl(row.maturity_document_url),
     accessionNumber: row.accession_number,
     documentUrl: secUrl(row.document_url),
     inlineUrl: row.inline_url_state === "REPORTED" ? secUrl(row.inline_url) : null,

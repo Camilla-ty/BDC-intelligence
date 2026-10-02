@@ -8,7 +8,7 @@ import { executeSql } from "@/server/sql-text";
 
 const CIK = /^[0-9]{10}$/;
 const REPORTED_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
-const YEAR = /^(?:unknown|multiple|[0-9]{4})$/;
+const YEAR = /^(?:unknown|unresolved|[0-9]{4})$/;
 
 async function query(sql: string): Promise<{ json: unknown; error: string | null }> {
   const executed = await executeSql(sql);
@@ -58,7 +58,8 @@ SELECT json_build_object(
     SELECT coalesce(json_agg(row_to_json(d) ORDER BY d.reported_date), '[]'::json)
     FROM (
       SELECT reported_date::text AS reported_date, disclosed_line_count,
-             maturity_reported_count, maturity_unknown_count, maturity_multiple_count
+             maturity_reported_count, maturity_structured_count, maturity_filing_count,
+             maturity_unknown_count, maturity_unresolved_count
       FROM registry.maturity_coverage('${cik}')
     ) d),
   'years', (
@@ -112,7 +113,7 @@ export async function loadMaturityLines(cik: string, reportedDate: string, year:
     || !Number.isSafeInteger(offset) || offset < 0) {
     return { total: null, dateFound: false, rows: [], error: null };
   }
-  const kind = year === "" ? "all" : year === "unknown" ? "unknown" : year === "multiple" ? "multiple" : "year";
+  const kind = year === "" ? "all" : year === "unknown" ? "unknown" : year === "unresolved" ? "unresolved" : "year";
   const yearNumber = kind === "year" ? String(Number(year)) : "NULL";
   const { json, error } = await query(readerSql(`
 SELECT json_build_object(
@@ -127,7 +128,8 @@ SELECT json_build_object(
       SELECT position_observation_id::text,
              disclosed_line_text,
              principal_state, principal_raw, principal_currency_state,
-             maturity_state, maturity_raw, maturity_year,
+             maturity_source, maturity_raw, maturity_year,
+             maturity_filing_verified, maturity_document_url,
              accession_number, evidence_level,
              form_state, form_raw,
              filed_date_state, filed_date_raw,
@@ -178,8 +180,10 @@ function isCoverage(item: unknown): item is CoverageRow {
   return typeof row.reported_date === "string"
     && typeof row.disclosed_line_count === "number"
     && typeof row.maturity_reported_count === "number"
+    && typeof row.maturity_structured_count === "number"
+    && typeof row.maturity_filing_count === "number"
     && typeof row.maturity_unknown_count === "number"
-    && typeof row.maturity_multiple_count === "number";
+    && typeof row.maturity_unresolved_count === "number";
 }
 
 function isYear(item: unknown): item is YearRow {
@@ -202,5 +206,6 @@ function isLine(item: unknown): item is MaturityLineRow {
     && typeof row.disclosed_line_text === "string"
     && typeof row.principal_state === "string"
     && row.principal_currency_state === "UNKNOWN"
-    && typeof row.maturity_state === "string";
+    && typeof row.maturity_source === "string"
+    && typeof row.maturity_filing_verified === "boolean";
 }

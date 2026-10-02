@@ -22,7 +22,7 @@ SELECT pg_temp.check('duplicate disclosed lines stay separate and a missing prin
      AND count(*) FILTER (WHERE principal_state = 'REPORTED' AND principal_raw = '100' AND principal_currency_state = 'UNKNOWN') = 1
      AND count(*) FILTER (WHERE principal_state = 'UNKNOWN' AND principal_raw IS NULL) = 1
      AND count(*) FILTER (WHERE principal_raw IN ('90', '0.05', '0.01')) = 0
-     AND count(*) FILTER (WHERE maturity_state = 'UNKNOWN') = 2
+     AND count(*) FILTER (WHERE maturity_source = 'UNKNOWN' AND maturity_raw IS NULL) = 2
      AND count(*) FILTER (WHERE period_role = 'UNRESOLVED') = 2
      AND count(*) FILTER (WHERE release_state = 'UNKNOWN') = 2
   FROM registry.portfolio_line));
