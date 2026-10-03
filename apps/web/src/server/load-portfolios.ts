@@ -73,23 +73,20 @@ SELECT json_build_object(
     SELECT row_to_json(r) FROM (
       SELECT registrant_cik, name_state, name_raw, ticker_state, ticker_raw,
              file_number_state, file_number_raw, reported_date_count
-      FROM registry.portfolio_registrant
-      WHERE registrant_cik = '${cik}'
+      FROM registry.portfolio_detail_registrant('${cik}')
     ) r),
   'names', (
     SELECT coalesce(json_agg(row_to_json(n) ORDER BY n.source_type_code, n.raw_value), '[]'::json)
     FROM (
       SELECT source_type_code, raw_value, documentation_status
-      FROM registry.portfolio_registrant_name
-      WHERE registrant_cik = '${cik}'
+      FROM registry.portfolio_detail_names('${cik}')
     ) n),
   'dates', (
     SELECT coalesce(json_agg(row_to_json(d) ORDER BY d.reported_date), '[]'::json)
     FROM (
       SELECT reported_date::text AS reported_date, disclosed_line_count,
              point_in_time_line_count, duration_line_count
-      FROM registry.portfolio_reported_date
-      WHERE registrant_cik = '${cik}'
+      FROM registry.portfolio_detail_dates('${cik}')
     ) d),
   'empty_periods', (
     SELECT coalesce(json_agg(release_label ORDER BY release_label), '[]'::json)
