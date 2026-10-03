@@ -1,11 +1,13 @@
 -- Group 19: P6-min legal-entity resolution (G-09, G-10, G-13, G-14). Fake names only.
 
+SELECT pg_temp.add_identifier_position('po_near', 'TEST BORROWER A HOLDCO LLC | TEST LOAN 1', 21);
+
 SELECT pg_temp.expect_ok('exact Golden name observation', ARRAY[format(
   $$INSERT INTO obs.borrower_name_observation (position_observation_id, source_column_label, source_column_position,
       raw_text, normalized_text, extraction_state, rule_version_id, evidence_id, run_id)
     VALUES (%s, 'Investment, Identifier Axis', 6, 'TEST BORROWER A | TEST LOAN 1',
             'TEST BORROWER A | TEST LOAN 1', 'EXTRACTED', %s, %s, %s)$$,
-  pg_temp.fx('po_a'), pg_temp.fx('r_field'), pg_temp.fx('e_soi_a'), pg_temp.fx('run'))]);
+  pg_temp.fx('po_a'), pg_temp.fx('r_field'), pg_temp.fx('e_ident_a'), pg_temp.fx('run'))]);
 INSERT INTO fx SELECT 'bno_exact', max(id) FROM obs.borrower_name_observation
 WHERE position_observation_id = pg_temp.fx('po_a');
 
@@ -14,9 +16,9 @@ SELECT pg_temp.expect_ok('near-name negative-control observation (Holdco / LLC)'
       raw_text, normalized_text, extraction_state, rule_version_id, evidence_id, run_id)
     VALUES (%s, 'Investment, Identifier Axis', 6, 'TEST BORROWER A HOLDCO LLC | TEST LOAN 1',
             'TEST BORROWER A HOLDCO LLC | TEST LOAN 1', 'EXTRACTED', %s, %s, %s)$$,
-  pg_temp.fx('po_b'), pg_temp.fx('r_field'), pg_temp.fx('e_soi_b'), pg_temp.fx('run'))]);
+  pg_temp.fx('po_near'), pg_temp.fx('r_field'), pg_temp.fx('po_near_cell'), pg_temp.fx('run'))]);
 INSERT INTO fx SELECT 'bno_near', max(id) FROM obs.borrower_name_observation
-WHERE position_observation_id = pg_temp.fx('po_b');
+WHERE position_observation_id = pg_temp.fx('po_near');
 
 SELECT pg_temp.expect_ok('Golden legal entity has no CIK column to populate', ARRAY[format(
   $$INSERT INTO identity.legal_entity (creation_reason, run_id) VALUES ('TEST ONLY P6-min golden entity', %s)$$,

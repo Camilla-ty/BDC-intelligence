@@ -80,17 +80,44 @@ VALUES ('P6_GOLDEN', '${pipelineCodeVersion()}', '{"test":true}'::jsonb, now()) 
     database: dbName, positionObservationIds: identIds, runId, rules, identifierSha256: sha,
   });
 
-  queryRows(dbName, `INSERT INTO obs.borrower_name_observation (
-      position_observation_id, source_column_label, source_column_position,
-      raw_text, normalized_text, extraction_state, rule_version_id, evidence_id, run_id)
-    SELECT ${nearPo}, 'Investment, Identifier Axis',
-           array_position(tl.header, 'Investment, Identifier Axis'),
-           '${NEAR}', '${NEAR}', 'EXTRACTED', ${rules["norm.borrower_name"]}, s.evidence_id, ${runId}
-    FROM obs.position_observation p
-    JOIN obs.soi_row_observation s ON s.id = p.origin_soi_row_observation_id
-    JOIN raw.tabular_row r ON r.id = s.tabular_row_id
-    JOIN raw.table_load tl ON tl.id = r.table_load_id
-    WHERE p.id = ${nearPo};`);
+  queryRows(dbName, `
+WITH art AS (
+  INSERT INTO raw.artifact (source_url, final_url, source_type_code, http_status, byte_size, sha256,
+      retrieved_at, storage_key, run_id)
+  VALUES ('https://www.sec.gov/Archives/edgar/data/9999999901/000000000000000001/test-only-near.htm',
+          'https://www.sec.gov/Archives/edgar/data/9999999901/000000000000000001/test-only-near.htm',
+          'SEC_FILING_DOCUMENT', 200, 1, repeat('9', 64), '2099-01-02T00:00:00Z', 'test-only/near-htm', ${runId})
+  RETURNING id
+), ev AS (
+  INSERT INTO evidence.evidence (evidence_level, artifact_id, locator_type, html_anchor, run_id)
+  SELECT 'L2_ORIGINAL_FILING'::ref.evidence_level, art.id, 'HTML_ANCHOR'::ref.locator_type,
+         'ix-context-row:TEST-ONLY-near-company-cell', ${runId}
+  FROM art
+  RETURNING id, artifact_id
+), doc AS (
+  INSERT INTO registry.filing_document (filing_id, document_name, document_url, named_by,
+      rule_version_id, run_id, evidence_id)
+  SELECT p.filing_id, 'test-only-near.htm',
+         'https://www.sec.gov/Archives/edgar/data/9999999901/000000000000000001/test-only-near.htm',
+         'FILING_INDEX_JSON', ${rules["norm.borrower_name"]}, ${runId}, ev.id
+  FROM obs.position_observation p
+  CROSS JOIN ev
+  WHERE p.id = ${nearPo}
+  RETURNING id
+), link AS (
+  INSERT INTO registry.filing_document_artifact (filing_document_id, artifact_id, run_id)
+  SELECT doc.id, ev.artifact_id, ${runId}
+  FROM doc
+  CROSS JOIN ev
+  RETURNING id
+)
+INSERT INTO obs.borrower_name_observation (
+    position_observation_id, name_source, raw_text, normalized_text, extraction_state,
+    rule_version_id, evidence_id, run_id)
+SELECT ${nearPo}, 'FILING_CELL', '${NEAR}', '${NEAR}', 'EXTRACTED',
+       ${rules["norm.borrower_name"]}, ev.id, ${runId}
+FROM ev
+CROSS JOIN link;`);
 
   const before = snapshotP6Min(dbName, identIds);
   const inserted = applyP6Min({

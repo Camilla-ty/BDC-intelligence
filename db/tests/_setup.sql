@@ -103,6 +103,42 @@ LANGUAGE sql STABLE AS $$
   SELECT mapping_id FROM ref.current_column_mapping WHERE source_table_code = 'SOI' AND column_label = label
 $$;
 
+-- Extra identifier-bearing position for tests that need a second disclosed name.
+-- Not called by the shared fixture, so the default position count stays two.
+CREATE FUNCTION pg_temp.add_identifier_position(pos_key text, ident text, line_no bigint) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  acc constant text := '0000000000-00-000001';
+  row_id bigint;
+  ev_row bigint;
+  ev_cell bigint;
+  soi_id bigint;
+  po_id bigint;
+  line text;
+BEGIN
+  line := acc || E'\t9999999901\tTEST BDC 1\t2099-12-31\t0\t' || ident || E'\t100\t90\t\t0.05\t0.01';
+  row_id := pg_temp.add_row(pg_temp.fx('l_soi'), line_no, line);
+  ev_row := pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), row_id);
+  ev_cell := pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), row_id, 6, 'Investment, Identifier Axis');
+  INSERT INTO obs.soi_row_observation (tabular_row_id, filing_id, reported_date_raw, reported_date,
+      date_precision, qtrs_raw, qtrs, duration_kind, identifier_raw, rule_version_id, evidence_id, run_id)
+  VALUES (row_id, pg_temp.fx('filing'), '2099-12-31', '2099-12-31', 'MONTH_END_ROUNDED', '0', 0,
+          'POINT_IN_TIME', ident, pg_temp.fx('r_project'), ev_row, pg_temp.fx('run'))
+  RETURNING id INTO soi_id;
+  INSERT INTO obs.soi_row_classification (soi_row_observation_id, row_kind, period_role, rule_version_id, run_id)
+  VALUES (soi_id, 'IDENTIFIER_ROW', 'UNRESOLVED', pg_temp.fx('r_classify'), pg_temp.fx('run'));
+  INSERT INTO obs.position_observation (origin_soi_row_observation_id, filing_id, reported_date,
+      date_precision, duration_kind, holding_descriptor_raw, rule_version_id, evidence_id, run_id)
+  VALUES (soi_id, pg_temp.fx('filing'), '2099-12-31', 'MONTH_END_ROUNDED', 'POINT_IN_TIME',
+          ident, pg_temp.fx('r_position'), ev_row, pg_temp.fx('run'))
+  RETURNING id INTO po_id;
+  INSERT INTO obs.position_observation_source (position_observation_id, soi_row_observation_id, source_role, run_id)
+  VALUES (po_id, soi_id, 'PRIMARY', pg_temp.fx('run'));
+  PERFORM pg_temp.put(pos_key, po_id);
+  PERFORM pg_temp.put(pos_key || '_cell', ev_cell);
+END
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Fixture: one fake data-set artifact with SUB, SOI, and NUM loads, one fake registrant and
 -- filing, SOI observations including a deliberate duplicate, and position field values.
@@ -177,6 +213,10 @@ BEGIN
   PERFORM pg_temp.put('e_soi_b', pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), pg_temp.fx('row_soi_b')));
   PERFORM pg_temp.put('e_soi_total', pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), pg_temp.fx('row_soi_total')));
   PERFORM pg_temp.put('e_num', pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), pg_temp.fx('row_num')));
+  PERFORM pg_temp.put('e_ident_a', pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), pg_temp.fx('row_soi_a'), 6, 'Investment, Identifier Axis'));
+  PERFORM pg_temp.put('e_ident_b', pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), pg_temp.fx('row_soi_b'), 6, 'Investment, Identifier Axis'));
+  PERFORM pg_temp.put('e_name_a', pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), pg_temp.fx('row_soi_a'), 3, 'name'));
+  PERFORM pg_temp.put('e_name_b', pg_temp.add_evidence('L1_STRUCTURED_DATASET', pg_temp.fx('artifact'), pg_temp.fx('row_soi_b'), 3, 'name'));
 
   WITH i AS (INSERT INTO registry.registrant (cik, run_id, evidence_id)
     VALUES (9999999901, pg_temp.fx('run'), pg_temp.fx('e_sub')) RETURNING id) INSERT INTO fx SELECT 'registrant', id FROM i;

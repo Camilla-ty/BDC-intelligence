@@ -59,7 +59,9 @@ SELECT pg_temp.check('G-04/G-05: no defaults except recorded_at/applied_at = now
   SELECT 1 FROM layer_columns
   WHERE column_default IS NOT NULL
     AND NOT (column_name IN ('recorded_at', 'applied_at') AND column_default = 'now()')
-    AND NOT (column_name = 'id' AND column_default = 'gen_random_uuid()')));
+    AND NOT (column_name = 'id' AND column_default = 'gen_random_uuid()')
+    AND NOT (table_schema = 'obs' AND table_name = 'borrower_name_observation'
+             AND column_name = 'name_source' AND column_default = '''SOI_CELL''::text')));
 
 SELECT pg_temp.check('SOI has no natural key: no unique index on obs or position tables uses business columns', NOT EXISTS (
   SELECT 1

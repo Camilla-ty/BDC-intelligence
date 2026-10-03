@@ -20,7 +20,7 @@ function attr(source, name) {
   return match[2] ?? match[3];
 }
 
-function tableRows(html) {
+export function tableRows(html) {
   const rows = [];
   let from = 0;
   while (from < html.length) {

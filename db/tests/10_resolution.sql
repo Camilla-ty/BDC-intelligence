@@ -8,7 +8,7 @@ BEGIN
     INSERT INTO obs.borrower_name_observation (position_observation_id, source_column_label, source_column_position, raw_text,
         extraction_state, rule_version_id, evidence_id, run_id)
     VALUES (pg_temp.fx('po_a'), 'Investment, Identifier Axis', 6, 'TEST BORROWER A | TEST LOAN 1', 'RAW_ONLY',
-            pg_temp.fx('r_field'), pg_temp.fx('e_soi_a'), pg_temp.fx('run'))
+            pg_temp.fx('r_field'), pg_temp.fx('e_ident_a'), pg_temp.fx('run'))
     RETURNING id)
   INSERT INTO fx SELECT 'bno', id FROM i;
 END
@@ -57,7 +57,7 @@ SELECT pg_temp.expect_error('supersedes_id must reference the same subject', 'BD
   format($$INSERT INTO obs.borrower_name_observation (position_observation_id, source_column_label, source_column_position, raw_text,
              extraction_state, rule_version_id, evidence_id, run_id)
            VALUES (%s, 'Investment, Identifier Axis', 6, 'TEST BORROWER A | TEST LOAN 1', 'RAW_ONLY', %s, %s, %s)$$,
-         pg_temp.fx('po_b'), pg_temp.fx('r_field'), pg_temp.fx('e_soi_b'), pg_temp.fx('run')),
+         pg_temp.fx('po_b'), pg_temp.fx('r_field'), pg_temp.fx('e_ident_b'), pg_temp.fx('run')),
   format($$INSERT INTO resolution.entity_resolution_decision (borrower_name_observation_id, state, method, rationale, actor_kind,
              decided_by, decided_at, rule_version_id, evidence_id, run_id, supersedes_id, supersede_reason)
            VALUES (currval(pg_get_serial_sequence('obs.borrower_name_observation', 'id')), 'UNRESOLVED', 'test', 'test',

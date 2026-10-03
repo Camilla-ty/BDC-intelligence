@@ -137,7 +137,9 @@ CREATE TYPE ref.locator_type AS ENUM (
     'JSON_PATH',
     'IXBRL_FACT',
     'HTML_ANCHOR',
-    'DOCUMENT'
+    'DOCUMENT',
+    'DISCLOSURE_BLOCK',
+    'HTML_TABLE_CELL'
 );
 
 CREATE TYPE ref.mapping_basis AS ENUM (
@@ -359,6 +361,8 @@ $$;
 CREATE FUNCTION evidence.check_evidence() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+  parent evidence.evidence;
 BEGIN
   IF NEW.tabular_row_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM raw.tabular_row r JOIN raw.table_load tl ON tl.id = r.table_load_id
@@ -372,15 +376,37 @@ BEGIN
   ) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'evidence column_label must equal the header label at column_position';
   END IF;
-  -- Level 1 JSON paths are left to the level/locator CHECK so that error stays a check violation.
   IF NEW.locator_type = 'JSON_PATH' AND NEW.evidence_level IN ('REGISTRY', 'DISCOVERY') AND NOT EXISTS (
     SELECT 1 FROM raw.json_value v WHERE v.artifact_id = NEW.artifact_id AND v.json_path = NEW.json_path
   ) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'evidence json_path must resolve to a stored raw.json_value of the artifact';
   END IF;
+  IF NEW.block_evidence_id IS NOT NULL THEN
+    SELECT * INTO parent FROM evidence.evidence WHERE id = NEW.block_evidence_id;
+    IF parent.id IS NULL
+       OR parent.locator_type IS DISTINCT FROM 'DISCLOSURE_BLOCK'
+       OR parent.artifact_id IS DISTINCT FROM NEW.artifact_id THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'disclosure block parent must be a DISCLOSURE_BLOCK on the same artifact';
+    END IF;
+    IF NEW.locator_type = 'IXBRL_FACT' AND NEW.html_row_ordinal IS NULL THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'an IXBRL_FACT inside a disclosure block requires html_row_ordinal';
+    END IF;
+    IF NEW.html_row_ordinal IS NULL
+       OR parent.html_row_ordinal IS NULL
+       OR parent.html_row_end_ordinal IS NULL
+       OR NEW.html_row_ordinal < parent.html_row_ordinal
+       OR NEW.html_row_ordinal > parent.html_row_end_ordinal THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'child row ordinal must fall inside the disclosure block';
+    END IF;
+  END IF;
   RETURN NEW;
 END
 $$;
+
+COMMENT ON FUNCTION evidence.check_evidence() IS 'A block parent must be a DISCLOSURE_BLOCK on the same artifact, and the child row must fall inside that block. The function does not parse HTML and does not assign the Portfolio Company slot.';
 
 CREATE FUNCTION evidence.check_supplementary_subject() RETURNS trigger
     LANGUAGE plpgsql
@@ -427,6 +453,98 @@ CREATE FUNCTION obs.cell_by_label(p_row_id bigint, p_label text) RETURNS text
   FROM raw.tabular_row r JOIN raw.table_load tl ON tl.id = r.table_load_id
   WHERE r.id = p_row_id
 $$;
+
+CREATE FUNCTION obs.check_borrower_name_observation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  origin_row bigint;
+  filing bigint;
+BEGIN
+  IF NEW.name_source = 'SOI_CELL' THEN
+    IF NEW.source_column_label IS NULL OR NEW.source_column_position IS NULL THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'SOI_CELL requires source_column_label and source_column_position';
+    END IF;
+    SELECT s.tabular_row_id INTO origin_row
+    FROM obs.position_observation p
+    JOIN obs.soi_row_observation s ON s.id = p.origin_soi_row_observation_id
+    WHERE p.id = NEW.position_observation_id;
+    IF origin_row IS NULL THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'SOI_CELL requires the position observation origin SOI row';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM evidence.evidence e
+      WHERE e.id = NEW.evidence_id
+        AND e.evidence_level = 'L1_STRUCTURED_DATASET'
+        AND e.locator_type = 'TSV_CELL'
+        AND e.tabular_row_id = origin_row
+        AND e.column_label = NEW.source_column_label
+        AND e.column_position = NEW.source_column_position
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'SOI_CELL evidence must be an L1 TSV_CELL on the origin SOI row at the named column';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM raw.tabular_row r
+      JOIN raw.table_load tl ON tl.id = r.table_load_id
+      WHERE r.id = origin_row
+        AND tl.header[NEW.source_column_position] = NEW.source_column_label
+        AND r.cells[NEW.source_column_position] IS NOT DISTINCT FROM NEW.raw_text
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'SOI_CELL raw_text must equal the origin SOI cell';
+    END IF;
+  ELSIF NEW.name_source = 'FILING_CELL' THEN
+    IF NEW.source_column_label IS NOT NULL OR NEW.source_column_position IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_CELL cannot carry SOI source columns';
+    END IF;
+    IF NEW.raw_text IS NULL OR NEW.raw_text = '' THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_CELL raw_text must be non-empty';
+    END IF;
+    SELECT p.filing_id INTO filing
+    FROM obs.position_observation p
+    WHERE p.id = NEW.position_observation_id;
+    IF NOT EXISTS (
+      SELECT 1
+      FROM evidence.evidence e
+      JOIN raw.artifact a ON a.id = e.artifact_id
+      JOIN registry.filing_document_artifact fda ON fda.artifact_id = a.id
+      JOIN registry.filing_document fd ON fd.id = fda.filing_document_id
+      WHERE e.id = NEW.evidence_id
+        AND e.evidence_level = 'L2_ORIGINAL_FILING'
+        AND a.source_type_code = 'SEC_FILING_DOCUMENT'
+        AND fd.filing_id = filing
+        AND (
+          e.locator_type IN ('HTML_ANCHOR', 'IXBRL_FACT')
+          OR (
+            e.locator_type = 'HTML_TABLE_CELL'
+            AND e.block_evidence_id IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM evidence.evidence parent
+              WHERE parent.id = e.block_evidence_id
+                AND parent.locator_type = 'DISCLOSURE_BLOCK'
+                AND parent.artifact_id = e.artifact_id
+                AND parent.html_row_ordinal = e.html_row_ordinal
+            )
+          )
+        )
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_CELL evidence must be L2 HTML_ANCHOR, IXBRL_FACT, or a block-start HTML_TABLE_CELL on a SEC_FILING_DOCUMENT linked to the position filing';
+    END IF;
+  ELSE
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'name_source must be SOI_CELL or FILING_CELL';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+COMMENT ON FUNCTION obs.check_borrower_name_observation() IS 'SOI_CELL must match the origin SOI cell through L1 TSV_CELL evidence. FILING_CELL cites L2 HTML_ANCHOR, IXBRL_FACT, or an HTML_TABLE_CELL on the disclosure block start row. The function does not parse HTML and does not read holding_descriptor_raw.';
 
 CREATE FUNCTION obs.check_field_value_corroboration() RETURNS trigger
     LANGUAGE plpgsql
@@ -1621,6 +1739,119 @@ CREATE FUNCTION registry.maturity_years(p_cik text) RETURNS TABLE(reported_date 
   GROUP BY s.reported_date, extract(YEAR FROM s.maturity_date)
 $$;
 
+CREATE FUNCTION registry.portfolio_detail_dates(p_cik text) RETURNS TABLE(reported_date date, disclosed_line_count integer, point_in_time_line_count integer, duration_line_count integer)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  SELECT p.reported_date,
+         count(*)::integer,
+         count(*) FILTER (WHERE p.duration_kind = 'POINT_IN_TIME')::integer,
+         count(*) FILTER (WHERE p.duration_kind = 'DURATION')::integer
+  FROM obs.position_observation p
+  WHERE p.reported_date IS NOT NULL
+    AND p.filing_id IN (SELECT e.filing_id FROM registry.portfolio_detail_filing(p_cik) e)
+  GROUP BY p.reported_date;
+$$;
+
+COMMENT ON FUNCTION registry.portfolio_detail_dates(p_cik text) IS 'Disclosed-line counts for one registrant by reported date. A date that is absent was not observed. Counts are rows, not amounts.';
+
+CREATE FUNCTION registry.portfolio_detail_filing(p_cik text) RETURNS TABLE(filing_id bigint)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $_$
+  WITH reg AS (
+    SELECT r.id
+    FROM registry.registrant r
+    WHERE r.cik = CASE WHEN p_cik ~ '^[0-9]{10}$' THEN p_cik::bigint END
+  ),
+  touched AS (
+    SELECT DISTINCT l.filing_id
+    FROM registry.filing_registrant_link l
+    JOIN reg ON reg.id = l.registrant_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM registry.filing_registrant_link s WHERE s.supersedes_id = l.id
+    )
+  ),
+  heads AS (
+    SELECT l.filing_id, l.registrant_id, rr.cik
+    FROM registry.filing_registrant_link l
+    JOIN touched t ON t.filing_id = l.filing_id
+    JOIN registry.registrant rr ON rr.id = l.registrant_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM registry.filing_registrant_link s WHERE s.supersedes_id = l.id
+    )
+  )
+  SELECT h.filing_id
+  FROM heads h
+  GROUP BY h.filing_id
+  HAVING count(DISTINCT h.registrant_id) = 1
+     AND count(DISTINCT h.cik) = 1;
+$_$;
+
+COMMENT ON FUNCTION registry.portfolio_detail_filing(p_cik text) IS 'Current filing heads for one CIK. A filing stays only when every current link names that one registrant and one CIK.';
+
+CREATE FUNCTION registry.portfolio_detail_names(p_cik text) RETURNS TABLE(source_type_code text, raw_value text, documentation_status text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $_$
+  SELECT a.source_type_code,
+         a.raw_value,
+         a.documentation_status::text
+  FROM registry.current_registrant_attribute a
+  JOIN registry.registrant r ON r.id = a.registrant_id
+  WHERE r.cik = CASE WHEN p_cik ~ '^[0-9]{10}$' THEN p_cik::bigint END
+    AND a.attribute_code = 'NAME'
+    AND EXISTS (
+      SELECT 1 FROM registry.portfolio_detail_registrant(p_cik)
+    );
+$_$;
+
+COMMENT ON FUNCTION registry.portfolio_detail_names(p_cik text) IS 'Each current registrant-name source for a portfolio registrant, unmerged.';
+
+CREATE FUNCTION registry.portfolio_detail_registrant(p_cik text) RETURNS TABLE(registrant_cik text, name_state text, name_raw text, ticker_state text, ticker_raw text, file_number_state text, file_number_raw text, reported_date_count integer)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $_$
+  WITH reg AS (
+    SELECT r.id, lpad(r.cik::text, 10, '0') AS registrant_cik
+    FROM registry.registrant r
+    WHERE r.cik = CASE WHEN p_cik ~ '^[0-9]{10}$' THEN p_cik::bigint END
+  ),
+  attrs AS (
+    SELECT a.attribute_code,
+           CASE WHEN count(c.observation_id) = 0 THEN 'UNKNOWN'
+                WHEN count(DISTINCT c.raw_value) > 1 THEN 'MULTIPLE_VALUES'
+                ELSE 'REPORTED' END AS attribute_state,
+           min(c.raw_value) AS raw_value
+    FROM reg
+    CROSS JOIN (VALUES ('NAME'::text), ('TICKER'::text), ('FILE_NUMBER'::text)) AS a(attribute_code)
+    LEFT JOIN registry.current_registrant_attribute c
+      ON c.registrant_id = reg.id AND c.attribute_code = a.attribute_code
+    GROUP BY a.attribute_code
+  )
+  SELECT reg.registrant_cik,
+         n.attribute_state,
+         CASE WHEN n.attribute_state = 'REPORTED' THEN n.raw_value END,
+         t.attribute_state,
+         CASE WHEN t.attribute_state = 'REPORTED' THEN t.raw_value END,
+         f.attribute_state,
+         CASE WHEN f.attribute_state = 'REPORTED' THEN f.raw_value END,
+         (SELECT count(DISTINCT p.reported_date)::integer
+          FROM obs.position_observation p
+          WHERE p.filing_id IN (SELECT e.filing_id FROM registry.portfolio_detail_filing(p_cik) e))
+  FROM reg
+  JOIN attrs n ON n.attribute_code = 'NAME'
+  JOIN attrs t ON t.attribute_code = 'TICKER'
+  JOIN attrs f ON f.attribute_code = 'FILE_NUMBER'
+  WHERE EXISTS (
+    SELECT 1
+    FROM obs.position_observation p
+    WHERE p.filing_id IN (SELECT e.filing_id FROM registry.portfolio_detail_filing(p_cik) e)
+  );
+$_$;
+
+COMMENT ON FUNCTION registry.portfolio_detail_registrant(p_cik text) IS 'One portfolio registrant for a CIK that has position observations. A name, ticker, or file number is present only when current sources agree.';
+
 CREATE FUNCTION resolution.check_position_continuity() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1774,25 +2005,35 @@ CREATE TABLE evidence.evidence (
     run_id bigint NOT NULL,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
     artifact_member_id bigint,
+    html_row_ordinal integer,
+    html_row_end_ordinal integer,
+    html_slot_ordinal integer,
+    block_evidence_id bigint,
     CONSTRAINT evidence_column_position_check CHECK ((column_position >= 1)),
+    CONSTRAINT evidence_html_row_end_ordinal_check CHECK (((html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= 1))),
+    CONSTRAINT evidence_html_row_ordinal_check CHECK (((html_row_ordinal IS NULL) OR (html_row_ordinal >= 1))),
+    CONSTRAINT evidence_html_row_span_check CHECK (((html_row_ordinal IS NULL) OR (html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= html_row_ordinal))),
+    CONSTRAINT evidence_html_slot_ordinal_check CHECK (((html_slot_ordinal IS NULL) OR (html_slot_ordinal >= 0))),
     CONSTRAINT evidence_json_path_check CHECK ((json_path ~ '^\$'::text)),
     CONSTRAINT evidence_l2_html_anchor_context_row CHECK (((evidence_level <> 'L2_ORIGINAL_FILING'::ref.evidence_level) OR (locator_type <> 'HTML_ANCHOR'::ref.locator_type) OR (html_anchor ~ '^ix-context-row:[A-Za-z0-9_-]+$'::text))),
     CONSTRAINT evidence_level_locator CHECK (
 CASE evidence_level
     WHEN 'L1_STRUCTURED_DATASET'::ref.evidence_level THEN ((locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type])) OR ((locator_type = 'DOCUMENT'::ref.locator_type) AND (artifact_member_id IS NOT NULL)))
-    WHEN 'L2_ORIGINAL_FILING'::ref.evidence_level THEN (locator_type = ANY (ARRAY['IXBRL_FACT'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
+    WHEN 'L2_ORIGINAL_FILING'::ref.evidence_level THEN (locator_type = ANY (ARRAY['IXBRL_FACT'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type, 'DISCLOSURE_BLOCK'::ref.locator_type, 'HTML_TABLE_CELL'::ref.locator_type]))
     WHEN 'REGISTRY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type, 'JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
     WHEN 'DISCOVERY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
     ELSE NULL::boolean
 END),
     CONSTRAINT evidence_locator_fields CHECK (
 CASE locator_type
-    WHEN 'TSV_ROW'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (num_nonnulls(column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
-    WHEN 'TSV_CELL'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (column_position IS NOT NULL) AND (column_label IS NOT NULL) AND (num_nonnulls(json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
-    WHEN 'JSON_PATH'::ref.locator_type THEN ((json_path IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
-    WHEN 'IXBRL_FACT'::ref.locator_type THEN ((ixbrl_fact_id IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, html_anchor, artifact_member_id) = 0))
-    WHEN 'HTML_ANCHOR'::ref.locator_type THEN ((html_anchor IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, artifact_member_id) = 0))
-    WHEN 'DOCUMENT'::ref.locator_type THEN (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor) = 0)
+    WHEN 'TSV_ROW'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (num_nonnulls(column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'TSV_CELL'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (column_position IS NOT NULL) AND (column_label IS NOT NULL) AND (num_nonnulls(json_path, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'JSON_PATH'::ref.locator_type THEN ((json_path IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'IXBRL_FACT'::ref.locator_type THEN ((ixbrl_fact_id IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (html_slot_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, html_anchor, artifact_member_id) = 0) AND ((block_evidence_id IS NULL) = (html_row_ordinal IS NULL)))
+    WHEN 'HTML_ANCHOR'::ref.locator_type THEN ((html_anchor IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'DOCUMENT'::ref.locator_type THEN (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0)
+    WHEN 'DISCLOSURE_BLOCK'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_row_end_ordinal IS NOT NULL) AND (html_row_end_ordinal >= html_row_ordinal) AND (html_slot_ordinal IS NULL) AND (block_evidence_id IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
+    WHEN 'HTML_TABLE_CELL'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND (block_evidence_id IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
     ELSE NULL::boolean
 END)
 );
@@ -1802,6 +2043,14 @@ COMMENT ON TABLE evidence.evidence IS 'A location inside a source artifact. Retr
 COMMENT ON COLUMN evidence.evidence.join_note IS 'Set when the fact depends on a join that SEC does not document (for example SOI to NUM).';
 
 COMMENT ON COLUMN evidence.evidence.artifact_member_id IS 'For DOCUMENT evidence about one archive member (for example a whole SUB table).';
+
+COMMENT ON COLUMN evidence.evidence.html_row_ordinal IS '1-based document order of a <tr>, using the schedule disclosure parser row scan. Null for locators that are not an HTML row.';
+
+COMMENT ON COLUMN evidence.evidence.html_row_end_ordinal IS 'Inclusive end row of a DISCLOSURE_BLOCK. Null for every other locator.';
+
+COMMENT ON COLUMN evidence.evidence.html_slot_ordinal IS 'Colspan-grid slot of an HTML_TABLE_CELL. Slot 0 is allowed. The database does not decide which slot is the Portfolio Company column.';
+
+COMMENT ON COLUMN evidence.evidence.block_evidence_id IS 'DISCLOSURE_BLOCK that contains this cell or fact. Null on the block itself and on evidence that is not inside a block.';
 
 ALTER TABLE evidence.evidence ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME evidence.evidence_id_seq
@@ -1933,8 +2182,8 @@ COMMENT ON TABLE identity."position" IS 'Continuity of one registrant''s holding
 CREATE TABLE obs.borrower_name_observation (
     id bigint NOT NULL,
     position_observation_id bigint NOT NULL,
-    source_column_label text NOT NULL,
-    source_column_position integer NOT NULL,
+    source_column_label text,
+    source_column_position integer,
     raw_text text NOT NULL,
     normalized_text text,
     extraction_state text NOT NULL,
@@ -1942,13 +2191,17 @@ CREATE TABLE obs.borrower_name_observation (
     evidence_id bigint NOT NULL,
     run_id bigint NOT NULL,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    name_source text DEFAULT 'SOI_CELL'::text NOT NULL,
     CONSTRAINT borrower_name_observation_check CHECK (((extraction_state = 'EXTRACTED'::text) = (normalized_text IS NOT NULL))),
     CONSTRAINT borrower_name_observation_extraction_state_check CHECK ((extraction_state = ANY (ARRAY['RAW_ONLY'::text, 'EXTRACTED'::text, 'UNRESOLVED'::text]))),
+    CONSTRAINT borrower_name_observation_name_source_check CHECK ((name_source = ANY (ARRAY['SOI_CELL'::text, 'FILING_CELL'::text]))),
     CONSTRAINT borrower_name_observation_raw_text_check CHECK ((raw_text <> ''::text)),
     CONSTRAINT borrower_name_observation_source_column_position_check CHECK ((source_column_position >= 1))
 );
 
 COMMENT ON TABLE obs.borrower_name_observation IS 'Name text as disclosed. It is an observation, not a legal entity; linking happens only through resolution decisions.';
+
+COMMENT ON COLUMN obs.borrower_name_observation.name_source IS 'SOI_CELL cites an origin SOI cell. FILING_CELL cites a primary-filing cell and leaves the SOI source columns null. Neither source is derived from holding_descriptor_raw.';
 
 ALTER TABLE obs.borrower_name_observation ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME obs.borrower_name_observation_id_seq
@@ -4879,6 +5132,8 @@ CREATE UNIQUE INDEX instrument_attribute_assertion_supersedes_once ON identity.i
 
 CREATE UNIQUE INDEX legal_entity_alias_supersedes_once ON identity.legal_entity_alias USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
+CREATE UNIQUE INDEX borrower_name_observation_filing_cell_evidence_uidx ON obs.borrower_name_observation USING btree (position_observation_id, evidence_id) WHERE (name_source = 'FILING_CELL'::text);
+
 CREATE INDEX maturity_inspection_subject_idx ON obs.maturity_inspection USING btree (position_observation_id);
 
 CREATE UNIQUE INDEX maturity_inspection_supersedes_once ON obs.maturity_inspection USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
@@ -5068,6 +5323,8 @@ CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.position_observation_
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.soi_row_classification FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.soi_row_observation FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER check_borrower_name_observation BEFORE INSERT ON obs.borrower_name_observation FOR EACH ROW EXECUTE FUNCTION obs.check_borrower_name_observation();
 
 CREATE TRIGGER check_field_value_corroboration BEFORE INSERT ON obs.field_value_corroboration FOR EACH ROW EXECUTE FUNCTION obs.check_field_value_corroboration();
 
@@ -5388,6 +5645,9 @@ ALTER TABLE ONLY evidence.evidence
 
 ALTER TABLE ONLY evidence.evidence
     ADD CONSTRAINT evidence_artifact_member_fkey FOREIGN KEY (artifact_member_id, artifact_id) REFERENCES raw.artifact_member(id, artifact_id);
+
+ALTER TABLE ONLY evidence.evidence
+    ADD CONSTRAINT evidence_block_evidence_fkey FOREIGN KEY (block_evidence_id) REFERENCES evidence.evidence(id);
 
 ALTER TABLE ONLY evidence.evidence
     ADD CONSTRAINT evidence_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
@@ -6113,6 +6373,17 @@ REVOKE ALL ON FUNCTION registry.maturity_position_for_cik(p_cik text) FROM PUBLI
 
 REVOKE ALL ON FUNCTION registry.maturity_years(p_cik text) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.maturity_years(p_cik text) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.portfolio_detail_dates(p_cik text) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.portfolio_detail_dates(p_cik text) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.portfolio_detail_filing(p_cik text) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION registry.portfolio_detail_names(p_cik text) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.portfolio_detail_names(p_cik text) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.portfolio_detail_registrant(p_cik text) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.portfolio_detail_registrant(p_cik text) TO bdc_reader;
 
 GRANT SELECT,INSERT ON TABLE derived.derived_value TO bdc_pipeline_writer;
 
