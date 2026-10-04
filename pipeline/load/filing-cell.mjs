@@ -3,11 +3,12 @@
 // and the borrower-name row only from that payload, under parser v2's rule_version_id.
 
 import { lit, num, queryRows } from "../lib/db.mjs";
+import { ensureAndLinkRuleForRun } from "./rules.mjs";
 import { prepareFilingCellObservation } from "../parse/filing-cell-writer.mjs";
 import { PARSER_CODE, PARSER_VERSION } from "../parse/schedule-disclosure-block.mjs";
 
 export function ingestFilingCompanyCell({
-  database, runId, rules, html, artifact, filingLink, positionFilingId, positionObservationId,
+  database, runId, html, artifact, filingLink, positionFilingId, positionObservationId,
   blockEvidence, evidence, rawText,
 }) {
   const payload = prepareFilingCellObservation({
@@ -16,8 +17,10 @@ export function ingestFilingCompanyCell({
   if (payload.nameSource !== "FILING_CELL" || payload.locatorType !== "HTML_TABLE_CELL" || payload.parserVersion !== PARSER_VERSION) {
     throw new Error("FILING_CELL payload was not produced by parser v2");
   }
-  const parserRuleId = Number(rules?.[PARSER_CODE]);
-  if (!parserRuleId) throw new Error("missing persisted parser.sec_schedule_disclosure_block rule_version_id");
+  const parserRuleId = ensureAndLinkRuleForRun(database, runId, {
+    code: PARSER_CODE,
+    version: PARSER_VERSION,
+  }).id;
 
   const linked = queryRows(database, `
 SELECT rv.id

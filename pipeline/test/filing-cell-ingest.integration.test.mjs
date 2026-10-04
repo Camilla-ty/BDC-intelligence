@@ -4,7 +4,10 @@ import {
   containerRunning, createDatabase, dockerAvailable, dropDatabase, query, startContainer, stopContainer,
 } from "../../scripts/db/pg.mjs";
 import { migrate } from "../../scripts/db/migrate.mjs";
-import { registerRules } from "../load/rules.mjs";
+import { lit } from "../lib/db.mjs";
+import {
+  ENSURED_RULE_CREATED_BY, RULES, ensureAndLinkRuleForRun, registerRules, ruleDefinitionSha,
+} from "../load/rules.mjs";
 import { ingestFilingCompanyCell } from "../load/filing-cell.mjs";
 import { PARSER_CODE, PARSER_VERSION, parseScheduleDisclosureBlocks } from "../parse/schedule-disclosure-block.mjs";
 
@@ -51,7 +54,7 @@ function withDb(fn) {
   };
 }
 
-test("parser v2 is persisted and FILING_CELL ingestion uses that rule version", withDb(async () => {
+test("FILING_CELL ingestion links only parser v2 and does not register the full catalog", withDb(async () => {
   const block = parseScheduleDisclosureBlocks(HTML).blocks[0];
   assert.equal(block.parserVersion, PARSER_VERSION);
   assert.equal(block.companyText, COMPANY);
@@ -146,22 +149,12 @@ COMMIT;
 `);
 
   const runId = Number(scalar("SELECT id FROM ops.run WHERE run_kind = 'TEST'"));
-  const rules = registerRules(dbName, runId);
-  const parserRuleId = rules[PARSER_CODE];
-  assert.equal(Number(scalar(`
-SELECT id FROM ops.rule_version
-WHERE rule_code = '${PARSER_CODE}' AND version = '${PARSER_VERSION}'`)), parserRuleId);
-  assert.equal(scalar(`
-SELECT count(*) FROM ops.run_rule_version
-WHERE run_id = ${runId} AND rule_version_id = ${parserRuleId}`), "1");
-
   const artifactId = Number(scalar("SELECT id FROM raw.artifact WHERE sha256 = repeat('3', 64)"));
   const filingId = Number(scalar("SELECT id FROM registry.filing"));
   const positionObservationId = Number(scalar("SELECT id FROM obs.position_observation"));
   const input = {
     database: dbName,
     runId,
-    rules,
     html: HTML,
     artifact: { id: artifactId, sourceType: "SEC_FILING_DOCUMENT" },
     filingLink: { artifactId, filingId },
@@ -190,8 +183,16 @@ WHERE run_id = ${runId} AND rule_version_id = ${parserRuleId}`), "1");
   }), /cell row is not the block start/);
   assert.equal(scalar("SELECT count(*) FROM obs.borrower_name_observation"), "0");
   assert.equal(scalar("SELECT count(*) FROM evidence.evidence WHERE locator_type = 'DISCLOSURE_BLOCK'"), "0");
+  assert.equal(scalar(`SELECT count(*) FROM ops.rule_version WHERE rule_code = '${PARSER_CODE}'`), "0");
 
   const inserted = ingestFilingCompanyCell({ ...input, rawText: COMPANY });
+  const parserRuleId = inserted.ruleVersionId;
+  assert.equal(Number(scalar(`
+SELECT id FROM ops.rule_version
+WHERE rule_code = '${PARSER_CODE}' AND version = '${PARSER_VERSION}'
+  AND created_by = '${ENSURED_RULE_CREATED_BY}'`)), parserRuleId);
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_rule_version WHERE run_id = ${runId}`), "1");
+  assert.equal(scalar("SELECT count(*) FROM ops.rule_version WHERE created_by = 'pipeline registry:load'"), "0");
   assert.equal(inserted.ruleVersionId, parserRuleId);
   assert.equal(inserted.payload.parserVersion, PARSER_VERSION);
   assert.equal(inserted.payload.rawText, COMPANY);
@@ -215,4 +216,130 @@ WHERE cell.id = ${inserted.evidenceId}`),
   `DISCLOSURE_BLOCK ${block.startRowOrdinal} ${block.endRowOrdinal} ${block.portfolioCompanySlot}`);
   assert.equal(scalar("SELECT count(*) FROM resolution.entity_resolution_decision"), "0");
   assert.equal(scalar("SELECT count(*) FROM identity.legal_entity"), "0");
+}));
+
+function catalogRule(code) {
+  const found = RULES.filter((rule) => rule.code === code);
+  assert.equal(found.length, 1, code);
+  return found[0];
+}
+
+function startRun(kind = "TEST") {
+  return Number(query(dbName, `
+INSERT INTO ops.run (run_kind, code_version, parameters, started_at)
+VALUES (${lit(kind)}, 'test', '{}'::jsonb, now())
+RETURNING id::text`)[0]);
+}
+
+function plantRule(rule, sha, createdBy = "historical test row") {
+  query(dbName, `
+INSERT INTO ops.rule_version (rule_code, rule_kind, version, definition_sha256, spec_reference, description, created_by)
+VALUES (${lit(rule.code)}, ${lit(rule.kind)}::ops.rule_kind, ${lit(rule.version)}, ${lit(sha)},
+        'pipeline/test (test only)', 'TEST ONLY stored rule', ${lit(createdBy)})`);
+}
+
+function snapshotRule(code, version) {
+  const rows = query(dbName, `
+SELECT id::text || '|' || definition_sha256 || '|' || created_by || '|' || recorded_at::text
+FROM ops.rule_version
+WHERE rule_code = ${lit(code)} AND version = ${lit(version)}`);
+  assert.equal(rows.length, 1);
+  return rows[0];
+}
+
+test("requested missing parser v2 is inserted and linked", withDb(async () => {
+  const runId = startRun();
+  const linked = ensureAndLinkRuleForRun(dbName, runId, { code: PARSER_CODE, version: PARSER_VERSION });
+  assert.equal(linked.version, PARSER_VERSION);
+  assert.equal(linked.definitionSha256, ruleDefinitionSha(catalogRule(PARSER_CODE)));
+  assert.equal(scalar(`
+SELECT version || ' ' || created_by FROM ops.rule_version WHERE id = ${linked.id}`),
+  `${PARSER_VERSION} ${ENSURED_RULE_CREATED_BY}`);
+  assert.equal(scalar(`SELECT count(*) FROM ops.rule_version WHERE rule_code = ${lit(PARSER_CODE)}`), "1");
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_rule_version WHERE run_id = ${runId}`), "1");
+  assert.equal(scalar(`
+SELECT count(*) FROM ops.rule_version
+WHERE rule_code IN ('pipeline.registry_load', 'pipeline.soi_load')`), "0");
+}));
+
+test("requested existing matching parser v2 is reused and linked", withDb(async () => {
+  const parser = catalogRule(PARSER_CODE);
+  plantRule(parser, ruleDefinitionSha(parser), "historical parser");
+  const before = snapshotRule(PARSER_CODE, PARSER_VERSION);
+  const runId = startRun();
+  const first = ensureAndLinkRuleForRun(dbName, runId, { code: PARSER_CODE, version: PARSER_VERSION });
+  const second = ensureAndLinkRuleForRun(dbName, runId, { code: PARSER_CODE, version: PARSER_VERSION });
+  assert.equal(second.id, first.id);
+  assert.equal(snapshotRule(PARSER_CODE, PARSER_VERSION), before);
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_rule_version WHERE run_id = ${runId} AND rule_version_id = ${first.id}`), "1");
+  const otherRun = startRun("TEST_REUSE");
+  const third = ensureAndLinkRuleForRun(dbName, otherRun, { code: PARSER_CODE, version: PARSER_VERSION });
+  assert.equal(third.id, first.id);
+  assert.equal(snapshotRule(PARSER_CODE, PARSER_VERSION), before);
+  assert.equal(scalar(`SELECT count(*) FROM ops.rule_version WHERE rule_code = ${lit(PARSER_CODE)}`), "1");
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_rule_version WHERE rule_version_id = ${first.id}`), "2");
+}));
+
+test("requested existing mismatched parser v2 throws", withDb(async () => {
+  plantRule(catalogRule(PARSER_CODE), "ab".repeat(32));
+  const before = snapshotRule(PARSER_CODE, PARSER_VERSION);
+  const runId = startRun();
+  assert.throws(() => ensureAndLinkRuleForRun(dbName, runId, { code: PARSER_CODE, version: PARSER_VERSION }),
+    /stored with a different definition/);
+  assert.equal(snapshotRule(PARSER_CODE, PARSER_VERSION), before);
+  assert.equal(scalar(`SELECT count(*) FROM ops.rule_version WHERE rule_code = ${lit(PARSER_CODE)}`), "1");
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_rule_version WHERE run_id = ${runId}`), "0");
+}));
+
+test("unrelated mismatched loader rules do not block parser registration", withDb(async () => {
+  const registry = catalogRule("pipeline.registry_load");
+  const soi = catalogRule("pipeline.soi_load");
+  plantRule(registry, "cd".repeat(32));
+  plantRule(soi, "ef".repeat(32));
+  const registryBefore = snapshotRule(registry.code, registry.version);
+  const soiBefore = snapshotRule(soi.code, soi.version);
+  const runId = startRun();
+  const linked = ensureAndLinkRuleForRun(dbName, runId, { code: PARSER_CODE, version: PARSER_VERSION });
+  assert.equal(linked.code, PARSER_CODE);
+  assert.equal(linked.version, PARSER_VERSION);
+  assert.equal(linked.definitionSha256, ruleDefinitionSha(catalogRule(PARSER_CODE)));
+  assert.equal(snapshotRule(registry.code, registry.version), registryBefore);
+  assert.equal(snapshotRule(soi.code, soi.version), soiBefore);
+  assert.equal(scalar(`
+SELECT rv.rule_code || ' ' || rv.version
+FROM ops.run_rule_version rr
+JOIN ops.rule_version rv ON rv.id = rr.rule_version_id
+WHERE rr.run_id = ${runId}`), `${PARSER_CODE} ${PARSER_VERSION}`);
+}));
+
+test("existing historical rule rows are never updated or deleted", withDb(async () => {
+  const parser = catalogRule(PARSER_CODE);
+  const registry = catalogRule("pipeline.registry_load");
+  plantRule(parser, ruleDefinitionSha(parser), "historical parser");
+  plantRule(registry, "11".repeat(32), "historical registry");
+  const parserBefore = snapshotRule(parser.code, parser.version);
+  const registryBefore = snapshotRule(registry.code, registry.version);
+  const countBefore = scalar("SELECT count(*)::text FROM ops.rule_version");
+  const runId = startRun();
+  ensureAndLinkRuleForRun(dbName, runId, { code: parser.code, version: parser.version });
+  assert.throws(() => ensureAndLinkRuleForRun(dbName, runId, { code: registry.code, version: registry.version }),
+    /stored with a different definition/);
+  assert.equal(snapshotRule(parser.code, parser.version), parserBefore);
+  assert.equal(snapshotRule(registry.code, registry.version), registryBefore);
+  assert.equal(scalar("SELECT count(*)::text FROM ops.rule_version"), countBefore);
+}));
+
+test("full registerRules still detects stored loader drift", withDb(async () => {
+  const registry = catalogRule("pipeline.registry_load");
+  const soi = catalogRule("pipeline.soi_load");
+  plantRule(registry, "22".repeat(32));
+  plantRule(soi, "33".repeat(32));
+  const registryBefore = snapshotRule(registry.code, registry.version);
+  const soiBefore = snapshotRule(soi.code, soi.version);
+  const runId = startRun();
+  assert.throws(() => registerRules(dbName, runId),
+    new RegExp(`pipeline\\.registry_load v${registry.version} changed without a version bump`));
+  assert.equal(snapshotRule(registry.code, registry.version), registryBefore);
+  assert.equal(snapshotRule(soi.code, soi.version), soiBefore);
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_rule_version WHERE run_id = ${runId}`), "0");
 }));

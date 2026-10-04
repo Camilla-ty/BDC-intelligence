@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import { tableRows } from "../normalize/ix-context-row.mjs";
 import { ingestFilingCompanyCell } from "../load/filing-cell.mjs";
+import { ensureAndLinkRuleForRun } from "../load/rules.mjs";
 import { prepareFilingCellObservation } from "../parse/filing-cell-writer.mjs";
 import {
   PARSER_CODE, PARSER_VERSION, PARSER_VERSION_V1, ROW_KIND, assertFilingCompanyCell, assertLineFact, cellText,
@@ -365,8 +366,12 @@ test("FILING_CELL ingestion calls the writer and has no second insert path", () 
   const loader = readFileSync(new URL("../load/filing-cell.mjs", import.meta.url), "utf8");
   const soi = readFileSync(new URL("../load/p4-min.mjs", import.meta.url), "utf8");
   const call = loader.indexOf("prepareFilingCellObservation(");
+  const ensure = loader.indexOf("ensureAndLinkRuleForRun(");
   const insert = loader.indexOf("INSERT INTO obs.borrower_name_observation");
-  assert.ok(call > 0 && insert > call);
+  assert.ok(call > 0 && ensure > call && insert > ensure);
+  assert.match(loader, /code: PARSER_CODE/);
+  assert.match(loader, /version: PARSER_VERSION/);
+  assert.doesNotMatch(loader, /registerRules\(/);
   assert.match(loader, /\$\{lit\(payload\.nameSource\)\}/);
   assert.match(loader, /\$\{lit\(payload\.rawText\)\}/);
   assert.match(loader, /\$\{num\(payload\.blockStartRow\)\}/);
@@ -379,7 +384,6 @@ test("FILING_CELL ingestion calls the writer and has no second insert path", () 
   assert.throws(() => ingestFilingCompanyCell({
     database: "bdc_must_not_be_contacted",
     runId: 1,
-    rules: {},
     html: "<html></html>",
     artifact: { id: 1, sourceType: "SEC_FILING_DOCUMENT" },
     filingLink: { artifactId: 1, filingId: 1 },
@@ -394,38 +398,14 @@ test("FILING_CELL ingestion calls the writer and has no second insert path", () 
     rawText: "TEST COMPANY CELL",
   }), /cell row is not the block start/);
 
-  const company = "TEST COMPANY CELL";
-  const html = "<table><tr><td colspan=\"3\">Portfolio Company, Location and Industry(1)</td>"
-    + "<td colspan=\"3\">Type of Investment</td><td colspan=\"3\">Fair Value</td></tr>"
-    + `<tr><td colspan="3">${company}</td><td colspan="3"></td><td colspan="3"></td></tr>`
-    + "<tr><td colspan=\"3\">Business Services</td><td colspan=\"3\">First Lien</td><td colspan=\"3\">11,952</td></tr></table>";
-  const block = parseScheduleDisclosureBlocks(html).blocks[0];
-  assert.equal(block.companyText, company);
-  assert.throws(() => ingestFilingCompanyCell({
-    database: "bdc_must_not_be_contacted",
-    runId: 1,
-    rules: {},
-    html,
-    artifact: { id: 1, sourceType: "SEC_FILING_DOCUMENT" },
-    filingLink: { artifactId: 1, filingId: 1 },
-    positionFilingId: 1,
-    positionObservationId: 1,
-    evidence: {
-      locatorType: "HTML_TABLE_CELL",
-      artifactId: 1,
-      blockEvidenceId: 1,
-      htmlRowOrdinal: block.startRowOrdinal,
-      htmlSlotOrdinal: block.portfolioCompanySlot,
-    },
-    blockEvidence: {
-      id: 1,
-      locatorType: "DISCLOSURE_BLOCK",
-      artifactId: 1,
-      htmlRowOrdinal: block.startRowOrdinal,
-      htmlRowEndOrdinal: block.endRowOrdinal,
-    },
-    rawText: company,
-  }), /missing persisted parser\.sec_schedule_disclosure_block rule_version_id/);
+  assert.throws(() => ensureAndLinkRuleForRun("bdc_must_not_be_contacted", 1, {
+    code: "parser.sec_schedule_disclosure_block",
+    version: "3",
+  }), /not in the current RULES catalog/);
+  assert.throws(() => ensureAndLinkRuleForRun("bdc_must_not_be_contacted", 1, {
+    code: "pipeline.not_a_rule",
+    version: "1",
+  }), /not in the current RULES catalog/);
 });
 
 test("a concentration-list Geo Parent row is not a schedule block", () => {

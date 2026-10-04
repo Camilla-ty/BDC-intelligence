@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "../lib/config.mjs";
-import { lit, queryRows } from "../lib/db.mjs";
+import { lit, num, queryRows } from "../lib/db.mjs";
 
 const COMMON = ["pipeline/lib/config.mjs"];
 
@@ -137,4 +137,55 @@ COMMIT;`);
   queryRows(database, `INSERT INTO ops.run_rule_version (run_id, rule_version_id)
 SELECT ${runId}, id FROM ops.rule_version WHERE id IN (${Object.values(ids).join(", ")}) ORDER BY id;`);
   return ids;
+}
+
+// One catalog rule for one run. This does not read the rest of RULES, does not
+// bump a version, and does not update an existing ops.rule_version row.
+export const ENSURED_RULE_CREATED_BY = "pipeline ensureAndLinkRuleForRun";
+
+export function ensureAndLinkRuleForRun(database, runId, identity) {
+  const code = identity?.code;
+  const version = identity?.version;
+  if (typeof code !== "string" || code === "" || typeof version !== "string" || version === "") {
+    throw new Error("rule identity requires code and version");
+  }
+  const rule = RULES.find((item) => item.code === code && item.version === version);
+  if (!rule) throw new Error(`rule ${code} v${version} is not in the current RULES catalog`);
+  const sha = ruleDefinitionSha(rule);
+  const run = num(runId);
+  const mismatch = `rule ${code} v${version} is stored with a different definition; the existing rule_version row was not changed`;
+  const rows = queryRows(database, `
+BEGIN;
+INSERT INTO ops.rule_version (rule_code, rule_kind, version, definition_sha256, spec_reference, description, unknown_input_policy, created_by)
+SELECT ${lit(rule.code)}, ${lit(rule.kind)}::ops.rule_kind, ${lit(rule.version)}, ${lit(sha)}, ${lit(rule.spec)}, ${lit(rule.description)}, ${unknownPolicySql(rule)}, ${lit(ENSURED_RULE_CREATED_BY)}
+WHERE NOT EXISTS (
+  SELECT 1 FROM ops.rule_version r
+  WHERE r.rule_code = ${lit(rule.code)} AND r.version = ${lit(rule.version)});
+DO $ensure_rule$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM ops.rule_version
+    WHERE rule_code = ${lit(rule.code)} AND version = ${lit(rule.version)}
+      AND definition_sha256 IS DISTINCT FROM ${lit(sha)}
+  ) THEN
+    RAISE EXCEPTION USING MESSAGE = ${lit(mismatch)};
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM ops.rule_version
+    WHERE rule_code = ${lit(rule.code)} AND version = ${lit(rule.version)}
+      AND definition_sha256 = ${lit(sha)}
+  ) THEN
+    RAISE EXCEPTION USING MESSAGE = ${lit("rule " + code + " v" + version + " was not stored")};
+  END IF;
+END
+$ensure_rule$;
+INSERT INTO ops.run_rule_version (run_id, rule_version_id)
+SELECT ${run}, id FROM ops.rule_version
+WHERE rule_code = ${lit(rule.code)} AND version = ${lit(rule.version)} AND definition_sha256 = ${lit(sha)}
+ON CONFLICT (run_id, rule_version_id) DO NOTHING;
+SELECT id FROM ops.rule_version
+WHERE rule_code = ${lit(rule.code)} AND version = ${lit(rule.version)} AND definition_sha256 = ${lit(sha)};
+COMMIT;`);
+  if (rows.length !== 1) throw new Error(`rule ${code} v${version} did not resolve to one rule_version row`);
+  return { id: Number(rows[0][0]), code, version, definitionSha256: sha };
 }
