@@ -3,7 +3,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import { tableRows } from "../normalize/ix-context-row.mjs";
 import { ingestFilingCompanyCell } from "../load/filing-cell.mjs";
-import { ensureAndLinkRuleForRun } from "../load/rules.mjs";
+import { completeFilingCellIngest } from "../load/filing-cell-outcome.mjs";
+import { RULES, ensureAndLinkRuleForRun, ruleDefinitionSha } from "../load/rules.mjs";
 import { prepareFilingCellObservation } from "../parse/filing-cell-writer.mjs";
 import {
   PARSER_CODE, PARSER_VERSION, PARSER_VERSION_V1, ROW_KIND, assertFilingCompanyCell, assertLineFact, cellText,
@@ -365,10 +366,28 @@ test("the filing-cell writer calls the company-cell check", () => {
 test("FILING_CELL ingestion calls the writer and has no second insert path", () => {
   const loader = readFileSync(new URL("../load/filing-cell.mjs", import.meta.url), "utf8");
   const soi = readFileSync(new URL("../load/p4-min.mjs", import.meta.url), "utf8");
-  const call = loader.indexOf("prepareFilingCellObservation(");
-  const ensure = loader.indexOf("ensureAndLinkRuleForRun(");
-  const insert = loader.indexOf("INSERT INTO obs.borrower_name_observation");
+  const ingest = loader.slice(loader.indexOf("export function ingestFilingCompanyCell"));
+  const call = ingest.indexOf("prepareFilingCellObservation(");
+  const ensure = ingest.indexOf("ensureAndLinkRuleForRun(");
+  const insert = ingest.indexOf("INSERT INTO obs.borrower_name_observation");
   assert.ok(call > 0 && ensure > call && insert > ensure);
+  assert.equal(loader.match(/INSERT INTO obs\.borrower_name_observation/g).length, 1);
+  assert.doesNotMatch(loader, /ops\.run_outcome/);
+  assert.doesNotMatch(loader, /recordFilingCellIngestSucceeded/);
+  const completion = readFileSync(new URL("../load/filing-cell-outcome.mjs", import.meta.url), "utf8");
+  const complete = completion.slice(completion.indexOf("export function completeFilingCellIngest"));
+  const ingestCall = complete.indexOf("ingestFilingCompanyCell(");
+  const recordCall = complete.indexOf("recordFilingCellIngestSucceeded(");
+  assert.ok(ingestCall > 0 && recordCall > ingestCall);
+  assert.equal(completion.match(/INSERT INTO ops\.run_outcome/g).length, 1);
+  assert.match(completion, /disclosure_blocks: 1/);
+  assert.match(completion, /company_cells: 1/);
+  assert.match(completion, /borrower_name_observations: 1/);
+  assert.doesNotMatch(completion, /catch \(error\)/);
+  assert.doesNotMatch(completion, /SOI_LOAD/);
+  const soiRun = readFileSync(new URL("../load/soi-run.mjs", import.meta.url), "utf8");
+  assert.match(soiRun, /VALUES \('SOI_LOAD'/);
+  assert.match(soiRun, /INSERT INTO ops\.run_outcome/);
   assert.match(loader, /code: PARSER_CODE/);
   assert.match(loader, /version: PARSER_VERSION/);
   assert.doesNotMatch(loader, /registerRules\(/);
@@ -381,6 +400,7 @@ test("FILING_CELL ingestion calls the writer and has no second insert path", () 
     .filter((name) => name.endsWith(".mjs"))
     .filter((name) => readFileSync(new URL(`../load/${name}`, import.meta.url), "utf8").includes("FILING_CELL"));
   assert.deepEqual(loaders, ["filing-cell.mjs"]);
+  assert.equal(completeFilingCellIngest.name, "completeFilingCellIngest");
   assert.throws(() => ingestFilingCompanyCell({
     database: "bdc_must_not_be_contacted",
     runId: 1,
@@ -406,6 +426,18 @@ test("FILING_CELL ingestion calls the writer and has no second insert path", () 
     code: "pipeline.not_a_rule",
     version: "1",
   }), /not in the current RULES catalog/);
+});
+
+test("parser v2 definition hash matches Production rule 34", () => {
+  const rule = RULES.find((item) => item.code === "parser.sec_schedule_disclosure_block" && item.version === "2");
+  assert.ok(rule);
+  assert.deepEqual(rule.files, [
+    "pipeline/parse/schedule-disclosure-block.mjs",
+    "pipeline/parse/filing-cell-writer.mjs",
+    "pipeline/load/filing-cell.mjs",
+  ]);
+  assert.equal(ruleDefinitionSha(rule), "6356c716c4ec99d7cd3959a199c1812c16d3b595814ab8b86c0aca437c666d65");
+  assert.ok(!rule.files.includes("pipeline/load/filing-cell-outcome.mjs"));
 });
 
 test("a concentration-list Geo Parent row is not a schedule block", () => {

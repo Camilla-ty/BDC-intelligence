@@ -8,7 +8,7 @@ import { lit } from "../lib/db.mjs";
 import {
   ENSURED_RULE_CREATED_BY, RULES, ensureAndLinkRuleForRun, registerRules, ruleDefinitionSha,
 } from "../load/rules.mjs";
-import { ingestFilingCompanyCell } from "../load/filing-cell.mjs";
+import { completeFilingCellIngest, recordFilingCellIngestSucceeded } from "../load/filing-cell-outcome.mjs";
 import { PARSER_CODE, PARSER_VERSION, parseScheduleDisclosureBlocks } from "../parse/schedule-disclosure-block.mjs";
 
 const dbName = `bdc_fc_${process.pid}`;
@@ -176,7 +176,7 @@ COMMIT;
     },
   };
 
-  assert.throws(() => ingestFilingCompanyCell({
+  assert.throws(() => completeFilingCellIngest({
     ...input,
     evidence: { ...input.evidence, htmlRowOrdinal: block.startRowOrdinal + 1 },
     rawText: COMPANY,
@@ -184,8 +184,20 @@ COMMIT;
   assert.equal(scalar("SELECT count(*) FROM obs.borrower_name_observation"), "0");
   assert.equal(scalar("SELECT count(*) FROM evidence.evidence WHERE locator_type = 'DISCLOSURE_BLOCK'"), "0");
   assert.equal(scalar(`SELECT count(*) FROM ops.rule_version WHERE rule_code = '${PARSER_CODE}'`), "0");
+  assert.equal(scalar("SELECT count(*) FROM ops.run_outcome"), "0");
+  assert.equal(scalar(`SELECT status FROM ops.current_run_status WHERE run_id = ${runId}`), "STARTED");
 
-  const inserted = ingestFilingCompanyCell({ ...input, rawText: COMPANY });
+  const startedRunId = startRun("LEFT_STARTED");
+  const soiRunId = startRun("SOI_LOAD");
+  query(dbName, `
+INSERT INTO ops.run_outcome (run_id, status, finished_at, counts)
+VALUES (${soiRunId}, 'SUCCEEDED', '2099-01-01T00:00:00Z', '{"units":20}'::jsonb)`);
+  const soiOutcome = scalar(`
+SELECT status || ' ' || counts::text || ' ' || coalesce(error_summary, '')
+       || ' ' || finished_at::text || ' ' || recorded_at::text
+FROM ops.run_outcome WHERE run_id = ${soiRunId}`);
+
+  const inserted = completeFilingCellIngest({ ...input, rawText: COMPANY });
   const parserRuleId = inserted.ruleVersionId;
   assert.equal(Number(scalar(`
 SELECT id FROM ops.rule_version
@@ -216,6 +228,32 @@ WHERE cell.id = ${inserted.evidenceId}`),
   `DISCLOSURE_BLOCK ${block.startRowOrdinal} ${block.endRowOrdinal} ${block.portfolioCompanySlot}`);
   assert.equal(scalar("SELECT count(*) FROM resolution.entity_resolution_decision"), "0");
   assert.equal(scalar("SELECT count(*) FROM identity.legal_entity"), "0");
+
+  assert.equal(scalar(`
+SELECT status || ' ' || coalesce(error_summary, '')
+       || ' ' || (finished_at IS NOT NULL)::text
+       || ' ' || (recorded_at IS NOT NULL)::text
+       || ' ' || (counts->>'disclosure_blocks')
+       || ' ' || (counts->>'company_cells')
+       || ' ' || (counts->>'borrower_name_observations')
+       || ' ' || (SELECT count(*)::text FROM jsonb_object_keys(counts))
+FROM ops.run_outcome WHERE run_id = ${runId}`),
+  "SUCCEEDED  true true 1 1 1 3");
+  assert.equal(scalar(`SELECT status FROM ops.current_run_status WHERE run_id = ${runId}`), "SUCCEEDED");
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_outcome WHERE run_id = ${runId}`), "1");
+  assert.throws(() => recordFilingCellIngestSucceeded(dbName, runId),
+    /second SUCCEEDED outcome was not written/);
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_outcome WHERE run_id = ${runId}`), "1");
+  assert.equal(scalar("SELECT count(*) FROM evidence.evidence WHERE locator_type = 'DISCLOSURE_BLOCK'"), "1");
+  assert.equal(scalar("SELECT count(*) FROM evidence.evidence WHERE locator_type = 'HTML_TABLE_CELL'"), "1");
+  assert.equal(scalar("SELECT count(*) FROM obs.borrower_name_observation"), "1");
+  assert.equal(scalar(`
+SELECT status || ' ' || counts::text || ' ' || coalesce(error_summary, '')
+       || ' ' || finished_at::text || ' ' || recorded_at::text
+FROM ops.run_outcome WHERE run_id = ${soiRunId}`), soiOutcome);
+  assert.equal(scalar(`SELECT count(*) FROM ops.run_outcome WHERE run_id = ${startedRunId}`), "0");
+  assert.equal(scalar(`SELECT status FROM ops.current_run_status WHERE run_id = ${startedRunId}`), "STARTED");
+  assert.equal(scalar("SELECT count(*) FROM ops.run_outcome"), "2");
 }));
 
 function catalogRule(code) {
