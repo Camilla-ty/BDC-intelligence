@@ -160,7 +160,7 @@ SELECT json_build_object(
     FROM obs.current_position_field_value
     WHERE position_observation_id IN (SELECT position_observation_id FROM matched)
       AND field_code IN (
-        'PRINCIPAL_AMOUNT', 'COST', 'FAIR_VALUE', 'INTEREST_RATE', 'SPREAD',
+        'PRINCIPAL_AMOUNT', 'COST', 'FAIR_VALUE', 'INTEREST_RATE', 'SPREAD', 'PERCENT_OF_NET_ASSETS',
         'INSTRUMENT_TYPE', 'INDUSTRY', 'GEOGRAPHY', 'ACQUISITION_DATE', 'ISSUER_AFFILIATION', 'MATURITY_DATE'
       )
   ) field), '[]'::json),
@@ -240,6 +240,7 @@ export type ReviewObservation = {
   fairValue: string;
   interestRate: string;
   spread: string;
+  percentOfNetAssets: string;
   maturity: string;
   acquisitionDate: string;
   industry: string;
@@ -450,6 +451,7 @@ function observation(line: ReviewLine, payload: ReviewPayload): ReviewObservatio
     fairValue: moneyText(fields, "FAIR_VALUE"),
     interestRate: fieldText(fields, "INTEREST_RATE"),
     spread: fieldText(fields, "SPREAD"),
+    percentOfNetAssets: fieldText(fields, "PERCENT_OF_NET_ASSETS"),
     maturity: maturityText,
     acquisitionDate: fieldText(fields, "ACQUISITION_DATE"),
     industry: fieldText(fields, "INDUSTRY"),

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { InvestmentHistory } from "@/components/InvestmentHistory";
 import { SecLink } from "@/components/SecLink";
 import { StateText } from "@/components/StateText";
 import { ResearchWorkspace } from "@/components/ResearchWorkspace";
@@ -91,6 +92,9 @@ export function EntityReview({
         <Fact label="Rule version" value="Not stored" />
         <Fact label="Case members" value={stored ? String(stored.members.length) : "Not stored"} />
       </div>
+      {model.groups.some((group) => group.observations.length > 0) || (stored?.members.length ?? 0) > 0 ? (
+        <InvestmentHistory model={model} memberIds={stored?.members.map((member) => member.positionObservationId)} />
+      ) : null}
       <div className="mt-4 space-y-2 text-sm text-muted">
         <p>{NOT_RESOLVED_NOTE}</p>
         <p>{CANDIDATE_NOTE}</p>

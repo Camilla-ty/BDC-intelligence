@@ -128,6 +128,7 @@ describe("entity review candidate", () => {
     expect(observation?.fairValue).toBe("Not stored");
     expect(observation?.interestRate).toBe("Not stored");
     expect(observation?.spread).toBe("Not stored");
+    expect(observation?.percentOfNetAssets).toBe("Not stored");
     expect(model.normalizedName).toBe("Not stored");
     expect(model.legalName).toBe("Not stored");
     expect(model.address).toBe("Not stored");
@@ -253,6 +254,8 @@ describe("entity review candidate", () => {
     expect(sql).toMatch(/SET ROLE bdc_reader/);
     expect(sql).toMatch(/\bUNION ALL\b/);
     expect(sql).toMatch(/\bSELECT\b/);
+    expect(sql).toContain("'PERCENT_OF_NET_ASSETS'");
+    expect(sql).toContain("position_observation_id IN (SELECT position_observation_id FROM matched)");
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|MERGE|COPY|CREATE|ALTER|DROP|TRUNCATE|GRANT)\b/i);
     for (const scope of seeded.scopes) {
       expect(sql).toContain(`registrant_cik = '${scope.registrantCik}'`);
