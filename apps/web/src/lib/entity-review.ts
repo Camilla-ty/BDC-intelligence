@@ -40,8 +40,8 @@ export type EntityReviewCandidate = {
   ruleVersion: null;
   label: string;
   descriptors: readonly string[];
-  // Registrant and reported date only. The portfolio view cannot filter a
-  // descriptor across every filing within the reader timeout.
+  // Registrant and reported date describe this seeded case. The reader loads the
+  // stored case members and does not interpolate these scopes into SQL.
   scopes: readonly ReviewScope[];
 };
 
@@ -85,103 +85,14 @@ export function entityReviewCandidate(id: string): EntityReviewCandidate | null 
   return ENTITY_REVIEW_CANDIDATES.find((candidate) => candidate.id === id) ?? null;
 }
 
-const SAFE_DESCRIPTOR = /^[ -~]+$/;
-
-function quoteLiteral(value: string): string {
-  if (!SAFE_DESCRIPTOR.test(value) || value.includes(";")) {
-    throw new Error("Review descriptor cannot be queried.");
-  }
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-const LINE_COLUMNS = `position_observation_id,
-         registrant_cik,
-         reported_date,
-         disclosed_line_text,
-         accession_number,
-         evidence_level,
-         form_state,
-         form_raw,
-         filed_date_state,
-         filed_date_raw,
-         inline_url_state,
-         inline_url,
-         document_name,
-         document_url`;
-
-function scopeClause(scope: ReviewScope): string {
-  if (!/^[0-9]{10}$/.test(scope.registrantCik) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(scope.reportedDate)) {
-    throw new Error("Review scope cannot be queried.");
-  }
-  return `registrant_cik = '${scope.registrantCik}' AND reported_date = '${scope.reportedDate}'`;
-}
+const CASE_KEY = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export function entityReviewSql(candidate: EntityReviewCandidate): string {
-  if (candidate.scopes.length === 0) throw new Error("Review scope cannot be queried.");
-  const list = candidate.descriptors.map(quoteLiteral).join(", ");
-  const branches = candidate.scopes
-    .map((scope) => `SELECT ${LINE_COLUMNS}
-  FROM registry.portfolio_line
-  WHERE ${scopeClause(scope)}
-    AND disclosed_line_text IN (${list})`)
-    .join("\nUNION ALL\n");
+  if (!CASE_KEY.test(candidate.id)) throw new Error("Review case cannot be queried.");
   return `
 SET ROLE bdc_reader;
-SET statement_timeout = '120s';
-WITH matched AS MATERIALIZED (
-  ${branches}
-)
-SELECT json_build_object(
-  'lines', COALESCE((SELECT json_agg(row_to_json(line)) FROM (
-    SELECT position_observation_id::text,
-           registrant_cik,
-           reported_date::text,
-           disclosed_line_text,
-           accession_number,
-           evidence_level,
-           form_state,
-           form_raw,
-           filed_date_state,
-           filed_date_raw,
-           inline_url_state,
-           inline_url,
-           document_name,
-           document_url
-    FROM matched
-    ORDER BY disclosed_line_text, reported_date, accession_number, position_observation_id
-  ) line), '[]'::json),
-  'fields', COALESCE((SELECT json_agg(row_to_json(field)) FROM (
-    SELECT position_observation_id::text,
-           field_code,
-           raw_value,
-           value_state::text,
-           scale_state::text,
-           source_column_label
-    FROM obs.current_position_field_value
-    WHERE position_observation_id IN (SELECT position_observation_id FROM matched)
-      AND field_code IN (
-        'PRINCIPAL_AMOUNT', 'COST', 'FAIR_VALUE', 'INTEREST_RATE', 'SPREAD', 'PERCENT_OF_NET_ASSETS',
-        'INSTRUMENT_TYPE', 'INDUSTRY', 'GEOGRAPHY', 'ACQUISITION_DATE', 'ISSUER_AFFILIATION', 'MATURITY_DATE'
-      )
-  ) field), '[]'::json),
-  'names', COALESCE((SELECT json_agg(row_to_json(name)) FROM (
-    SELECT DISTINCT lpad(cik::text, 10, '0') AS registrant_cik, name_raw
-    FROM registry.current_registrant_name_history
-    WHERE cik IN (SELECT DISTINCT registrant_cik::bigint FROM matched)
-  ) name), '[]'::json),
-  'instruments', COALESCE((SELECT json_agg(row_to_json(instrument)) FROM (
-    SELECT position_observation_id::text, state::text
-    FROM resolution.current_instrument_resolution
-    WHERE position_observation_id IN (SELECT position_observation_id FROM matched)
-  ) instrument), '[]'::json),
-  'maturity', COALESCE((SELECT json_agg(row_to_json(maturity)) FROM (
-    SELECT position_observation_id::text, maturity_source, maturity_raw
-    FROM registry.maturity_read
-    WHERE position_observation_id IN (SELECT position_observation_id FROM matched)
-  ) maturity), '[]'::json),
-  'entity_resolution_count', (SELECT count(*)::int FROM resolution.current_entity_resolution),
-  'group_membership_count', (SELECT count(*)::int FROM resolution.current_group_membership)
-);
+SET statement_timeout = '30s';
+SELECT registry.review_case_read('${candidate.id}');
 RESET ROLE;
 `;
 }
@@ -473,6 +384,9 @@ export function assembleReview(candidate: EntityReviewCandidate, payload: Review
     || a.position_observation_id.localeCompare(b.position_observation_id),
   );
   for (const line of lines) {
+    // The candidate descriptor list groups the page. A stored member with another
+    // disclosed name stays in the case and is omitted here. The reader does not
+    // receive this list.
     if (!allowed.has(line.disclosed_line_text)) continue;
     byName.get(line.disclosed_line_text)?.observations.push(observation(line, payload));
   }

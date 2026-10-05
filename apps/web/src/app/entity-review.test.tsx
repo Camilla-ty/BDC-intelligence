@@ -20,6 +20,7 @@ import {
   type ReviewLine,
   type ReviewPayload,
 } from "@/lib/entity-review";
+import { investmentHistory } from "@/lib/investment-history";
 import { EDGAR_ARCHIVES_PREFIX } from "@/lib/portfolios";
 
 function candidate(descriptors: readonly string[]): EntityReviewCandidate {
@@ -248,31 +249,69 @@ describe("entity review candidate", () => {
     expect(model.writesEnabled).toBe(false);
   });
 
-  it("reads with a select and rejects a descriptor that could change SQL", () => {
+  it("reads the stored case and rejects a case key that could change SQL", () => {
     const seeded = entityReviewCandidate("geo-parent-corporation")!;
     const sql = entityReviewSql(seeded);
     expect(sql).toMatch(/SET ROLE bdc_reader/);
-    expect(sql).toMatch(/\bUNION ALL\b/);
+    expect(sql).toContain("SELECT registry.review_case_read('geo-parent-corporation')");
     expect(sql).toMatch(/\bSELECT\b/);
-    expect(sql).toContain("'PERCENT_OF_NET_ASSETS'");
-    expect(sql).toContain("position_observation_id IN (SELECT position_observation_id FROM matched)");
+    expect(sql).not.toMatch(/portfolio_line/);
+    expect(sql).not.toMatch(/maturity_read/);
+    expect(sql).not.toMatch(/maturity_provenance/);
+    expect(sql).not.toMatch(/\bUNION ALL\b/);
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|MERGE|COPY|CREATE|ALTER|DROP|TRUNCATE|GRANT)\b/i);
-    for (const scope of seeded.scopes) {
-      expect(sql).toContain(`registrant_cik = '${scope.registrantCik}'`);
-      expect(sql).toContain(`reported_date = '${scope.reportedDate}'`);
-    }
     expect(sql).not.toMatch(/\bLIKE\b/i);
     expect(sql).not.toMatch(/bdc_pipeline_writer/);
-    for (const name of seeded.descriptors) expect(sql).toContain(`'${name}'`);
-    expect(() => entityReviewSql(candidate(["TEST; DELETE FROM identity.legal_entity"]))).toThrow(/cannot be queried/);
-    expect(() => entityReviewSql({ ...candidate(["TEST SOURCE A"]), scopes: [] })).toThrow(/cannot be queried/);
-    expect(() => entityReviewSql({ ...candidate(["TEST SOURCE A"]), scopes: [{ registrantCik: "1", reportedDate: "2099-03-31" }] })).toThrow(/cannot be queried/);
-    const quoted = entityReviewSql(candidate(["TEST SOURCE O'BRIEN"]));
-    expect(quoted).toContain("'TEST SOURCE O''BRIEN'");
+    for (const scope of seeded.scopes) {
+      expect(sql).not.toContain(scope.registrantCik);
+      expect(sql).not.toContain(scope.reportedDate);
+    }
+    for (const name of seeded.descriptors) expect(sql).not.toContain(name);
+    expect(() => entityReviewSql({ ...seeded, id: "geo-parent'; DELETE FROM identity.legal_entity --" })).toThrow(/cannot be queried/);
+    expect(() => entityReviewSql({ ...seeded, id: "Geo Parent" })).toThrow(/cannot be queried/);
     expect(() => parseEntityReviewPayload({ lines: [] })).toThrow();
     const unavailable = assembleReview(candidate(["TEST SOURCE A"]), { ...emptyPayload(), entityResolutionCount: 4, groupMembershipCount: 2 });
     expect(unavailable.legalEntity).toBe("Not available to this read model");
     expect(unavailable.economicGroup).toBe("Not available to this read model");
+  });
+
+  it("omits a disclosed name outside the candidate descriptors from the page", () => {
+    const model = assembleReview(candidate(["TEST SOURCE A", "TEST SOURCE B"]), {
+      ...emptyPayload(),
+      lines: [
+        line({ position_observation_id: "9000000002", disclosed_line_text: "TEST SOURCE B", reported_date: "2099-06-30" }),
+        line({ position_observation_id: "9000000003", disclosed_line_text: "TEST SOURCE OTHER", reported_date: "2099-01-31" }),
+        line({ position_observation_id: "9000000001", disclosed_line_text: "TEST SOURCE A", reported_date: "2099-03-31" }),
+      ],
+    });
+    expect(model.groups.map((group) => group.observations.map((item) => item.id))).toEqual([
+      ["9000000001"],
+      ["9000000002"],
+    ]);
+    const history = investmentHistory(model.groups.flatMap((group) => group.observations), [
+      "9000000001",
+      "9000000002",
+      "9000000003",
+    ]);
+    expect(history.rows.map((row) => row.id)).toEqual(["9000000001", "9000000002"]);
+    expect(history.observationCount).toBe(2);
+    expect(history.unmatchedMemberCount).toBe(1);
+    expect(comparisonRows(model).find((row) => row.label === "Source name")?.values).toEqual([
+      "TEST SOURCE A",
+      "TEST SOURCE B",
+    ]);
+  });
+
+  it("rejects a line whose registrant CIK is null", () => {
+    expect(() => parseEntityReviewPayload({
+      lines: [{ ...line(), registrant_cik: null }],
+      fields: [],
+      names: [],
+      instruments: [],
+      maturity: [],
+      entity_resolution_count: 0,
+      group_membership_count: 0,
+    })).toThrow(/registrant_cik/);
   });
 
   it("offers the review queue without marking the candidate resolved", () => {
