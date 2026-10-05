@@ -143,7 +143,8 @@ CREATE TYPE ref.locator_type AS ENUM (
     'HTML_ANCHOR',
     'DOCUMENT',
     'DISCLOSURE_BLOCK',
-    'HTML_TABLE_CELL'
+    'HTML_TABLE_CELL',
+    'HTML_COLUMN_HEADING'
 );
 
 CREATE TYPE ref.mapping_basis AS ENUM (
@@ -392,6 +393,7 @@ CREATE FUNCTION evidence.check_evidence() RETURNS trigger
     AS $$
 DECLARE
   parent evidence.evidence;
+  heading evidence.evidence;
 BEGIN
   IF NEW.tabular_row_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM raw.tabular_row r JOIN raw.table_load tl ON tl.id = r.table_load_id
@@ -431,11 +433,52 @@ BEGIN
         MESSAGE = 'child row ordinal must fall inside the disclosure block';
     END IF;
   END IF;
+  IF NEW.heading_evidence_id IS NOT NULL THEN
+    SELECT * INTO heading FROM evidence.evidence WHERE id = NEW.heading_evidence_id;
+    IF heading.id IS NULL
+       OR heading.locator_type IS DISTINCT FROM 'HTML_COLUMN_HEADING'
+       OR heading.artifact_id IS DISTINCT FROM NEW.artifact_id
+       OR heading.html_slot_ordinal IS DISTINCT FROM NEW.html_slot_ordinal
+       OR heading.html_row_ordinal IS NULL
+       OR NEW.html_row_ordinal IS NULL
+       OR heading.html_row_ordinal >= NEW.html_row_ordinal THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'value cell heading must be an HTML_COLUMN_HEADING on the same artifact and slot, on an earlier row';
+    END IF;
+  END IF;
   RETURN NEW;
 END
 $$;
 
-COMMENT ON FUNCTION evidence.check_evidence() IS 'A block parent must be a DISCLOSURE_BLOCK on the same artifact, and the child row must fall inside that block. The function does not parse HTML and does not assign the Portfolio Company slot.';
+COMMENT ON FUNCTION evidence.check_evidence() IS 'A block parent must be a DISCLOSURE_BLOCK on the same artifact, and the child row must fall inside that block. A heading link must be an earlier HTML_COLUMN_HEADING on the same artifact and slot. The function does not parse HTML and does not assign a field code.';
+
+CREATE FUNCTION evidence.check_html_column_heading() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  ev evidence.evidence;
+  above evidence.evidence;
+BEGIN
+  SELECT * INTO ev FROM evidence.evidence WHERE id = NEW.evidence_id;
+  IF ev.locator_type IS DISTINCT FROM 'HTML_COLUMN_HEADING' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'heading text belongs only to an HTML_COLUMN_HEADING';
+  END IF;
+  IF NEW.stack_above_evidence_id IS NOT NULL THEN
+    SELECT * INTO above FROM evidence.evidence WHERE id = NEW.stack_above_evidence_id;
+    IF above.locator_type IS DISTINCT FROM 'HTML_COLUMN_HEADING'
+       OR above.artifact_id IS DISTINCT FROM ev.artifact_id
+       OR above.html_slot_ordinal IS DISTINCT FROM ev.html_slot_ordinal
+       OR above.html_row_ordinal IS NULL
+       OR ev.html_row_ordinal IS NULL
+       OR above.html_row_ordinal >= ev.html_row_ordinal THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'stacked heading must be an earlier HTML_COLUMN_HEADING on the same artifact and slot';
+    END IF;
+  END IF;
+  RETURN NEW;
+END
+$$;
 
 CREATE FUNCTION evidence.check_supplementary_subject() RETURNS trigger
     LANGUAGE plpgsql
@@ -459,6 +502,20 @@ BEGIN
   ELSIF e.locator_type = 'JSON_PATH' THEN
     SELECT v.value_text INTO value FROM raw.json_value v WHERE v.artifact_id = e.artifact_id AND v.json_path = e.json_path;
   END IF;
+END
+$$;
+
+CREATE FUNCTION evidence.require_html_column_heading() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.locator_type = 'HTML_COLUMN_HEADING' AND NOT EXISTS (
+    SELECT 1 FROM evidence.html_column_heading h WHERE h.evidence_id = NEW.id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'HTML_COLUMN_HEADING requires raw heading text and matched heading text';
+  END IF;
+  RETURN NULL;
 END
 $$;
 
@@ -766,6 +823,14 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1',
       MESSAGE = format('field %s takes %s values only', fd.field_code, fd.value_type);
   END IF;
+  IF NEW.date_precision = 'MONTH' AND fd.value_type IS DISTINCT FROM 'DATE' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'month precision is only valid for a DATE field';
+  END IF;
+  IF NEW.date_precision = 'MONTH' AND NEW.normalized_date IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'month precision cannot store a day';
+  END IF;
   IF NEW.value_state = 'REPORTED' AND NEW.column_mapping_id IS NULL AND NOT EXISTS (
     SELECT 1 FROM evidence.evidence e WHERE e.id = NEW.evidence_id AND e.evidence_level = 'L2_ORIGINAL_FILING'
   ) THEN
@@ -796,6 +861,8 @@ BEGIN
   RETURN NEW;
 END
 $$;
+
+COMMENT ON FUNCTION obs.check_position_field_value() IS 'A field value must match its value type. MONTH precision is a year and month on a DATE field, with no normalized_date. The function does not invent a day.';
 
 CREATE FUNCTION obs.check_position_observation() RETURNS trigger
     LANGUAGE plpgsql
@@ -2013,6 +2080,7 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
            b.provenance_state,
            CASE b.provenance_state
              WHEN 'REPORTED_STRUCTURED' THEN b.structured_raw
+             WHEN 'REPORTED' THEN b.structured_raw
              WHEN 'FILING_DISPLAYED' THEN b.displayed_raw
              ELSE NULL
            END AS maturity_raw
@@ -2025,6 +2093,13 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
     LEFT JOIN LATERAL (
       SELECT count(fv.id)::integer AS n,
              count(DISTINCT fv.normalized_date)::integer AS distinct_dates,
+             count(*) FILTER (
+               WHERE fv.date_precision = 'MONTH'
+                 AND fv.normalized_date IS NULL
+                 AND fv.normalized_year BETWEEN 1000 AND 9999
+                 AND fv.normalized_month BETWEEN 1 AND 12
+                 AND fv.raw_value IS NOT NULL
+             )::integer AS month_rows,
              min(fv.normalized_date) AS maturity_date,
              min(fv.raw_value) AS raw_value
       FROM obs.position_field_value fv
@@ -2041,13 +2116,20 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
                  i.id IS NULL
                  OR i.inspection_state IN ('NOT_BOUND', 'UNAVAILABLE')
                  OR (i.inspection_state = 'FILING_DISPLAYED' AND i.normalized_date = structured.maturity_date)
-               ) THEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state
+               ) THEN 'REPORTED_STRUCTURED'
+               WHEN structured.n = 1
+                AND structured.distinct_dates = 0
+                AND structured.month_rows = 1
+                AND (
+                  i.id IS NULL
+                  OR i.inspection_state IN ('NOT_BOUND', 'UNAVAILABLE')
+                ) THEN 'REPORTED'
                WHEN structured.n = 0 AND (
                  i.id IS NULL OR i.inspection_state IN ('NOT_BOUND', 'UNAVAILABLE')
-               ) THEN 'UNKNOWN'::ref.maturity_provenance_state
+               ) THEN 'UNKNOWN'
                WHEN structured.n = 0 AND i.inspection_state = 'FILING_DISPLAYED'
-                 THEN 'FILING_DISPLAYED'::ref.maturity_provenance_state
-               ELSE 'UNRESOLVED'::ref.maturity_provenance_state
+                 THEN 'FILING_DISPLAYED'
+               ELSE 'UNRESOLVED'
              END AS provenance_state,
              structured.raw_value AS structured_raw,
              i.raw_value AS displayed_raw
@@ -2082,10 +2164,15 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
                fv.raw_value,
                fv.value_state::text,
                fv.scale_state::text,
-               fv.source_column_label
+               fv.source_column_label,
+               fv.date_precision,
+               fv.normalized_year,
+               fv.normalized_month,
+               fv.normalized_date
         FROM linked m
         JOIN LATERAL (
-          SELECT field_code, raw_value, value_state, scale_state, source_column_label
+          SELECT field_code, raw_value, value_state, scale_state, source_column_label,
+                 date_precision, normalized_year, normalized_month, normalized_date
           FROM obs.position_field_value fv
           WHERE fv.position_observation_id = m.position_observation_id
             AND fv.field_code IN (
@@ -2141,7 +2228,7 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
       SELECT json_agg(row_to_json(maturity))
       FROM (
         SELECT position_observation_id::text,
-               provenance_state::text AS maturity_source,
+               provenance_state AS maturity_source,
                maturity_raw
         FROM maturity_rows
       ) maturity
@@ -2151,7 +2238,7 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
   );
 $_$;
 
-COMMENT ON FUNCTION registry.review_case_read(p_case_key text) IS 'One research case, read from its current members whose filing has one current registrant and one CIK. Filing form, filed date, inline URL, document, field values, and maturity are looked up for those positions only. A missing field stays absent. This does not resolve a borrower or an instrument.';
+COMMENT ON FUNCTION registry.review_case_read(p_case_key text) IS 'One research case, read from its current members whose filing has one current registrant and one CIK. Filing form, filed date, inline URL, document, field values, and maturity are looked up for those positions only. A missing field stays absent. A calendar-day maturity stays REPORTED_STRUCTURED. A single MONTH maturity stays REPORTED, with its raw month text and a null normalized_date. This does not resolve a borrower or an instrument.';
 
 CREATE FUNCTION resolution.check_position_continuity() RETURNS trigger
     LANGUAGE plpgsql
@@ -2568,7 +2655,9 @@ CREATE TABLE evidence.evidence (
     html_row_end_ordinal integer,
     html_slot_ordinal integer,
     block_evidence_id bigint,
+    heading_evidence_id bigint,
     CONSTRAINT evidence_column_position_check CHECK ((column_position >= 1)),
+    CONSTRAINT evidence_heading_link_locator CHECK (((heading_evidence_id IS NULL) OR (locator_type = 'HTML_TABLE_CELL'::ref.locator_type))),
     CONSTRAINT evidence_html_row_end_ordinal_check CHECK (((html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= 1))),
     CONSTRAINT evidence_html_row_ordinal_check CHECK (((html_row_ordinal IS NULL) OR (html_row_ordinal >= 1))),
     CONSTRAINT evidence_html_row_span_check CHECK (((html_row_ordinal IS NULL) OR (html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= html_row_ordinal))),
@@ -2578,7 +2667,7 @@ CREATE TABLE evidence.evidence (
     CONSTRAINT evidence_level_locator CHECK (
 CASE evidence_level
     WHEN 'L1_STRUCTURED_DATASET'::ref.evidence_level THEN ((locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type])) OR ((locator_type = 'DOCUMENT'::ref.locator_type) AND (artifact_member_id IS NOT NULL)))
-    WHEN 'L2_ORIGINAL_FILING'::ref.evidence_level THEN (locator_type = ANY (ARRAY['IXBRL_FACT'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type, 'DISCLOSURE_BLOCK'::ref.locator_type, 'HTML_TABLE_CELL'::ref.locator_type]))
+    WHEN 'L2_ORIGINAL_FILING'::ref.evidence_level THEN (locator_type = ANY (ARRAY['IXBRL_FACT'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type, 'DISCLOSURE_BLOCK'::ref.locator_type, 'HTML_TABLE_CELL'::ref.locator_type, 'HTML_COLUMN_HEADING'::ref.locator_type]))
     WHEN 'REGISTRY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type, 'JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
     WHEN 'DISCOVERY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
     ELSE NULL::boolean
@@ -2592,7 +2681,8 @@ CASE locator_type
     WHEN 'HTML_ANCHOR'::ref.locator_type THEN ((html_anchor IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
     WHEN 'DOCUMENT'::ref.locator_type THEN (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0)
     WHEN 'DISCLOSURE_BLOCK'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_row_end_ordinal IS NOT NULL) AND (html_row_end_ordinal >= html_row_ordinal) AND (html_slot_ordinal IS NULL) AND (block_evidence_id IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
-    WHEN 'HTML_TABLE_CELL'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND (block_evidence_id IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
+    WHEN 'HTML_TABLE_CELL'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND ((block_evidence_id IS NOT NULL) OR (heading_evidence_id IS NOT NULL)) AND (html_row_end_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
+    WHEN 'HTML_COLUMN_HEADING'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (block_evidence_id IS NULL) AND (heading_evidence_id IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
     ELSE NULL::boolean
 END)
 );
@@ -2611,6 +2701,8 @@ COMMENT ON COLUMN evidence.evidence.html_slot_ordinal IS 'Colspan-grid slot of a
 
 COMMENT ON COLUMN evidence.evidence.block_evidence_id IS 'DISCLOSURE_BLOCK that contains this cell or fact. Null on the block itself and on evidence that is not inside a block.';
 
+COMMENT ON COLUMN evidence.evidence.heading_evidence_id IS 'HTML_COLUMN_HEADING aligned with this value cell. Null when the cell has no stored heading. The column does not store a field code.';
+
 ALTER TABLE evidence.evidence ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME evidence.evidence_id_seq
     START WITH 1
@@ -2619,6 +2711,24 @@ ALTER TABLE evidence.evidence ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     NO MAXVALUE
     CACHE 1
 );
+
+CREATE TABLE evidence.html_column_heading (
+    evidence_id bigint NOT NULL,
+    raw_text text NOT NULL,
+    matched_text text NOT NULL,
+    stack_above_evidence_id bigint,
+    CONSTRAINT html_column_heading_check CHECK ((stack_above_evidence_id IS DISTINCT FROM evidence_id)),
+    CONSTRAINT html_column_heading_matched_text_check CHECK ((btrim(matched_text) <> ''::text)),
+    CONSTRAINT html_column_heading_raw_text_check CHECK ((btrim(raw_text) <> ''::text))
+);
+
+COMMENT ON TABLE evidence.html_column_heading IS 'Raw heading text and the whitespace-normalized match text for one HTML_COLUMN_HEADING. No field code is stored.';
+
+COMMENT ON COLUMN evidence.html_column_heading.raw_text IS 'Heading text nodes exactly as read. A line break that was markup is not turned into a space here.';
+
+COMMENT ON COLUMN evidence.html_column_heading.matched_text IS 'Heading text after a line break becomes a space and whitespace collapses. This is the string a rule may match.';
+
+COMMENT ON COLUMN evidence.html_column_heading.stack_above_evidence_id IS 'Earlier heading cell in the same artifact and slot. The pair is a stacked header, not a field mapping.';
 
 CREATE TABLE evidence.supplementary_evidence (
     id bigint NOT NULL,
@@ -2795,10 +2905,15 @@ CREATE TABLE obs.position_field_value (
     supersedes_id bigint,
     supersede_reason text,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    date_precision text,
+    normalized_year integer,
+    normalized_month integer,
     CONSTRAINT field_value_currency CHECK (((currency_code IS NULL) = (currency_state = ANY (ARRAY['UNKNOWN'::ref.currency_state, 'AMBIGUOUS'::ref.currency_state])))),
+    CONSTRAINT field_value_date_precision_check CHECK (((date_precision IS NULL) OR (date_precision = 'MONTH'::text))),
     CONSTRAINT field_value_mapping_needs_column CHECK (((column_mapping_id IS NULL) OR (source_column_label IS NOT NULL))),
+    CONSTRAINT field_value_month_shape CHECK ((((date_precision IS NULL) AND (normalized_year IS NULL) AND (normalized_month IS NULL)) OR ((date_precision = 'MONTH'::text) AND ((normalized_year >= 1000) AND (normalized_year <= 9999)) AND ((normalized_month >= 1) AND (normalized_month <= 12)) AND (normalized_date IS NULL) AND (normalized_numeric IS NULL) AND (normalized_text IS NULL) AND (raw_value IS NOT NULL)))),
     CONSTRAINT field_value_not_applicable CHECK (((value_state <> 'NOT_APPLICABLE'::ref.value_state) OR ((num_nonnulls(normalized_numeric, normalized_date, normalized_text) = 0) AND (COALESCE(btrim(not_applicable_reason), ''::text) <> ''::text)))),
-    CONSTRAINT field_value_reported CHECK (((value_state <> 'REPORTED'::ref.value_state) OR ((raw_value IS NOT NULL) AND ((num_nonnulls(normalized_numeric, normalized_date, normalized_text) = 1) OR (scale_state = 'UNRESOLVED'::ref.scale_state))))),
+    CONSTRAINT field_value_reported CHECK (((value_state <> 'REPORTED'::ref.value_state) OR ((raw_value IS NOT NULL) AND ((num_nonnulls(normalized_numeric, normalized_date, normalized_text) = 1) OR (NOT (date_precision IS DISTINCT FROM 'MONTH'::text)) OR (scale_state = 'UNRESOLVED'::ref.scale_state))))),
     CONSTRAINT field_value_single_normalized CHECK ((num_nonnulls(normalized_numeric, normalized_date, normalized_text) <= 1)),
     CONSTRAINT field_value_source_column CHECK (((source_column_label IS NULL) = (source_column_position IS NULL))),
     CONSTRAINT field_value_unknown CHECK (((value_state <> 'UNKNOWN'::ref.value_state) OR ((num_nonnulls(normalized_numeric, normalized_date, normalized_text) = 0) AND (COALESCE(btrim(unknown_reason), ''::text) <> ''::text)))),
@@ -2810,6 +2925,12 @@ CREATE TABLE obs.position_field_value (
 );
 
 COMMENT ON TABLE obs.position_field_value IS 'One field of one position observation. A field with no row is UNKNOWN in the views, never zero. Authority is computed by obs.field_value_authority.';
+
+COMMENT ON COLUMN obs.position_field_value.date_precision IS 'MONTH means normalized_year and normalized_month, with normalized_date null. Null is not a precision token: an existing or disclosed calendar day stays in normalized_date, and a non-date value is also null. There is no DAY token.';
+
+COMMENT ON COLUMN obs.position_field_value.normalized_year IS 'Four-digit year for date_precision MONTH. Null for every other value.';
+
+COMMENT ON COLUMN obs.position_field_value.normalized_month IS 'Month 1 through 12 for date_precision MONTH. Null for every other value.';
 
 CREATE VIEW obs.current_position_field_value AS
  SELECT id,
@@ -5662,6 +5783,9 @@ ALTER TABLE ONLY derived.observation_event
 ALTER TABLE ONLY evidence.evidence
     ADD CONSTRAINT evidence_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY evidence.html_column_heading
+    ADD CONSTRAINT html_column_heading_pkey PRIMARY KEY (evidence_id);
+
 ALTER TABLE ONLY evidence.supplementary_evidence
     ADD CONSTRAINT supplementary_evidence_pkey PRIMARY KEY (id);
 
@@ -5976,6 +6100,8 @@ ALTER TABLE ONLY validation.validation_result
 
 CREATE INDEX evidence_artifact_idx ON evidence.evidence USING btree (artifact_id);
 
+CREATE UNIQUE INDEX evidence_html_column_heading_location ON evidence.evidence USING btree (artifact_id, html_row_ordinal, html_slot_ordinal) WHERE (locator_type = 'HTML_COLUMN_HEADING'::ref.locator_type);
+
 CREATE INDEX supplementary_evidence_subject_idx ON evidence.supplementary_evidence USING btree (subject_table, subject_id);
 
 CREATE UNIQUE INDEX instrument_attribute_assertion_supersedes_once ON identity.instrument_attribute_assertion USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
@@ -6088,15 +6214,23 @@ CREATE CONSTRAINT TRIGGER require_input AFTER INSERT ON derived.derived_value DE
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON evidence.evidence FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON evidence.html_column_heading FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON evidence.supplementary_evidence FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON evidence.evidence FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON evidence.html_column_heading FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON evidence.supplementary_evidence FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER check_evidence BEFORE INSERT ON evidence.evidence FOR EACH ROW EXECUTE FUNCTION evidence.check_evidence();
 
+CREATE TRIGGER check_html_column_heading BEFORE INSERT ON evidence.html_column_heading FOR EACH ROW EXECUTE FUNCTION evidence.check_html_column_heading();
+
 CREATE TRIGGER check_supplementary_subject BEFORE INSERT ON evidence.supplementary_evidence FOR EACH ROW EXECUTE FUNCTION evidence.check_supplementary_subject();
+
+CREATE CONSTRAINT TRIGGER require_html_column_heading AFTER INSERT ON evidence.evidence DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION evidence.require_html_column_heading();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON identity.economic_group FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -6544,10 +6678,19 @@ ALTER TABLE ONLY evidence.evidence
     ADD CONSTRAINT evidence_block_evidence_fkey FOREIGN KEY (block_evidence_id) REFERENCES evidence.evidence(id);
 
 ALTER TABLE ONLY evidence.evidence
+    ADD CONSTRAINT evidence_heading_evidence_fkey FOREIGN KEY (heading_evidence_id) REFERENCES evidence.evidence(id);
+
+ALTER TABLE ONLY evidence.evidence
     ADD CONSTRAINT evidence_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
 
 ALTER TABLE ONLY evidence.evidence
     ADD CONSTRAINT evidence_tabular_row_id_fkey FOREIGN KEY (tabular_row_id) REFERENCES raw.tabular_row(id);
+
+ALTER TABLE ONLY evidence.html_column_heading
+    ADD CONSTRAINT html_column_heading_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
+
+ALTER TABLE ONLY evidence.html_column_heading
+    ADD CONSTRAINT html_column_heading_stack_above_evidence_id_fkey FOREIGN KEY (stack_above_evidence_id) REFERENCES evidence.evidence(id);
 
 ALTER TABLE ONLY evidence.supplementary_evidence
     ADD CONSTRAINT supplementary_evidence_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
@@ -7371,6 +7514,8 @@ GRANT SELECT ON TABLE derived.observation_event_listing TO bdc_reader;
 GRANT SELECT,INSERT ON TABLE evidence.evidence TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE evidence.evidence_id_seq TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE evidence.html_column_heading TO bdc_pipeline_writer;
 
 GRANT SELECT,INSERT ON TABLE evidence.supplementary_evidence TO bdc_pipeline_writer;
 

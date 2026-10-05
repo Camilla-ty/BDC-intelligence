@@ -121,6 +121,10 @@ export type ReviewField = {
   value_state: string;
   scale_state: string;
   source_column_label: string | null;
+  date_precision?: string | null;
+  normalized_year?: number | null;
+  normalized_month?: number | null;
+  normalized_date?: string | null;
 };
 
 export type ReviewPayload = {
@@ -236,6 +240,13 @@ function count(value: unknown, key: string): number {
   return value;
 }
 
+function optionalInt(row: Record<string, unknown>, key: string): number | null {
+  const value = row[key];
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(key);
+  return value;
+}
+
 function parseLine(value: unknown): ReviewLine {
   const row = asRecord(value, "line");
   const line: Record<string, string | null> = {};
@@ -253,7 +264,23 @@ function parseField(value: unknown): ReviewField {
     value_state: requiredString(row, "value_state"),
     scale_state: requiredString(row, "scale_state"),
     source_column_label: optionalString(row, "source_column_label"),
+    date_precision: optionalString(row, "date_precision"),
+    normalized_year: optionalInt(row, "normalized_year"),
+    normalized_month: optionalInt(row, "normalized_month"),
+    normalized_date: optionalString(row, "normalized_date"),
   };
+}
+
+function disclosedMonth(fields: ReviewField[], code: string): string | null {
+  const rows = fields.filter((field) =>
+    field.field_code === code
+    && field.value_state === "REPORTED"
+    && field.date_precision === "MONTH"
+    && field.normalized_date == null
+    && field.raw_value != null
+    && field.raw_value.trim() !== "");
+  if (rows.length !== 1) return null;
+  return rows[0]?.raw_value ?? null;
 }
 
 export function parseEntityReviewPayload(value: unknown): ReviewPayload {
@@ -339,11 +366,12 @@ function observation(line: ReviewLine, payload: ReviewPayload): ReviewObservatio
       .map((name) => name.name_raw),
   )].sort((a, b) => a.localeCompare(b));
   const maturity = payload.maturity.filter((item) => item.position_observation_id === line.position_observation_id);
-  const maturityText = maturity.length === 0
+  const provenanceMaturity = maturity.length === 0
     ? "Not stored"
     : maturity.length === 1
       ? maturityValue(maturity[0]?.maturity_source ?? "UNKNOWN", maturity[0]?.maturity_raw ?? null)
       : "Multiple stored values";
+  const maturityText = disclosedMonth(fields, "MATURITY_DATE") ?? provenanceMaturity;
   return {
     id: line.position_observation_id,
     sourceName: line.disclosed_line_text,

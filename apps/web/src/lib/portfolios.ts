@@ -161,8 +161,9 @@ function reportedValue(state: string, raw: string | null): string {
   return "Unknown";
 }
 
-// maturity_source is the provenance state from registry.maturity_read; only these two carry a date.
-const DATED_MATURITY_SOURCE = new Set(["REPORTED_STRUCTURED", "FILING_DISPLAYED"]);
+// REPORTED_STRUCTURED and FILING_DISPLAYED carry a disclosed calendar day.
+// REPORTED carries a disclosed month from the case reader. The raw text is the value.
+const DATED_MATURITY_SOURCE = new Set(["REPORTED_STRUCTURED", "FILING_DISPLAYED", "REPORTED"]);
 
 export function maturityValue(source: string, raw: string | null): string {
   if (DATED_MATURITY_SOURCE.has(source) && raw != null && raw.trim() !== "") return raw;

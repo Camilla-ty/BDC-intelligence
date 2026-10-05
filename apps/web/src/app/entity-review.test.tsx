@@ -249,6 +249,78 @@ describe("entity review candidate", () => {
     expect(model.writesEnabled).toBe(false);
   });
 
+  it("shows a reported month and leaves a calendar day unchanged", () => {
+    const monthField = {
+      position_observation_id: "9000000001",
+      value_state: "REPORTED",
+      scale_state: "NOT_APPLICABLE",
+      source_column_label: null,
+      date_precision: "MONTH",
+      normalized_year: 2099,
+      normalized_date: null,
+    };
+    const model = assembleReview(candidate(["TEST SOURCE A"]), {
+      ...emptyPayload(),
+      lines: [
+        line({ position_observation_id: "9000000001" }),
+        line({ position_observation_id: "9000000002", accession_number: "0000000000-99-000002" }),
+        line({ position_observation_id: "9000000003", accession_number: "0000000000-99-000003" }),
+        line({ position_observation_id: "9000000004", accession_number: "0000000000-99-000004" }),
+      ],
+      fields: [
+        { ...monthField, field_code: "MATURITY_DATE", raw_value: "12/2099", normalized_month: 12 },
+        { ...monthField, field_code: "ACQUISITION_DATE", raw_value: "04/2099", normalized_month: 4 },
+        {
+          position_observation_id: "9000000002",
+          field_code: "MATURITY_DATE",
+          raw_value: "1/2/2099",
+          value_state: "REPORTED",
+          scale_state: "NOT_APPLICABLE",
+          source_column_label: null,
+          date_precision: null,
+          normalized_year: null,
+          normalized_month: null,
+          normalized_date: "2099-01-02",
+        },
+      ],
+      maturity: [
+        { position_observation_id: "9000000001", maturity_source: "REPORTED", maturity_raw: "12/2099" },
+        { position_observation_id: "9000000002", maturity_source: "REPORTED_STRUCTURED", maturity_raw: "1/2/2099" },
+        { position_observation_id: "9000000003", maturity_source: "UNKNOWN", maturity_raw: null },
+      ],
+    });
+    const observations = model.groups[0]?.observations ?? [];
+    const month = observations.find((item) => item.id === "9000000001");
+    const day = observations.find((item) => item.id === "9000000002");
+    const missing = observations.find((item) => item.id === "9000000003");
+    const absent = observations.find((item) => item.id === "9000000004");
+    expect(month?.maturity).toBe("12/2099");
+    expect(month?.maturity).not.toBe("2099-12-01");
+    expect(month?.maturity).not.toBe("2099-12-31");
+    expect(month?.acquisitionDate).toBe("04/2099");
+    expect(month?.acquisitionDate).not.toBe("2099-04-01");
+    expect(month?.acquisitionDate).not.toBe("2099-04-30");
+    expect(day?.maturity).toBe("1/2/2099");
+    expect(missing?.maturity).toBe("Unknown");
+    expect(missing?.acquisitionDate).toBe("Not stored");
+    expect(absent?.maturity).toBe("Not stored");
+
+    const invented = assembleReview(candidate(["TEST SOURCE A"]), {
+      ...emptyPayload(),
+      lines: [line()],
+      fields: [{
+        ...monthField,
+        field_code: "MATURITY_DATE",
+        raw_value: "12/2099",
+        normalized_month: 12,
+        normalized_date: "2099-12-01",
+      }],
+      maturity: [{ position_observation_id: "9000000001", maturity_source: "UNRESOLVED", maturity_raw: null }],
+    });
+    expect(invented.groups[0]?.observations[0]?.maturity).toBe("Unresolved");
+    expect(invented.groups[0]?.observations[0]?.maturity).not.toBe("2099-12-01");
+  });
+
   it("reads the stored case and rejects a case key that could change SQL", () => {
     const seeded = entityReviewCandidate("geo-parent-corporation")!;
     const sql = entityReviewSql(seeded);

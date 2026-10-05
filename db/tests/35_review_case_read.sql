@@ -400,3 +400,87 @@ SELECT pg_temp.check('zero current CIKs and multiple current CIKs are omitted wi
     SELECT bool_and(line->>'registrant_cik' ~ '^[0-9]{10}$')
     FROM review_case_linked, jsonb_array_elements(payload::jsonb->'lines') line
   ));
+
+-- A month-precision date is a reported year and month. The stand-in is 2099, the same
+-- shape as a stored M/YYYY value. It must not become the first or last calendar day.
+
+INSERT INTO obs.position_field_value (
+  position_observation_id, field_code, raw_value, date_precision, normalized_year, normalized_month,
+  currency_state, scale_state, value_state, normalization_rule_version_id, evidence_id, run_id)
+VALUES
+  (pg_temp.fx('geo_pos_2'), 'MATURITY_DATE', '12/2099', 'MONTH', 2099, 12,
+   'UNKNOWN', 'NOT_APPLICABLE', 'REPORTED', pg_temp.fx('r_field'), pg_temp.fx('e_maturity'), pg_temp.fx('run')),
+  (pg_temp.fx('geo_pos_2'), 'ACQUISITION_DATE', '04/2099', 'MONTH', 2099, 4,
+   'UNKNOWN', 'NOT_APPLICABLE', 'REPORTED', pg_temp.fx('r_field'), pg_temp.fx('e_maturity'), pg_temp.fx('run'));
+
+CREATE TEMP TABLE review_case_month (payload json);
+GRANT INSERT, SELECT ON review_case_month TO bdc_reader;
+
+SELECT pg_temp.expect_ok('bdc_reader can read a month-precision date', ARRAY[
+  'SET ROLE bdc_reader',
+  $$INSERT INTO review_case_month SELECT registry.review_case_read('geo-parent-corporation')$$,
+  'RESET ROLE']);
+
+SELECT pg_temp.check('a month maturity stays reported and does not become a calendar day', (
+  SELECT item->>'maturity_source' = 'REPORTED'
+     AND item->>'maturity_raw' = '12/2099'
+     AND item->>'maturity_raw' IS DISTINCT FROM '2099-12-01'
+     AND item->>'maturity_raw' IS DISTINCT FROM '2099-12-31'
+  FROM review_case_month, jsonb_array_elements(payload::jsonb->'maturity') item
+  WHERE (item->>'position_observation_id')::bigint = pg_temp.fx('geo_pos_2')
+) AND (
+  SELECT field->>'raw_value' = '12/2099'
+     AND field->>'value_state' = 'REPORTED'
+     AND field->>'date_precision' = 'MONTH'
+     AND (field->>'normalized_year')::integer = 2099
+     AND (field->>'normalized_month')::integer = 12
+     AND field->>'normalized_date' IS NULL
+  FROM review_case_month, jsonb_array_elements(payload::jsonb->'fields') field
+  WHERE (field->>'position_observation_id')::bigint = pg_temp.fx('geo_pos_2')
+    AND field->>'field_code' = 'MATURITY_DATE'
+));
+
+SELECT pg_temp.check('a month acquisition stays reported and does not become a calendar day', (
+  SELECT field->>'raw_value' = '04/2099'
+     AND field->>'value_state' = 'REPORTED'
+     AND field->>'date_precision' = 'MONTH'
+     AND (field->>'normalized_year')::integer = 2099
+     AND (field->>'normalized_month')::integer = 4
+     AND field->>'normalized_date' IS NULL
+     AND field->>'raw_value' IS DISTINCT FROM '2099-04-01'
+     AND field->>'raw_value' IS DISTINCT FROM '2099-04-30'
+  FROM review_case_month, jsonb_array_elements(payload::jsonb->'fields') field
+  WHERE (field->>'position_observation_id')::bigint = pg_temp.fx('geo_pos_2')
+    AND field->>'field_code' = 'ACQUISITION_DATE'
+));
+
+SELECT pg_temp.check('an existing calendar-day maturity is unchanged', (
+  SELECT item->>'maturity_source' = 'REPORTED_STRUCTURED'
+     AND item->>'maturity_raw' = '1/2/2099'
+  FROM review_case_month, jsonb_array_elements(payload::jsonb->'maturity') item
+  WHERE (item->>'position_observation_id')::bigint = pg_temp.fx('geo_pos_1')
+) AND (
+  SELECT field->>'raw_value' = '1/2/2099'
+     AND field->>'date_precision' IS NULL
+     AND field->>'normalized_year' IS NULL
+     AND field->>'normalized_month' IS NULL
+     AND field->>'normalized_date' = '2099-01-02'
+  FROM review_case_month, jsonb_array_elements(payload::jsonb->'fields') field
+  WHERE (field->>'position_observation_id')::bigint = pg_temp.fx('geo_pos_1')
+    AND field->>'field_code' = 'MATURITY_DATE'
+));
+
+SELECT pg_temp.check('a member with no maturity field stays unknown', (
+  SELECT item->>'maturity_source' = 'UNKNOWN'
+     AND item->>'maturity_raw' IS NULL
+  FROM review_case_month, jsonb_array_elements(payload::jsonb->'maturity') item
+  WHERE (item->>'position_observation_id')::bigint = pg_temp.fx('geo_pos_3')
+) AND NOT EXISTS (
+  SELECT 1
+  FROM review_case_month, jsonb_array_elements(payload::jsonb->'fields') field
+  WHERE (field->>'position_observation_id')::bigint = pg_temp.fx('geo_pos_3')
+    AND field->>'field_code' IN ('MATURITY_DATE', 'ACQUISITION_DATE')
+));
+
+SELECT pg_temp.check('the case reader does not build a calendar day for a month',
+  NOT (pg_get_functiondef('registry.review_case_read(text)'::regprocedure) ~ 'make_date|date_trunc|to_date'));
