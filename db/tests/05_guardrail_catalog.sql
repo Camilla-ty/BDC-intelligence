@@ -3,7 +3,7 @@
 CREATE TEMP VIEW layer_columns AS
 SELECT c.table_schema, c.table_name, c.column_name, c.data_type, c.column_default, c.is_identity
 FROM information_schema.columns c
-WHERE c.table_schema IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref');
+WHERE c.table_schema IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review');
 
 SELECT pg_temp.check('G-09: the only CIK column in any base table is registry.registrant.cik', NOT EXISTS (
   SELECT 1 FROM layer_columns lc
@@ -46,7 +46,7 @@ SELECT pg_temp.check('G-06: no table, view, or column named like score, rank, or
   SELECT 1 FROM layer_columns WHERE column_name ~* '(score|rank|grade)'
   UNION ALL
   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref')
+  WHERE n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review')
     AND c.relname ~* '(score|rank|grade)'));
 
 SELECT pg_temp.check('money and rates are numeric: no float, real, double, or money columns', NOT EXISTS (

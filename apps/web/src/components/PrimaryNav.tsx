@@ -8,6 +8,7 @@ const ITEMS = [
   { href: "/portfolios", label: "Portfolios" },
   { href: "/maturity", label: "Maturity" },
   { href: "/market", label: "Coverage" },
+  { href: "/review/entities", label: "Review" },
 ] as const;
 
 export function PrimaryNav() {

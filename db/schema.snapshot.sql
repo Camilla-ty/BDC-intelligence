@@ -34,6 +34,10 @@ CREATE SCHEMA resolution;
 
 COMMENT ON SCHEMA resolution IS 'Versioned identity decisions (MATCHED, PROBABLE, UNRESOLVED, REJECTED) and candidates.';
 
+CREATE SCHEMA review;
+
+COMMENT ON SCHEMA review IS 'Research cases, source citations, researcher notes, and evidence sets. Not identity resolution.';
+
 CREATE SCHEMA validation;
 
 COMMENT ON SCHEMA validation IS 'Validation results and evidence-status assertions.';
@@ -245,6 +249,31 @@ CREATE TYPE ref.value_state AS ENUM (
     'DERIVED',
     'UNKNOWN',
     'NOT_APPLICABLE'
+);
+
+CREATE TYPE review.candidate_type AS ENUM (
+    'BORROWER'
+);
+
+CREATE TYPE review.case_status AS ENUM (
+    'OPEN',
+    'CLOSED'
+);
+
+CREATE TYPE review.evidence_origin AS ENUM (
+    'INTERNAL',
+    'EXTERNAL'
+);
+
+CREATE TYPE review.source_type AS ENUM (
+    'INTERNAL_SEC_FILING',
+    'COMPANY_WEBSITE',
+    'SEC_FILING',
+    'TRANSACTION_DOCUMENT',
+    'COURT_DOCUMENT',
+    'RATING_AGENCY',
+    'STATE_REGISTRY',
+    'OTHER'
 );
 
 CREATE FUNCTION derived.check_derived_value() RETURNS trigger
@@ -989,7 +1018,7 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind IN ('r', 'p')
       AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity',
-                        'resolution', 'validation', 'derived', 'ref')
+                        'resolution', 'validation', 'derived', 'ref', 'review')
       AND NOT EXISTS (
         SELECT 1 FROM pg_trigger tg
         WHERE tg.tgrelid = c.oid AND tg.tgname = 'append_only_row'
@@ -1867,6 +1896,264 @@ BEGIN
       MESSAGE = 'position continuity requires the observation filing to be linked to the position registrant';
   END IF;
   RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION review.add_evidence_set(p_candidate_id bigint, p_title text, p_description text, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  INSERT INTO review.evidence_set (candidate_id, title, description, created_by)
+  VALUES (p_candidate_id, p_title, p_description, p_created_by)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION review.add_external_evidence(p_candidate_id bigint, p_source_type text, p_title text, p_source_url text, p_document_date date, p_relevant_excerpt text, p_position_observation_id bigint, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  INSERT INTO review.evidence_item (
+    candidate_id, origin, source_type, title, source_url, document_date,
+    retrieved_at, relevant_excerpt, position_observation_id, created_by)
+  VALUES (
+    p_candidate_id, 'EXTERNAL', p_source_type::review.source_type, p_title, p_source_url,
+    p_document_date, clock_timestamp(), p_relevant_excerpt, p_position_observation_id, p_created_by)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION review.add_internal_evidence(p_candidate_id bigint, p_title text, p_position_observation_id bigint, p_filing_document_id bigint, p_evidence_id bigint, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  INSERT INTO review.evidence_item (
+    candidate_id, origin, source_type, title,
+    position_observation_id, filing_document_id, evidence_id, created_by)
+  VALUES (
+    p_candidate_id, 'INTERNAL', 'INTERNAL_SEC_FILING', p_title,
+    p_position_observation_id, p_filing_document_id, p_evidence_id, p_created_by)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION review.add_member(p_candidate_id bigint, p_position_observation_id bigint, p_borrower_name_observation_id bigint, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  INSERT INTO review.candidate_member (
+    candidate_id, position_observation_id, borrower_name_observation_id, created_by)
+  VALUES (p_candidate_id, p_position_observation_id, p_borrower_name_observation_id, p_created_by)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION review.add_note(p_candidate_id bigint, p_evidence_item_id bigint, p_note_text text, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  INSERT INTO review.researcher_note (candidate_id, evidence_item_id, note_text, created_by)
+  VALUES (p_candidate_id, p_evidence_item_id, p_note_text, p_created_by)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION review.add_set_member(p_evidence_set_id bigint, p_evidence_item_id bigint, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  INSERT INTO review.evidence_set_member (evidence_set_id, evidence_item_id, created_by)
+  VALUES (p_evidence_set_id, p_evidence_item_id, p_created_by)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION review.assert_writer() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF session_user IS DISTINCT FROM 'review_writer'
+     AND NOT pg_has_role(session_user, 'review_writer', 'MEMBER') THEN
+    RAISE EXCEPTION USING ERRCODE = '42501',
+      MESSAGE = 'review writes require review_writer';
+  END IF;
+END
+$$;
+
+CREATE FUNCTION review.check_candidate_member() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'obs'
+    AS $$
+BEGIN
+  IF NEW.borrower_name_observation_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM obs.borrower_name_observation b
+    WHERE b.id = NEW.borrower_name_observation_id
+      AND b.position_observation_id = NEW.position_observation_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'borrower name observation does not belong to this position observation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION review.check_candidate_status() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+BEGIN
+  IF NEW.supersedes_id IS NULL AND NEW.status IS DISTINCT FROM 'OPEN' THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'a review candidate opens as OPEN';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION review.check_evidence_item() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'review', 'obs', 'registry'
+    AS $$
+BEGIN
+  IF NEW.position_observation_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM review.candidate_member m
+    WHERE m.candidate_id = NEW.candidate_id
+      AND m.position_observation_id = NEW.position_observation_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'evidence can cite only a position observation that is a member of this candidate';
+  END IF;
+  IF NEW.position_observation_id IS NOT NULL AND NEW.filing_document_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM registry.filing_document d
+    JOIN obs.position_observation p ON p.filing_id = d.filing_id
+    WHERE d.id = NEW.filing_document_id
+      AND p.id = NEW.position_observation_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'filing document does not belong to this position observation';
+  END IF;
+  IF NEW.position_observation_id IS NOT NULL AND NEW.evidence_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM obs.position_observation p
+    WHERE p.id = NEW.position_observation_id AND p.evidence_id = NEW.evidence_id
+    UNION ALL
+    SELECT 1 FROM obs.position_field_value f
+    WHERE f.position_observation_id = NEW.position_observation_id AND f.evidence_id = NEW.evidence_id
+    UNION ALL
+    SELECT 1 FROM obs.borrower_name_observation b
+    WHERE b.position_observation_id = NEW.position_observation_id AND b.evidence_id = NEW.evidence_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'evidence row is not provenance for this position observation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION review.check_evidence_set_member() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM review.evidence_set s
+    JOIN review.evidence_item i ON i.candidate_id = s.candidate_id
+    WHERE s.id = NEW.evidence_set_id AND i.id = NEW.evidence_item_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'an evidence set can include only evidence from the same candidate';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION review.check_researcher_note() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+BEGIN
+  IF NEW.evidence_item_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM review.evidence_item i
+    WHERE i.id = NEW.evidence_item_id AND i.candidate_id = NEW.candidate_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'researcher note must cite evidence from the same candidate';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION review.open_candidate(p_case_key text, p_candidate_type text, p_source text, p_title text, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  INSERT INTO review.candidate (case_key, candidate_type, source, title, created_by)
+  VALUES (p_case_key, p_candidate_type::review.candidate_type, p_source, p_title, p_created_by)
+  RETURNING id INTO new_id;
+  INSERT INTO review.candidate_status (candidate_id, status, created_by)
+  VALUES (new_id, 'OPEN', p_created_by);
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION review.set_candidate_status(p_candidate_id bigint, p_status text, p_reason text, p_created_by text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'review'
+    AS $$
+DECLARE
+  current_id bigint;
+  new_id bigint;
+BEGIN
+  PERFORM review.assert_writer();
+  IF p_status NOT IN ('OPEN', 'CLOSED') THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'review status is OPEN or CLOSED';
+  END IF;
+  SELECT s.id INTO current_id
+  FROM review.candidate_status s
+  WHERE s.candidate_id = p_candidate_id
+    AND NOT EXISTS (SELECT 1 FROM review.candidate_status n WHERE n.supersedes_id = s.id);
+  IF current_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'review candidate has no status';
+  END IF;
+  INSERT INTO review.candidate_status (candidate_id, status, supersedes_id, supersede_reason, created_by)
+  VALUES (p_candidate_id, p_status::review.case_status, current_id, p_reason, p_created_by)
+  RETURNING id INTO new_id;
+  RETURN new_id;
 END
 $$;
 
@@ -4812,6 +5099,267 @@ ALTER TABLE resolution.position_continuity_decision ALTER COLUMN id ADD GENERATE
     CACHE 1
 );
 
+CREATE TABLE review.candidate (
+    id bigint NOT NULL,
+    case_key text NOT NULL,
+    candidate_type review.candidate_type NOT NULL,
+    source text NOT NULL,
+    title text NOT NULL,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT candidate_case_key_check CHECK ((case_key ~ '^[a-z0-9]+(-[a-z0-9]+)*$'::text)),
+    CONSTRAINT candidate_created_by_check CHECK ((btrim(created_by) <> ''::text)),
+    CONSTRAINT candidate_source_check CHECK ((source = ANY (ARRAY['MANUAL_SEED'::text, 'RESEARCHER'::text]))),
+    CONSTRAINT candidate_title_check CHECK ((btrim(title) <> ''::text))
+);
+
+COMMENT ON TABLE review.candidate IS 'An investigation case. Status lives in review.candidate_status. This row is not a borrower and not a decision.';
+
+ALTER TABLE review.candidate ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME review.candidate_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE TABLE review.candidate_member (
+    id bigint NOT NULL,
+    candidate_id bigint NOT NULL,
+    position_observation_id bigint NOT NULL,
+    borrower_name_observation_id bigint,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT candidate_member_created_by_check CHECK ((btrim(created_by) <> ''::text))
+);
+
+COMMENT ON TABLE review.candidate_member IS 'The source observations included in a case. The observation row is not copied.';
+
+ALTER TABLE review.candidate_member ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME review.candidate_member_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE VIEW review.candidate_member_read AS
+ SELECT m.candidate_id,
+    m.position_observation_id,
+    m.borrower_name_observation_id,
+    p.holding_descriptor_raw AS disclosed_line_text,
+    p.filing_id,
+    p.reported_date,
+    p.evidence_id AS position_evidence_id,
+    m.created_by,
+    m.recorded_at AS created_at
+   FROM (review.candidate_member m
+     JOIN obs.position_observation p ON ((p.id = m.position_observation_id)));
+
+COMMENT ON VIEW review.candidate_member_read IS 'Case membership plus the stored disclosed line. The observation is not copied into review.';
+
+CREATE TABLE review.candidate_status (
+    id bigint NOT NULL,
+    candidate_id bigint NOT NULL,
+    status review.case_status NOT NULL,
+    supersedes_id bigint,
+    supersede_reason text,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT candidate_status_created_by_check CHECK ((btrim(created_by) <> ''::text)),
+    CONSTRAINT candidate_status_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id))
+);
+
+COMMENT ON TABLE review.candidate_status IS 'Append-only OPEN or CLOSED. The first row is OPEN. Closing inserts a new row.';
+
+ALTER TABLE review.candidate_status ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME review.candidate_status_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE VIEW review.current_candidate AS
+ SELECT c.id AS candidate_id,
+    c.case_key,
+    (c.candidate_type)::text AS candidate_type,
+    c.source,
+    c.title,
+    (s.status)::text AS status,
+    c.created_by,
+    c.recorded_at AS created_at
+   FROM (review.candidate c
+     JOIN review.candidate_status s ON ((s.candidate_id = c.id)))
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM review.candidate_status n
+          WHERE (n.supersedes_id = s.id))));
+
+COMMENT ON VIEW review.current_candidate IS 'The current OPEN or CLOSED status. A candidate is not a resolved borrower.';
+
+CREATE TABLE review.evidence_item (
+    id bigint NOT NULL,
+    candidate_id bigint NOT NULL,
+    origin review.evidence_origin NOT NULL,
+    source_type review.source_type NOT NULL,
+    title text NOT NULL,
+    source_url text,
+    document_date date,
+    retrieved_at timestamp with time zone,
+    relevant_excerpt text,
+    position_observation_id bigint,
+    filing_document_id bigint,
+    evidence_id bigint,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT evidence_item_created_by_check CHECK ((btrim(created_by) <> ''::text)),
+    CONSTRAINT evidence_item_external_shape CHECK (((origin <> 'EXTERNAL'::review.evidence_origin) OR ((source_url ~ '^https://[^[:space:]]+$'::text) AND (relevant_excerpt IS NOT NULL) AND (btrim(relevant_excerpt) <> ''::text) AND (retrieved_at IS NOT NULL) AND (evidence_id IS NULL) AND (filing_document_id IS NULL)))),
+    CONSTRAINT evidence_item_internal_shape CHECK (((origin <> 'INTERNAL'::review.evidence_origin) OR ((source_url IS NULL) AND (relevant_excerpt IS NULL) AND (retrieved_at IS NULL) AND (num_nonnulls(position_observation_id, filing_document_id, evidence_id) >= 1)))),
+    CONSTRAINT evidence_item_origin_type CHECK ((((origin = 'INTERNAL'::review.evidence_origin) AND (source_type = 'INTERNAL_SEC_FILING'::review.source_type)) OR ((origin = 'EXTERNAL'::review.evidence_origin) AND (source_type <> 'INTERNAL_SEC_FILING'::review.source_type)))),
+    CONSTRAINT evidence_item_title_check CHECK ((btrim(title) <> ''::text))
+);
+
+COMMENT ON TABLE review.evidence_item IS 'A citation. INTERNAL references stored provenance. EXTERNAL is a researcher-added source and is not ingested.';
+
+COMMENT ON COLUMN review.evidence_item.relevant_excerpt IS 'Required for a researcher-added source. Null for internal items so stored evidence text is not copied.';
+
+ALTER TABLE review.evidence_item ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME review.evidence_item_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE VIEW review.evidence_item_read AS
+ SELECT i.id AS evidence_item_id,
+    i.candidate_id,
+    (i.origin)::text AS origin,
+    (i.source_type)::text AS source_type,
+    i.title,
+    COALESCE(i.source_url, d.document_url) AS source_url,
+    d.document_name,
+    i.document_date,
+    i.retrieved_at,
+    i.relevant_excerpt,
+    p.holding_descriptor_raw AS stored_line_text,
+    i.position_observation_id,
+    i.filing_document_id,
+    i.evidence_id,
+    (e.locator_type)::text AS locator_type,
+    e.html_row_ordinal,
+    e.html_slot_ordinal,
+    i.created_by,
+    i.recorded_at AS created_at,
+        CASE i.origin
+            WHEN 'EXTERNAL'::review.evidence_origin THEN 'RESEARCHER_ADDED_SOURCE'::text
+            ELSE 'STORED_SEC_SOURCE'::text
+        END AS source_trust
+   FROM (((review.evidence_item i
+     LEFT JOIN obs.position_observation p ON ((p.id = i.position_observation_id)))
+     LEFT JOIN registry.filing_document d ON ((d.id = i.filing_document_id)))
+     LEFT JOIN evidence.evidence e ON ((e.id = i.evidence_id)));
+
+COMMENT ON VIEW review.evidence_item_read IS 'Narrow provenance for a citation. Artifact bytes, storage keys, and checksums are not selected.';
+
+CREATE TABLE review.evidence_set (
+    id bigint NOT NULL,
+    candidate_id bigint NOT NULL,
+    title text NOT NULL,
+    description text,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT evidence_set_created_by_check CHECK ((btrim(created_by) <> ''::text)),
+    CONSTRAINT evidence_set_description_check CHECK (((description IS NULL) OR (btrim(description) <> ''::text))),
+    CONSTRAINT evidence_set_title_check CHECK ((btrim(title) <> ''::text))
+);
+
+COMMENT ON TABLE review.evidence_set IS 'A named collection for one research step. It stores no conclusion and no decision.';
+
+ALTER TABLE review.evidence_set ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME review.evidence_set_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE TABLE review.evidence_set_member (
+    id bigint NOT NULL,
+    evidence_set_id bigint NOT NULL,
+    evidence_item_id bigint NOT NULL,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT evidence_set_member_created_by_check CHECK ((btrim(created_by) <> ''::text))
+);
+
+COMMENT ON TABLE review.evidence_set_member IS 'Append-only membership. Removing an item is not granted.';
+
+ALTER TABLE review.evidence_set_member ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME review.evidence_set_member_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE VIEW review.evidence_set_member_read AS
+ SELECT evidence_set_id,
+    evidence_item_id,
+    created_by,
+    recorded_at AS created_at
+   FROM review.evidence_set_member m;
+
+CREATE VIEW review.evidence_set_read AS
+ SELECT id AS evidence_set_id,
+    candidate_id,
+    title,
+    description,
+    created_by,
+    recorded_at AS created_at
+   FROM review.evidence_set s;
+
+COMMENT ON VIEW review.evidence_set_read IS 'A research collection. It has no decision column.';
+
+CREATE TABLE review.researcher_note (
+    id bigint NOT NULL,
+    candidate_id bigint NOT NULL,
+    evidence_item_id bigint,
+    note_text text NOT NULL,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT researcher_note_created_by_check CHECK ((btrim(created_by) <> ''::text)),
+    CONSTRAINT researcher_note_note_text_check CHECK ((btrim(note_text) <> ''::text))
+);
+
+COMMENT ON TABLE review.researcher_note IS 'Researcher interpretation. It is not source evidence and it does not change an excerpt.';
+
+ALTER TABLE review.researcher_note ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME review.researcher_note_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE VIEW review.researcher_note_read AS
+ SELECT id AS note_id,
+    candidate_id,
+    evidence_item_id,
+    note_text,
+    created_by,
+    recorded_at AS created_at
+   FROM review.researcher_note n;
+
+COMMENT ON VIEW review.researcher_note_read IS 'Researcher interpretation. The note text is not an excerpt.';
+
 ALTER TABLE validation.evidence_status_assertion ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME validation.evidence_status_assertion_id_seq
     START WITH 1
@@ -5118,6 +5666,36 @@ ALTER TABLE ONLY resolution.match_candidate
 ALTER TABLE ONLY resolution.position_continuity_decision
     ADD CONSTRAINT position_continuity_decision_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY review.candidate
+    ADD CONSTRAINT candidate_case_key_key UNIQUE (case_key);
+
+ALTER TABLE ONLY review.candidate_member
+    ADD CONSTRAINT candidate_member_candidate_id_position_observation_id_key UNIQUE (candidate_id, position_observation_id);
+
+ALTER TABLE ONLY review.candidate_member
+    ADD CONSTRAINT candidate_member_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY review.candidate
+    ADD CONSTRAINT candidate_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY review.candidate_status
+    ADD CONSTRAINT candidate_status_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY review.evidence_item
+    ADD CONSTRAINT evidence_item_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY review.evidence_set_member
+    ADD CONSTRAINT evidence_set_member_evidence_set_id_evidence_item_id_key UNIQUE (evidence_set_id, evidence_item_id);
+
+ALTER TABLE ONLY review.evidence_set_member
+    ADD CONSTRAINT evidence_set_member_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY review.evidence_set
+    ADD CONSTRAINT evidence_set_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY review.researcher_note
+    ADD CONSTRAINT researcher_note_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY validation.evidence_status_assertion
     ADD CONSTRAINT evidence_status_assertion_pkey PRIMARY KEY (id);
 
@@ -5205,6 +5783,10 @@ CREATE UNIQUE INDEX instrument_resolution_decision_supersedes_once ON resolution
 CREATE INDEX position_continuity_decision_subject_idx ON resolution.position_continuity_decision USING btree (position_observation_id);
 
 CREATE UNIQUE INDEX position_continuity_decision_supersedes_once ON resolution.position_continuity_decision USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
+
+CREATE INDEX candidate_status_subject_idx ON review.candidate_status USING btree (candidate_id);
+
+CREATE UNIQUE INDEX candidate_status_supersedes_once ON review.candidate_status USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
 CREATE INDEX evidence_status_assertion_subject_idx ON validation.evidence_status_assertion USING btree (field_value_id);
 
@@ -5595,6 +6177,46 @@ CREATE TRIGGER check_supersession BEFORE INSERT ON resolution.group_membership_d
 CREATE TRIGGER check_supersession BEFORE INSERT ON resolution.instrument_resolution_decision FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('position_observation_id,position_observation_group_id', 'single_chain');
 
 CREATE TRIGGER check_supersession BEFORE INSERT ON resolution.position_continuity_decision FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('position_observation_id', 'single_chain');
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON review.candidate FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON review.candidate_member FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON review.candidate_status FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON review.evidence_item FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON review.evidence_set FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON review.evidence_set_member FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON review.researcher_note FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON review.candidate FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON review.candidate_member FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON review.candidate_status FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON review.evidence_item FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON review.evidence_set FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON review.evidence_set_member FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON review.researcher_note FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER check_candidate_member BEFORE INSERT ON review.candidate_member FOR EACH ROW EXECUTE FUNCTION review.check_candidate_member();
+
+CREATE TRIGGER check_candidate_status BEFORE INSERT ON review.candidate_status FOR EACH ROW EXECUTE FUNCTION review.check_candidate_status();
+
+CREATE TRIGGER check_evidence_item BEFORE INSERT ON review.evidence_item FOR EACH ROW EXECUTE FUNCTION review.check_evidence_item();
+
+CREATE TRIGGER check_evidence_set_member BEFORE INSERT ON review.evidence_set_member FOR EACH ROW EXECUTE FUNCTION review.check_evidence_set_member();
+
+CREATE TRIGGER check_researcher_note BEFORE INSERT ON review.researcher_note FOR EACH ROW EXECUTE FUNCTION review.check_researcher_note();
+
+CREATE TRIGGER check_supersession BEFORE INSERT ON review.candidate_status FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('candidate_id', 'single_chain');
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON validation.evidence_status_assertion FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -6300,6 +6922,48 @@ ALTER TABLE ONLY resolution.position_continuity_decision
 ALTER TABLE ONLY resolution.position_continuity_decision
     ADD CONSTRAINT position_continuity_decision_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES resolution.position_continuity_decision(id);
 
+ALTER TABLE ONLY review.candidate_member
+    ADD CONSTRAINT candidate_member_borrower_name_observation_id_fkey FOREIGN KEY (borrower_name_observation_id) REFERENCES obs.borrower_name_observation(id);
+
+ALTER TABLE ONLY review.candidate_member
+    ADD CONSTRAINT candidate_member_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES review.candidate(id);
+
+ALTER TABLE ONLY review.candidate_member
+    ADD CONSTRAINT candidate_member_position_observation_id_fkey FOREIGN KEY (position_observation_id) REFERENCES obs.position_observation(id);
+
+ALTER TABLE ONLY review.candidate_status
+    ADD CONSTRAINT candidate_status_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES review.candidate(id);
+
+ALTER TABLE ONLY review.candidate_status
+    ADD CONSTRAINT candidate_status_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES review.candidate_status(id);
+
+ALTER TABLE ONLY review.evidence_item
+    ADD CONSTRAINT evidence_item_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES review.candidate(id);
+
+ALTER TABLE ONLY review.evidence_item
+    ADD CONSTRAINT evidence_item_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
+
+ALTER TABLE ONLY review.evidence_item
+    ADD CONSTRAINT evidence_item_filing_document_id_fkey FOREIGN KEY (filing_document_id) REFERENCES registry.filing_document(id);
+
+ALTER TABLE ONLY review.evidence_item
+    ADD CONSTRAINT evidence_item_position_observation_id_fkey FOREIGN KEY (position_observation_id) REFERENCES obs.position_observation(id);
+
+ALTER TABLE ONLY review.evidence_set
+    ADD CONSTRAINT evidence_set_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES review.candidate(id);
+
+ALTER TABLE ONLY review.evidence_set_member
+    ADD CONSTRAINT evidence_set_member_evidence_item_id_fkey FOREIGN KEY (evidence_item_id) REFERENCES review.evidence_item(id);
+
+ALTER TABLE ONLY review.evidence_set_member
+    ADD CONSTRAINT evidence_set_member_evidence_set_id_fkey FOREIGN KEY (evidence_set_id) REFERENCES review.evidence_set(id);
+
+ALTER TABLE ONLY review.researcher_note
+    ADD CONSTRAINT researcher_note_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES review.candidate(id);
+
+ALTER TABLE ONLY review.researcher_note
+    ADD CONSTRAINT researcher_note_evidence_item_id_fkey FOREIGN KEY (evidence_item_id) REFERENCES review.evidence_item(id);
+
 ALTER TABLE ONLY validation.evidence_status_assertion
     ADD CONSTRAINT evidence_status_assertion_field_value_id_fkey FOREIGN KEY (field_value_id) REFERENCES obs.position_field_value(id);
 
@@ -6351,6 +7015,9 @@ GRANT USAGE ON SCHEMA registry TO bdc_reader;
 GRANT USAGE ON SCHEMA resolution TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA resolution TO bdc_reader;
 
+GRANT USAGE ON SCHEMA review TO review_writer;
+GRANT USAGE ON SCHEMA review TO bdc_reader;
+
 GRANT USAGE ON SCHEMA validation TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA validation TO bdc_reader;
 
@@ -6384,6 +7051,32 @@ GRANT ALL ON FUNCTION registry.portfolio_detail_names(p_cik text) TO bdc_reader;
 
 REVOKE ALL ON FUNCTION registry.portfolio_detail_registrant(p_cik text) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.portfolio_detail_registrant(p_cik text) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION review.add_evidence_set(p_candidate_id bigint, p_title text, p_description text, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.add_evidence_set(p_candidate_id bigint, p_title text, p_description text, p_created_by text) TO review_writer;
+
+REVOKE ALL ON FUNCTION review.add_external_evidence(p_candidate_id bigint, p_source_type text, p_title text, p_source_url text, p_document_date date, p_relevant_excerpt text, p_position_observation_id bigint, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.add_external_evidence(p_candidate_id bigint, p_source_type text, p_title text, p_source_url text, p_document_date date, p_relevant_excerpt text, p_position_observation_id bigint, p_created_by text) TO review_writer;
+
+REVOKE ALL ON FUNCTION review.add_internal_evidence(p_candidate_id bigint, p_title text, p_position_observation_id bigint, p_filing_document_id bigint, p_evidence_id bigint, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.add_internal_evidence(p_candidate_id bigint, p_title text, p_position_observation_id bigint, p_filing_document_id bigint, p_evidence_id bigint, p_created_by text) TO review_writer;
+
+REVOKE ALL ON FUNCTION review.add_member(p_candidate_id bigint, p_position_observation_id bigint, p_borrower_name_observation_id bigint, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.add_member(p_candidate_id bigint, p_position_observation_id bigint, p_borrower_name_observation_id bigint, p_created_by text) TO review_writer;
+
+REVOKE ALL ON FUNCTION review.add_note(p_candidate_id bigint, p_evidence_item_id bigint, p_note_text text, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.add_note(p_candidate_id bigint, p_evidence_item_id bigint, p_note_text text, p_created_by text) TO review_writer;
+
+REVOKE ALL ON FUNCTION review.add_set_member(p_evidence_set_id bigint, p_evidence_item_id bigint, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.add_set_member(p_evidence_set_id bigint, p_evidence_item_id bigint, p_created_by text) TO review_writer;
+
+REVOKE ALL ON FUNCTION review.assert_writer() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION review.open_candidate(p_case_key text, p_candidate_type text, p_source text, p_title text, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.open_candidate(p_case_key text, p_candidate_type text, p_source text, p_title text, p_created_by text) TO review_writer;
+
+REVOKE ALL ON FUNCTION review.set_candidate_status(p_candidate_id bigint, p_status text, p_reason text, p_created_by text) FROM PUBLIC;
+GRANT ALL ON FUNCTION review.set_candidate_status(p_candidate_id bigint, p_status text, p_reason text, p_created_by text) TO review_writer;
 
 GRANT SELECT,INSERT ON TABLE derived.derived_value TO bdc_pipeline_writer;
 
@@ -6759,6 +7452,52 @@ GRANT USAGE ON SEQUENCE resolution.match_candidate_comparison_id_seq TO bdc_pipe
 GRANT USAGE ON SEQUENCE resolution.match_candidate_id_seq TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE resolution.position_continuity_decision_id_seq TO bdc_pipeline_writer;
+
+GRANT INSERT ON TABLE review.candidate TO review_writer;
+
+GRANT USAGE ON SEQUENCE review.candidate_id_seq TO review_writer;
+
+GRANT INSERT ON TABLE review.candidate_member TO review_writer;
+
+GRANT USAGE ON SEQUENCE review.candidate_member_id_seq TO review_writer;
+
+GRANT SELECT ON TABLE review.candidate_member_read TO bdc_reader;
+GRANT SELECT ON TABLE review.candidate_member_read TO review_writer;
+
+GRANT INSERT ON TABLE review.candidate_status TO review_writer;
+
+GRANT USAGE ON SEQUENCE review.candidate_status_id_seq TO review_writer;
+
+GRANT SELECT ON TABLE review.current_candidate TO bdc_reader;
+GRANT SELECT ON TABLE review.current_candidate TO review_writer;
+
+GRANT INSERT ON TABLE review.evidence_item TO review_writer;
+
+GRANT USAGE ON SEQUENCE review.evidence_item_id_seq TO review_writer;
+
+GRANT SELECT ON TABLE review.evidence_item_read TO bdc_reader;
+GRANT SELECT ON TABLE review.evidence_item_read TO review_writer;
+
+GRANT INSERT ON TABLE review.evidence_set TO review_writer;
+
+GRANT USAGE ON SEQUENCE review.evidence_set_id_seq TO review_writer;
+
+GRANT INSERT ON TABLE review.evidence_set_member TO review_writer;
+
+GRANT USAGE ON SEQUENCE review.evidence_set_member_id_seq TO review_writer;
+
+GRANT SELECT ON TABLE review.evidence_set_member_read TO bdc_reader;
+GRANT SELECT ON TABLE review.evidence_set_member_read TO review_writer;
+
+GRANT SELECT ON TABLE review.evidence_set_read TO bdc_reader;
+GRANT SELECT ON TABLE review.evidence_set_read TO review_writer;
+
+GRANT INSERT ON TABLE review.researcher_note TO review_writer;
+
+GRANT USAGE ON SEQUENCE review.researcher_note_id_seq TO review_writer;
+
+GRANT SELECT ON TABLE review.researcher_note_read TO bdc_reader;
+GRANT SELECT ON TABLE review.researcher_note_read TO review_writer;
 
 GRANT USAGE ON SEQUENCE validation.evidence_status_assertion_id_seq TO bdc_pipeline_writer;
 

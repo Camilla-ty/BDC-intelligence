@@ -44,15 +44,15 @@ SELECT pg_temp.check('writer has INSERT on every history table except ref, the l
 
 SELECT pg_temp.check('no application role has UPDATE, DELETE, or TRUNCATE on any layer table', NOT EXISTS (
   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  CROSS JOIN (VALUES ('bdc_pipeline_writer'), ('bdc_reader')) AS r (role)
+  CROSS JOIN (VALUES ('bdc_pipeline_writer'), ('bdc_reader'), ('review_writer')) AS r (role)
   WHERE c.relkind IN ('r', 'v')
-    AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref')
+    AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review')
     AND (has_table_privilege(r.role, c.oid, 'UPDATE') OR has_table_privilege(r.role, c.oid, 'DELETE')
          OR has_table_privilege(r.role, c.oid, 'TRUNCATE'))));
 
 SELECT pg_temp.check('reader has SELECT on no base table and on every view', NOT EXISTS (
   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref')
+  WHERE n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review')
     AND ((c.relkind = 'r' AND has_table_privilege('bdc_reader', c.oid, 'SELECT'))
       OR (c.relkind = 'v' AND NOT has_table_privilege('bdc_reader', c.oid, 'SELECT')))));
 
