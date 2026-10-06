@@ -162,8 +162,11 @@ function reportedValue(state: string, raw: string | null): string {
 }
 
 // REPORTED_STRUCTURED and FILING_DISPLAYED carry a disclosed calendar day.
-// REPORTED carries a disclosed month from the case reader. The raw text is the value.
-const DATED_MATURITY_SOURCE = new Set(["REPORTED_STRUCTURED", "FILING_DISPLAYED", "REPORTED"]);
+// REPORTED, REPORTED_MONTH, and FILING_MONTH carry disclosed month text. The raw
+// text is the value. None of these strings is parsed into a calendar day here.
+const DATED_MATURITY_SOURCE = new Set([
+  "REPORTED_STRUCTURED", "FILING_DISPLAYED", "REPORTED", "REPORTED_MONTH", "FILING_MONTH",
+]);
 
 export function maturityValue(source: string, raw: string | null): string {
   if (DATED_MATURITY_SOURCE.has(source) && raw != null && raw.trim() !== "") return raw;
@@ -175,7 +178,8 @@ export function maturitySourceLabel(source: string, filingVerified: boolean): st
   if (source === "REPORTED_STRUCTURED") {
     return filingVerified ? "Structured SEC data set; the original EDGAR filing shows the same date" : "Structured SEC data set";
   }
-  if (source === "FILING_DISPLAYED") return "Original EDGAR filing";
+  if (source === "FILING_DISPLAYED" || source === "FILING_MONTH") return "Original EDGAR filing";
+  if (source === "REPORTED_MONTH") return "Structured SEC data set";
   return null;
 }
 

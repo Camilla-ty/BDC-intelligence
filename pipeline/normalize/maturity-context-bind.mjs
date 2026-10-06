@@ -4,6 +4,7 @@
 // not used. A displayed maturity date is read after the context is bound. A two-digit
 // year is kept as raw text and is not normalized.
 
+import { normalizeDisclosedDate } from "./date-heading.mjs";
 import { listIxContextRows } from "./ix-context-row.mjs";
 
 const CONCEPT_FIELD = {
@@ -146,36 +147,65 @@ function maturityCandidates(row) {
     for (const fact of tagged) {
       if (!byText.has(fact.text)) byText.set(fact.text, fact.id);
     }
-    return [...byText.entries()].map(([raw, factId]) => ({
-      raw,
-      normalized: normalizeDisplayedDate(raw),
-      factId,
-    }));
+    return {
+      monthSelectable: true,
+      candidates: [...byText.entries()].map(([raw, factId]) => ({
+        raw,
+        normalized: normalizeDisplayedDate(raw),
+        factId,
+      })),
+    };
   }
   if (typeof row.maturityColumn === "number") {
     const inColumn = (row.datePlacements ?? []).filter((placement) => placement.startColumn === row.maturityColumn);
     const fullDates = inColumn.filter((placement) => FOUR_DIGIT_DATE.test(placement.raw));
-    return placedCandidates(fullDates.length > 0 ? fullDates : inColumn);
+    return {
+      monthSelectable: true,
+      candidates: placedCandidates(fullDates.length > 0 ? fullDates : inColumn),
+    };
   }
   if (row.untaggedDates.length > 0) {
-    return textCandidates(withoutAcquisitionColumn(row, row.untaggedDates), normalizeDisplayedDate);
+    return {
+      monthSelectable: false,
+      candidates: textCandidates(withoutAcquisitionColumn(row, row.untaggedDates), normalizeDisplayedDate),
+    };
   }
-  return textCandidates(withoutAcquisitionColumn(row, row.untaggedMonthYears ?? []), () => null);
+  return {
+    monthSelectable: false,
+    candidates: textCandidates(withoutAcquisitionColumn(row, row.untaggedMonthYears ?? []), () => null),
+  };
 }
 
-function outcomeFromCandidates(candidates) {
+// A month/year is selected only from a maturity column or a tagged maturity fact.
+// An untagged month with no maturity header stays an unresolved candidate.
+function outcomeFromCandidates(candidates, monthSelectable) {
   if (candidates.length === 0) {
-    return { outcome: "UNAVAILABLE", rawValue: null, normalizedDate: null, candidates: [] };
+    return { outcome: "UNAVAILABLE", rawValue: null, normalizedDate: null, displayedYear: null, displayedMonth: null, candidates: [] };
   }
   if (candidates.length === 1 && candidates[0].normalized) {
     return {
       outcome: "FILING_DISPLAYED",
       rawValue: candidates[0].raw,
       normalizedDate: candidates[0].normalized,
+      displayedYear: null,
+      displayedMonth: null,
       candidates: [],
     };
   }
-  return { outcome: "UNRESOLVED", rawValue: null, normalizedDate: null, candidates };
+  if (candidates.length === 1 && monthSelectable) {
+    const month = normalizeDisclosedDate(candidates[0].raw);
+    if (month.accepted && month.precision === "MONTH" && month.year >= 1000 && month.year <= 9999) {
+      return {
+        outcome: "FILING_MONTH",
+        rawValue: candidates[0].raw,
+        normalizedDate: null,
+        displayedYear: month.year,
+        displayedMonth: month.month,
+        candidates: [],
+      };
+    }
+  }
+  return { outcome: "UNRESOLVED", rawValue: null, normalizedDate: null, displayedYear: null, displayedMonth: null, candidates };
 }
 
 // The SOI reported date (ddate) is documented as rounded to month end; the context period
@@ -226,13 +256,16 @@ export function bindMaturityContextRows(rows, fields, reportedDate) {
     const name = localName(fact.name);
     return CONCEPT_FIELD[name] || name === MATURITY_CONCEPT;
   });
-  const dated = outcomeFromCandidates(maturityCandidates(matches[0]));
+  const selected = maturityCandidates(matches[0]);
+  const dated = outcomeFromCandidates(selected.candidates, selected.monthSelectable);
   return {
     outcome: dated.outcome,
     contextId,
     facts: evidenceFacts,
     rawValue: dated.rawValue,
     normalizedDate: dated.normalizedDate,
+    displayedYear: dated.displayedYear,
+    displayedMonth: dated.displayedMonth,
     candidates: dated.candidates,
     reason: null,
   };

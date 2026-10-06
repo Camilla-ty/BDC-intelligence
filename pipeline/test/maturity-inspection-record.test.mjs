@@ -43,6 +43,8 @@ test("a first-ever NOT_BOUND supersedes nothing", () => {
     state: "NOT_BOUND",
     contextId: null,
     rawValue: null,
+    displayedYear: null,
+    displayedMonth: null,
     noBindReason: "NO_MATCH",
     supersedesId: null,
     supersedeReason: null,
@@ -113,6 +115,36 @@ test("an unbound result without a valid reason is an error, not NOT_BOUND", () =
   assert.equal(recorded.errors[0].positionId, 301);
   assert.match(recorded.errors[0].message, /no recognised no-bind reason/);
   assert.match(formatInspectionErrors(recorded.errors), /position 301: /);
+});
+
+test("a filing month supersedes an unresolved head without reusing that head", () => {
+  const plan = planInspection({
+    outcome: "FILING_MONTH",
+    contextId: "c-16",
+    facts: [{ id: "f-1" }],
+    rawValue: "12/2028",
+    normalizedDate: null,
+    displayedYear: 2028,
+    displayedMonth: 12,
+    candidates: [],
+    reason: null,
+  }, {
+    id: 45,
+    state: "UNRESOLVED",
+    contextId: "c-16",
+    rawValue: null,
+    displayedYear: null,
+    displayedMonth: null,
+    noBindReason: null,
+    ruleId: 2,
+  }, { ruleId: 3, ruleVersion: "3" });
+  assert.equal(plan.action, "insert");
+  assert.equal(plan.state, "FILING_MONTH");
+  assert.equal(plan.supersedesId, 45);
+  assert.equal(plan.rawValue, "12/2028");
+  assert.equal(plan.displayedYear, 2028);
+  assert.equal(plan.displayedMonth, 12);
+  assert.equal(plan.normalizedDate, undefined);
 });
 
 test("a filing with a planning error is refused before any publication statement", () => {

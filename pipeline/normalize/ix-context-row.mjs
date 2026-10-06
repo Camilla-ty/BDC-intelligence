@@ -205,8 +205,16 @@ function soleStartColumn(cells, predicate) {
   return [...starts][0];
 }
 
+// Whole-cell equality. "Maturity Date" is not a maturity header. A second distinct
+// maturity header in the same table fails closed through soleStartColumn.
+function isMaturityHeader(text) {
+  return text === "Maturity" || text === "Maturity/Expiration Date";
+}
+
+// "Purchase Date" is an acquisition header only. It has no numbered-suffix form.
+// "Acquisition Date" keeps its existing numbered suffix.
 function isAcquisitionHeader(text) {
-  return /^Acquisition Date(?: \d+)?$/.test(text);
+  return text === "Purchase Date" || /^Acquisition Date(?: \d+)?$/.test(text);
 }
 
 function datePlacementsFor(cells) {
@@ -251,7 +259,7 @@ export function listIxContextRows(html) {
   tables.forEach(([start, end], tableIndex) => {
     const entries = rowEntries(source.slice(start, end));
     const expanded = expandTableRows(entries.map((entry) => entry.html));
-    const maturityColumn = soleStartColumn(expanded.flat(), (cell) => cell.text === "Maturity");
+    const maturityColumn = soleStartColumn(expanded.flat(), (cell) => isMaturityHeader(cell.text));
     const acquisitionColumn = soleStartColumn(expanded.flat(), (cell) => isAcquisitionHeader(cell.text));
     entries.forEach((entry, index) => {
       const row = listedRow(entry.html, {

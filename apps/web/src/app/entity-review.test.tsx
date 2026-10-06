@@ -284,7 +284,7 @@ describe("entity review candidate", () => {
         },
       ],
       maturity: [
-        { position_observation_id: "9000000001", maturity_source: "REPORTED", maturity_raw: "12/2099" },
+        { position_observation_id: "9000000001", maturity_source: "REPORTED_MONTH", maturity_raw: "12/2099" },
         { position_observation_id: "9000000002", maturity_source: "REPORTED_STRUCTURED", maturity_raw: "1/2/2099" },
         { position_observation_id: "9000000003", maturity_source: "UNKNOWN", maturity_raw: null },
       ],
@@ -319,6 +319,16 @@ describe("entity review candidate", () => {
     });
     expect(invented.groups[0]?.observations[0]?.maturity).toBe("Unresolved");
     expect(invented.groups[0]?.observations[0]?.maturity).not.toBe("2099-12-01");
+
+    const filingMonth = assembleReview(candidate(["TEST SOURCE A"]), {
+      ...emptyPayload(),
+      lines: [line({ position_observation_id: "9000000005", accession_number: "0000000000-99-000005" })],
+      fields: [],
+      maturity: [{ position_observation_id: "9000000005", maturity_source: "FILING_MONTH", maturity_raw: "12/2028" }],
+    });
+    expect(filingMonth.groups[0]?.observations[0]?.maturity).toBe("12/2028");
+    expect(filingMonth.groups[0]?.observations[0]?.maturity).not.toBe("2028-12-01");
+    expect(filingMonth.groups[0]?.observations[0]?.maturity).not.toBe("2028-12-31");
   });
 
   it("reads the stored case and rejects a case key that could change SQL", () => {

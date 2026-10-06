@@ -135,7 +135,7 @@ test("maturity-inspect selects positions by accession, links the filing HTML, an
     database: dbName, accessions: [FAKE.acc], dataDir, client: stubClient(seen), sessionId: "TEST-ONLY-MI", log: () => {},
   });
   assert.deepEqual(seen, [DOC_URL]);
-  assert.equal(first.rule_version, "2");
+  assert.equal(first.rule_version, "3");
   assert.equal(first.accessions.length, 1);
   assert.equal(first.accessions[0].positions, 3);
   assert.deepEqual(first.accessions[0].actions, {

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createStore } from "../lib/store.mjs";
+import { DEFAULT_DATA_DIR } from "../lib/config.mjs";
+import { normalizeDateHeading } from "../normalize/date-heading.mjs";
 import { listIxContextRows } from "../normalize/ix-context-row.mjs";
 import {
   NO_BIND_REASON, bindMaturityContext, bindMaturityContextRows, normalizeDisplayedDate, rejectSharedContextBinds,
@@ -726,6 +729,119 @@ test("a multi-context affiliates row is never a binding candidate, and its perio
   ], MARCH);
   assert.equal(openingOnly.outcome, "UNKNOWN");
   assert.equal(openingOnly.reason, "no context matched every comparable field");
+});
+
+test("exact Maturity and 4/13/2029 is a calendar date", () => {
+  const html = `<table><tr>${td("Maturity")}</tr><tr>${td("4/13/2029")}${PRINCIPAL_FACT}</tr></table>`;
+  const bound = bind(html, PRINCIPAL_FIELD);
+  assert.equal(bound.outcome, "FILING_DISPLAYED");
+  assert.equal(bound.rawValue, "4/13/2029");
+  assert.equal(bound.normalizedDate, "2029-04-13");
+  assert.equal(bound.displayedYear, null);
+  assert.equal(bound.displayedMonth, null);
+});
+
+test("Maturity/Expiration Date selects the month and Purchase Date does not", () => {
+  const html = `<table><tr>${td("Purchase Date")}${td("Maturity/Expiration Date")}</tr><tr>${td("10/2023")}${td("12/2028")}${PRINCIPAL_FACT}</tr></table>`;
+  const row = listed(html);
+  assert.equal(placement(row, "10/2023").startColumn, row.acquisitionColumn);
+  assert.equal(placement(row, "12/2028").startColumn, row.maturityColumn);
+  const bound = bind(html, PRINCIPAL_FIELD);
+  assert.equal(bound.outcome, "FILING_MONTH");
+  assert.equal(bound.rawValue, "12/2028");
+  assert.equal(bound.normalizedDate, null);
+  assert.equal(bound.displayedYear, 2028);
+  assert.equal(bound.displayedMonth, 12);
+  assert.deepEqual(bound.candidates, []);
+});
+
+test("Purchase Date has no numbered suffix and Maturity Date stays unrecognized", () => {
+  const html = `<table><tr>${td("Purchase Date 2")}${td("Maturity Date")}</tr><tr>${td("10/2023")}${td("12/2028")}${PRINCIPAL_FACT}</tr></table>`;
+  const row = listed(html);
+  assert.equal(row.acquisitionColumn, null);
+  assert.equal(row.maturityColumn, null);
+  const bound = bind(html, PRINCIPAL_FIELD);
+  assert.equal(bound.outcome, "UNRESOLVED");
+  assert.equal(bound.rawValue, null);
+  assert.equal(bound.normalizedDate, null);
+  assert.deepEqual(bound.candidates.map((candidate) => candidate.raw), ["10/2023", "12/2028"]);
+});
+
+test("Acquisition Date with a numbered suffix still excludes that date", () => {
+  const html = `<table><tr>${td("Acquisition Date 14")}${td("Maturity")}</tr><tr>${td("4/15/2024")}${td("4/13/2029")}${PRINCIPAL_FACT}</tr></table>`;
+  const row = listed(html);
+  assert.equal(placement(row, "4/15/2024").startColumn, row.acquisitionColumn);
+  const bound = bind(html, PRINCIPAL_FIELD);
+  assert.equal(bound.outcome, "FILING_DISPLAYED");
+  assert.equal(bound.rawValue, "4/13/2029");
+  assert.equal(bound.normalizedDate, "2029-04-13");
+});
+
+test("two dates in the maturity column stay unresolved", () => {
+  const html = `<table><tr>${td("Maturity/Expiration Date")}</tr><tr>${td("12/2028 11/2027")}${PRINCIPAL_FACT}</tr></table>`;
+  const bound = bind(html, PRINCIPAL_FIELD);
+  assert.equal(bound.outcome, "UNRESOLVED");
+  assert.equal(bound.rawValue, null);
+  assert.equal(bound.normalizedDate, null);
+  assert.deepEqual(bound.candidates.map((candidate) => candidate.raw), ["12/2028", "11/2027"]);
+});
+
+test("competing maturity headers fail closed", () => {
+  const html = `<table><tr>${td("Maturity")}${td("Maturity/Expiration Date")}</tr><tr>${td("4/13/2029")}${td("5/1/2030")}${PRINCIPAL_FACT}</tr></table>`;
+  const row = listed(html);
+  assert.equal(row.maturityColumn, null);
+  const bound = bind(html, PRINCIPAL_FIELD);
+  assert.equal(bound.outcome, "UNRESOLVED");
+  assert.equal(bound.rawValue, null);
+});
+
+test("a purchase month beside an unrecognized maturity header is not selected", () => {
+  const html = `<table><tr>${td("Purchase Date")}${td("Notes")}</tr><tr>${td("10/2023")}${PRINCIPAL_FACT}</tr></table>`;
+  const row = listed(html);
+  assert.equal(typeof row.acquisitionColumn, "number");
+  assert.equal(row.maturityColumn, null);
+  const bound = bind(html, PRINCIPAL_FIELD);
+  assert.equal(bound.outcome, "UNAVAILABLE");
+  assert.equal(bound.rawValue, null);
+  assert.deepEqual(bound.candidates, []);
+});
+
+test("the maturity and purchase headers are the norm.date_heading v1 strings", () => {
+  const heading = (raw) => ({
+    artifactId: 1, rowOrdinal: 1, slotOrdinal: 1, rawText: raw, matchedText: raw,
+  });
+  assert.equal(normalizeDateHeading([heading("Purchase Date")]).fieldCode, "ACQUISITION_DATE");
+  assert.equal(normalizeDateHeading([heading("Maturity/Expiration Date")]).fieldCode, "MATURITY_DATE");
+  assert.equal(normalizeDateHeading([heading("Maturity Date")]).accepted, false);
+});
+
+test("stored accession 0001976719-24-000003 selects the maturity month", (t) => {
+  const sha = "310d5cfeb4464a2546ca61fe4a4c68a02f611acf91fe88571cbc646b7600767a";
+  let html;
+  try {
+    html = createStore(DEFAULT_DATA_DIR).read(`raw/sha256/31/${sha}`, sha).toString("utf8");
+  } catch {
+    t.skip("stored filing artifact is not present");
+    return;
+  }
+  const row = listIxContextRows(html).find((item) => item.contextIds.length === 1 && item.contextIds[0] === "c-16");
+  assert.ok(row);
+  assert.equal(row.datePlacements.find((item) => item.startColumn === row.acquisitionColumn)?.raw, "10/2023");
+  assert.equal(row.datePlacements.find((item) => item.startColumn === row.maturityColumn)?.raw, "12/2028");
+  const fact = row.facts.find((item) => item.name.endsWith(":InvestmentInterestRate"));
+  assert.ok(fact);
+  const scale = Number(fact.scale ?? "0");
+  const [whole, fraction = ""] = fact.text.replace(/,/g, "").split(".");
+  const digits = `${whole}${fraction}`.replace(/^0+(?=\d)/, "");
+  const exponent = fraction.length - scale;
+  const raw = exponent === 0 ? digits : `0.${"0".repeat(exponent - digits.length)}${digits}`;
+  const bound = bindMaturityContextRows([row], [{ field_code: "INTEREST_RATE", raw_value: raw }], row.contextPeriodEnds[0]);
+  assert.equal(bound.outcome, "FILING_MONTH");
+  assert.equal(bound.rawValue, "12/2028");
+  assert.equal(bound.normalizedDate, null);
+  assert.equal(bound.displayedYear, 2028);
+  assert.equal(bound.displayedMonth, 12);
+  assert.notEqual(bound.rawValue, "10/2023");
 });
 
 test("a zero-value warrant keeps acquisition date and expiration prose out of maturity", () => {

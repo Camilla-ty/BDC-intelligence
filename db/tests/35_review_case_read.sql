@@ -102,9 +102,10 @@ SELECT pg_temp.check('the case reader is security definer with a pinned search p
   JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'registry' AND p.proname = 'review_case_read'));
 
-SELECT pg_temp.check('the case reader does not query the broad portfolio or maturity views',
-  NOT (pg_get_functiondef('registry.review_case_read(text)'::regprocedure)
-       ~ 'registry\.portfolio_line|registry\.maturity_read|obs\.maturity_provenance'));
+SELECT pg_temp.check('the case reader uses product provenance and not the broad portfolio views',
+  pg_get_functiondef('registry.review_case_read(text)'::regprocedure) ~ 'obs\.maturity_provenance'
+  AND NOT (pg_get_functiondef('registry.review_case_read(text)'::regprocedure)
+       ~ 'registry\.portfolio_line|registry\.maturity_read'));
 
 SELECT pg_temp.check('public cannot execute the case reader',
   NOT has_function_privilege('public', 'registry.review_case_read(text)', 'EXECUTE'));
@@ -422,7 +423,7 @@ SELECT pg_temp.expect_ok('bdc_reader can read a month-precision date', ARRAY[
   'RESET ROLE']);
 
 SELECT pg_temp.check('a month maturity stays reported and does not become a calendar day', (
-  SELECT item->>'maturity_source' = 'REPORTED'
+  SELECT item->>'maturity_source' = 'REPORTED_MONTH'
      AND item->>'maturity_raw' = '12/2099'
      AND item->>'maturity_raw' IS DISTINCT FROM '2099-12-01'
      AND item->>'maturity_raw' IS DISTINCT FROM '2099-12-31'

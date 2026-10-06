@@ -39,15 +39,19 @@ const FETCH_ACCESSIONS = new Set([
   "0001193125-26-348682",
 ]);
 
-export const RULE_VERSION = "2";
+export const RULE_VERSION = "3";
 
 const RULE_TEXT = [
   `pipeline.maturity_context_bind version ${RULE_VERSION}`,
   "Bind a position only when every comparable stored field equals a tagged fact on one context row.",
   "A context row is eligible only when its context period end (instant, or endDate of a duration) equals the position reported date as the same yyyy-mm-dd; no rounding.",
   "A fact with format ixt:fixed-zero displayed as an em dash is the number 0; any other fixed-zero display is not compared.",
+  "A maturity header is the whole cell Maturity or Maturity/Expiration Date. Maturity Date is not a maturity header.",
+  "An acquisition header is the whole cell Purchase Date, or Acquisition Date with its numbered suffix. Purchase Date is never a maturity.",
   "FILING_DISPLAYED stores one month/day/four-digit-year date.",
+  "FILING_MONTH stores one month/year from a maturity header or tagged maturity fact, with displayed_year and displayed_month. normalized_date stays null.",
   "A two-digit year stays raw on an UNRESOLVED candidate and is not normalized.",
+  "An untagged month with no maturity header stays an unresolved candidate.",
   "No context bind leaves the position UNKNOWN.",
 ].join("\n");
 
@@ -164,8 +168,11 @@ function inspectionStatements({ position, bound, plan, artifactId, ruleId, runId
   const candidateValues = (bound.candidates ?? []).map((candidate) => `(${lit(candidate.raw)}, ${
     candidate.normalized ? `DATE ${lit(candidate.normalized)}` : "NULL::date"
   }, ${candidate.factId ? lit(factId(candidate.factId)) : "NULL::text"})`).join(",");
-  const displayedRaw = plan.state === "FILING_DISPLAYED" ? lit(bound.rawValue) : "NULL";
+  const showsRaw = plan.state === "FILING_DISPLAYED" || plan.state === "FILING_MONTH";
+  const displayedRaw = showsRaw ? lit(bound.rawValue) : "NULL";
   const displayedDate = plan.state === "FILING_DISPLAYED" ? `DATE ${lit(bound.normalizedDate)}` : "NULL";
+  const displayedYear = plan.state === "FILING_MONTH" ? num(plan.displayedYear) : "NULL";
+  const displayedMonth = plan.state === "FILING_MONTH" ? num(plan.displayedMonth) : "NULL";
   const anchor = scratch("anchor", position.positionId);
   const fact = scratch("fact", position.positionId);
   const inspection = scratch("inspection", position.positionId);
@@ -193,9 +200,9 @@ FROM ${fact};
 WITH ins AS (
   INSERT INTO obs.maturity_inspection
     (position_observation_id, soi_row_observation_id, inspection_state, filing_context_id,
-     raw_value, normalized_date, evidence_id, rule_version_id, run_id, supersedes_id, supersede_reason)
+     raw_value, normalized_date, displayed_year, displayed_month, evidence_id, rule_version_id, run_id, supersedes_id, supersede_reason)
   SELECT ${num(position.positionId)}, ${num(position.originId)}, ${lit(plan.state)}, ${lit(context)},
-         ${displayedRaw}, ${displayedDate}, ${anchor}.id, ${num(ruleId)}, ${num(runId)}, ${supersedeColumns(plan)}
+         ${displayedRaw}, ${displayedDate}, ${displayedYear}, ${displayedMonth}, ${anchor}.id, ${num(ruleId)}, ${num(runId)}, ${supersedeColumns(plan)}
   FROM ${anchor}
   RETURNING id
 )
@@ -249,6 +256,8 @@ function sameOutcome(current, outcome) {
   return current.state === outcome.state
     && (current.contextId ?? null) === outcome.contextId
     && (current.rawValue ?? null) === outcome.rawValue
+    && (current.displayedYear ?? null) === (outcome.displayedYear ?? null)
+    && (current.displayedMonth ?? null) === (outcome.displayedMonth ?? null)
     && (current.noBindReason ?? null) === outcome.noBindReason;
 }
 
@@ -262,7 +271,9 @@ export function planInspection(bound, current, { ruleId, ruleVersion }) {
   const outcome = {
     state,
     contextId: state === "NOT_BOUND" ? null : bound.contextId,
-    rawValue: state === "FILING_DISPLAYED" ? bound.rawValue : null,
+    rawValue: state === "FILING_DISPLAYED" || state === "FILING_MONTH" ? bound.rawValue : null,
+    displayedYear: state === "FILING_MONTH" ? bound.displayedYear : null,
+    displayedMonth: state === "FILING_MONTH" ? bound.displayedMonth : null,
     noBindReason: state === "NOT_BOUND" ? noBindReasonOf(bound) : null,
   };
   if (current && current.ruleId === ruleId && sameOutcome(current, outcome)) {
@@ -359,17 +370,20 @@ export function loadCurrentInspections(database, positionIds) {
   const current = new Map();
   if (positionIds.length === 0) return current;
   const rows = queryRows(database, `SELECT i.position_observation_id, i.id, i.inspection_state::text,
-      i.filing_context_id, i.raw_value, i.no_bind_reason::text, i.rule_version_id
+      i.filing_context_id, i.raw_value, i.displayed_year::text, i.displayed_month::text,
+      i.no_bind_reason::text, i.rule_version_id
     FROM obs.maturity_inspection i
     WHERE i.position_observation_id IN (${positionIds.map(num).join(",")})
       AND NOT EXISTS (SELECT 1 FROM obs.maturity_inspection s WHERE s.supersedes_id = i.id)`);
-  for (const [positionId, id, state, context, raw, reason, ruleId] of rows) {
+  for (const [positionId, id, state, context, raw, year, month, reason, ruleId] of rows) {
     if (current.has(Number(positionId))) throw new Error(`position ${positionId} has more than one current inspection`);
     current.set(Number(positionId), {
       id: Number(id),
       state,
       contextId: context || null,
       rawValue: raw || null,
+      displayedYear: year === "" || year == null ? null : Number(year),
+      displayedMonth: month === "" || month == null ? null : Number(month),
       noBindReason: reason || null,
       ruleId: Number(ruleId),
     });

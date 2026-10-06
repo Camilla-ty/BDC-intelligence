@@ -173,7 +173,8 @@ CREATE TYPE ref.maturity_inspection_state AS ENUM (
     'FILING_DISPLAYED',
     'UNAVAILABLE',
     'UNRESOLVED',
-    'NOT_BOUND'
+    'NOT_BOUND',
+    'FILING_MONTH'
 );
 
 CREATE TYPE ref.maturity_no_bind_reason AS ENUM (
@@ -190,7 +191,9 @@ CREATE TYPE ref.maturity_provenance_state AS ENUM (
     'FILING_DISPLAYED',
     'UNAVAILABLE',
     'UNKNOWN',
-    'UNRESOLVED'
+    'UNRESOLVED',
+    'FILING_MONTH',
+    'REPORTED_MONTH'
 );
 
 COMMENT ON TYPE ref.maturity_provenance_state IS 'Source of the product maturity. Since 0025, UNAVAILABLE is not produced: an UNAVAILABLE inspection with no structured date is UNKNOWN, and inspection_state carries UNAVAILABLE.';
@@ -698,6 +701,8 @@ CREATE FUNCTION obs.check_maturity_inspection() RETURNS trigger
 DECLARE
   origin bigint;
   displayed date;
+  raw_month integer;
+  raw_year integer;
 BEGIN
   SELECT p.origin_soi_row_observation_id INTO origin
   FROM obs.position_observation p
@@ -707,7 +712,7 @@ BEGIN
       MESSAGE = 'maturity inspection must use the position origin SOI row';
   END IF;
 
-  IF NEW.inspection_state = 'NOT_BOUND' THEN
+  IF NEW.inspection_state::text = 'NOT_BOUND' THEN
     IF NOT EXISTS (
       SELECT 1
       FROM evidence.evidence e
@@ -743,7 +748,7 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF NEW.inspection_state = 'FILING_DISPLAYED' THEN
+  IF NEW.inspection_state::text = 'FILING_DISPLAYED' THEN
     IF NEW.raw_value !~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$' THEN
       RAISE EXCEPTION USING ERRCODE = 'BDCI1',
         MESSAGE = 'FILING_DISPLAYED raw_value must be a month/day/year date';
@@ -752,6 +757,27 @@ BEGIN
     IF NEW.normalized_date IS DISTINCT FROM displayed THEN
       RAISE EXCEPTION USING ERRCODE = 'BDCI1',
         MESSAGE = 'normalized_date must equal the displayed month/day/year';
+    END IF;
+  END IF;
+
+  IF NEW.inspection_state::text = 'FILING_MONTH' THEN
+    IF NEW.raw_value !~ '^[0-9]{1,2}/[0-9]{4}$' THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_MONTH raw_value must be a month/year';
+    END IF;
+    IF NEW.normalized_date IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_MONTH normalized_date must be null';
+    END IF;
+    raw_month := split_part(NEW.raw_value, '/', 1)::integer;
+    raw_year := split_part(NEW.raw_value, '/', 2)::integer;
+    IF NEW.displayed_month IS DISTINCT FROM raw_month OR NEW.displayed_year IS DISTINCT FROM raw_year THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_MONTH displayed month and year must equal the raw month/year';
+    END IF;
+    IF raw_month < 1 OR raw_month > 12 THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'FILING_MONTH month must be 1 through 12';
     END IF;
   END IF;
 
@@ -2107,63 +2133,10 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
   ),
   maturity_rows AS (
     SELECT m.position_observation_id,
-           b.provenance_state,
-           CASE b.provenance_state
-             WHEN 'REPORTED_STRUCTURED' THEN b.structured_raw
-             WHEN 'REPORTED' THEN b.structured_raw
-             WHEN 'FILING_DISPLAYED' THEN b.displayed_raw
-             ELSE NULL
-           END AS maturity_raw
+           mp.provenance_state::text AS provenance_state,
+           mp.maturity_raw
     FROM linked m
-    LEFT JOIN obs.maturity_inspection i
-      ON i.position_observation_id = m.position_observation_id
-     AND NOT EXISTS (
-       SELECT 1 FROM obs.maturity_inspection s WHERE s.supersedes_id = i.id
-     )
-    LEFT JOIN LATERAL (
-      SELECT count(fv.id)::integer AS n,
-             count(DISTINCT fv.normalized_date)::integer AS distinct_dates,
-             count(*) FILTER (
-               WHERE fv.date_precision = 'MONTH'
-                 AND fv.normalized_date IS NULL
-                 AND fv.normalized_year BETWEEN 1000 AND 9999
-                 AND fv.normalized_month BETWEEN 1 AND 12
-                 AND fv.raw_value IS NOT NULL
-             )::integer AS month_rows,
-             min(fv.normalized_date) AS maturity_date,
-             min(fv.raw_value) AS raw_value
-      FROM obs.position_field_value fv
-      WHERE fv.position_observation_id = m.position_observation_id
-        AND fv.field_code = 'MATURITY_DATE'
-        AND fv.value_state = 'REPORTED'
-        AND NOT EXISTS (
-          SELECT 1 FROM obs.position_field_value s WHERE s.supersedes_id = fv.id
-        )
-    ) structured ON true
-    CROSS JOIN LATERAL (
-      SELECT CASE
-               WHEN structured.n = 1 AND structured.distinct_dates = 1 AND (
-                 i.id IS NULL
-                 OR i.inspection_state IN ('NOT_BOUND', 'UNAVAILABLE')
-                 OR (i.inspection_state = 'FILING_DISPLAYED' AND i.normalized_date = structured.maturity_date)
-               ) THEN 'REPORTED_STRUCTURED'
-               WHEN structured.n = 1
-                AND structured.distinct_dates = 0
-                AND structured.month_rows = 1
-                AND (
-                  i.id IS NULL
-                  OR i.inspection_state IN ('NOT_BOUND', 'UNAVAILABLE')
-                ) THEN 'REPORTED'
-               WHEN structured.n = 0 AND (
-                 i.id IS NULL OR i.inspection_state IN ('NOT_BOUND', 'UNAVAILABLE')
-               ) THEN 'UNKNOWN'
-               WHEN structured.n = 0 AND i.inspection_state = 'FILING_DISPLAYED'
-                 THEN 'FILING_DISPLAYED'
-               ELSE 'UNRESOLVED'
-             END AS provenance_state,
-             structured.raw_value AS structured_raw,
-             i.raw_value AS displayed_raw
-    ) b
+    JOIN obs.maturity_provenance mp ON mp.position_observation_id = m.position_observation_id
   )
   SELECT json_build_object(
     'lines', COALESCE((
@@ -2268,7 +2241,7 @@ CREATE FUNCTION registry.review_case_read(p_case_key text) RETURNS json
   );
 $_$;
 
-COMMENT ON FUNCTION registry.review_case_read(p_case_key text) IS 'One research case, read from its current members whose filing has one current registrant and one CIK. Filing form, filed date, inline URL, document, field values, and maturity are looked up for those positions only. A missing field stays absent. A calendar-day maturity stays REPORTED_STRUCTURED. A single MONTH maturity stays REPORTED, with its raw month text and a null normalized_date. This does not resolve a borrower or an instrument.';
+COMMENT ON FUNCTION registry.review_case_read(p_case_key text) IS 'One research case, read from its current members whose filing has one current registrant and one CIK. Filing form, filed date, inline URL, document, field values, and maturity are looked up for those positions only. A missing field stays absent. A calendar-day maturity stays REPORTED_STRUCTURED. A single MONTH field stays REPORTED_MONTH. A filing month stays FILING_MONTH. Both keep the raw month text and a null maturity date. This does not resolve a borrower or an instrument.';
 
 CREATE FUNCTION resolution.check_position_continuity() RETURNS trigger
     LANGUAGE plpgsql
@@ -3222,15 +3195,18 @@ CREATE TABLE obs.maturity_inspection (
     supersede_reason text,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
     no_bind_reason ref.maturity_no_bind_reason,
+    displayed_year integer,
+    displayed_month integer,
     CONSTRAINT maturity_inspection_check CHECK ((supersedes_id IS DISTINCT FROM id)),
     CONSTRAINT maturity_inspection_filing_context_id_check CHECK ((filing_context_id ~ '^[A-Za-z0-9_-]+$'::text)),
     CONSTRAINT maturity_inspection_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id)),
     CONSTRAINT maturity_inspection_state_shape CHECK (
 CASE (inspection_state)::text
-    WHEN 'FILING_DISPLAYED'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (raw_value IS NOT NULL) AND (normalized_date IS NOT NULL))
-    WHEN 'UNAVAILABLE'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (raw_value IS NULL) AND (normalized_date IS NULL))
-    WHEN 'UNRESOLVED'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (normalized_date IS NULL))
-    WHEN 'NOT_BOUND'::text THEN ((filing_context_id IS NULL) AND (no_bind_reason IS NOT NULL) AND (raw_value IS NULL) AND (normalized_date IS NULL))
+    WHEN 'FILING_DISPLAYED'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (raw_value IS NOT NULL) AND (normalized_date IS NOT NULL) AND (displayed_year IS NULL) AND (displayed_month IS NULL))
+    WHEN 'UNAVAILABLE'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (raw_value IS NULL) AND (normalized_date IS NULL) AND (displayed_year IS NULL) AND (displayed_month IS NULL))
+    WHEN 'UNRESOLVED'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (normalized_date IS NULL) AND (displayed_year IS NULL) AND (displayed_month IS NULL))
+    WHEN 'NOT_BOUND'::text THEN ((filing_context_id IS NULL) AND (no_bind_reason IS NOT NULL) AND (raw_value IS NULL) AND (normalized_date IS NULL) AND (displayed_year IS NULL) AND (displayed_month IS NULL))
+    WHEN 'FILING_MONTH'::text THEN ((filing_context_id IS NOT NULL) AND (no_bind_reason IS NULL) AND (raw_value IS NOT NULL) AND (normalized_date IS NULL) AND ((displayed_year >= 1000) AND (displayed_year <= 9999)) AND ((displayed_month >= 1) AND (displayed_month <= 12)))
     ELSE false
 END)
 );
@@ -3240,6 +3216,10 @@ COMMENT ON TABLE obs.maturity_inspection IS 'Append-only inspection of one posit
 COMMENT ON COLUMN obs.maturity_inspection.evidence_id IS 'Bound states: L2 HTML_ANCHOR ix-context-row:<filing_context_id> on the position filing, and a PASS validation on the position cites a same-artifact IXBRL_FACT for that context. NOT_BOUND: L2 DOCUMENT on the position filing artifact, and a FAIL validation of the same rule version and run carries no_bind_reason.';
 
 COMMENT ON COLUMN obs.maturity_inspection.no_bind_reason IS 'Why no filing row was accepted. Set only for NOT_BOUND.';
+
+COMMENT ON COLUMN obs.maturity_inspection.displayed_year IS 'Four-digit year for FILING_MONTH. Null for every other inspection state. This is not a calendar day.';
+
+COMMENT ON COLUMN obs.maturity_inspection.displayed_month IS 'Month 1 through 12 for FILING_MONTH. Null for every other inspection state. This is not a calendar day.';
 
 CREATE TABLE obs.maturity_inspection_candidate (
     id bigint NOT NULL,
@@ -3302,23 +3282,42 @@ CREATE VIEW obs.maturity_provenance AS
     displayed_date,
     evidence_id,
     no_bind_reason,
-        CASE provenance_state
-            WHEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state THEN structured_date
-            WHEN 'FILING_DISPLAYED'::ref.maturity_provenance_state THEN displayed_date
+        CASE (provenance_state)::text
+            WHEN 'REPORTED_STRUCTURED'::text THEN structured_date
+            WHEN 'FILING_DISPLAYED'::text THEN displayed_date
             ELSE NULL::date
         END AS maturity_date,
-        CASE provenance_state
-            WHEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state THEN structured_raw
-            WHEN 'FILING_DISPLAYED'::ref.maturity_provenance_state THEN displayed_raw
+        CASE (provenance_state)::text
+            WHEN 'REPORTED_STRUCTURED'::text THEN structured_raw
+            WHEN 'FILING_DISPLAYED'::text THEN displayed_raw
+            WHEN 'REPORTED_MONTH'::text THEN structured_raw
+            WHEN 'FILING_MONTH'::text THEN displayed_raw
             ELSE NULL::text
         END AS maturity_raw,
     ((provenance_state = 'REPORTED_STRUCTURED'::ref.maturity_provenance_state) AND (NOT (inspection_state IS DISTINCT FROM 'FILING_DISPLAYED'::ref.maturity_inspection_state))) AS filing_verified,
-    structured_field_value_id
+    structured_field_value_id,
+        CASE (provenance_state)::text
+            WHEN 'FILING_MONTH'::text THEN 'MONTH'::text
+            WHEN 'REPORTED_MONTH'::text THEN 'MONTH'::text
+            ELSE NULL::text
+        END AS maturity_precision,
+        CASE (provenance_state)::text
+            WHEN 'FILING_MONTH'::text THEN displayed_year
+            WHEN 'REPORTED_MONTH'::text THEN structured_year
+            ELSE NULL::integer
+        END AS maturity_year,
+        CASE (provenance_state)::text
+            WHEN 'FILING_MONTH'::text THEN displayed_month
+            WHEN 'REPORTED_MONTH'::text THEN structured_month
+            ELSE NULL::integer
+        END AS maturity_month
    FROM ( SELECT p.id AS position_observation_id,
                 CASE
-                    WHEN ((structured.n = 1) AND (structured.distinct_dates = 1) AND ((i.id IS NULL) OR (i.inspection_state = ANY (ARRAY['NOT_BOUND'::ref.maturity_inspection_state, 'UNAVAILABLE'::ref.maturity_inspection_state])) OR ((i.inspection_state = 'FILING_DISPLAYED'::ref.maturity_inspection_state) AND (i.normalized_date = structured.maturity_date)))) THEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state
-                    WHEN ((structured.n = 0) AND ((i.id IS NULL) OR (i.inspection_state = ANY (ARRAY['NOT_BOUND'::ref.maturity_inspection_state, 'UNAVAILABLE'::ref.maturity_inspection_state])))) THEN 'UNKNOWN'::ref.maturity_provenance_state
-                    WHEN ((structured.n = 0) AND (i.inspection_state = 'FILING_DISPLAYED'::ref.maturity_inspection_state)) THEN 'FILING_DISPLAYED'::ref.maturity_provenance_state
+                    WHEN ((structured.n = 1) AND (structured.distinct_dates = 1) AND ((i.id IS NULL) OR ((i.inspection_state)::text = ANY (ARRAY['NOT_BOUND'::text, 'UNAVAILABLE'::text])) OR (((i.inspection_state)::text = 'FILING_DISPLAYED'::text) AND (i.normalized_date = structured.maturity_date)))) THEN 'REPORTED_STRUCTURED'::ref.maturity_provenance_state
+                    WHEN ((structured.n = 1) AND (structured.distinct_dates = 0) AND (structured.month_rows = 1) AND ((i.id IS NULL) OR ((i.inspection_state)::text = ANY (ARRAY['NOT_BOUND'::text, 'UNAVAILABLE'::text])) OR (((i.inspection_state)::text = 'FILING_MONTH'::text) AND (i.displayed_year = structured.maturity_year) AND (i.displayed_month = structured.maturity_month)))) THEN 'REPORTED_MONTH'::ref.maturity_provenance_state
+                    WHEN ((structured.n = 0) AND ((i.id IS NULL) OR ((i.inspection_state)::text = ANY (ARRAY['NOT_BOUND'::text, 'UNAVAILABLE'::text])))) THEN 'UNKNOWN'::ref.maturity_provenance_state
+                    WHEN ((structured.n = 0) AND ((i.inspection_state)::text = 'FILING_DISPLAYED'::text)) THEN 'FILING_DISPLAYED'::ref.maturity_provenance_state
+                    WHEN ((structured.n = 0) AND ((i.inspection_state)::text = 'FILING_MONTH'::text)) THEN 'FILING_MONTH'::ref.maturity_provenance_state
                     ELSE 'UNRESOLVED'::ref.maturity_provenance_state
                 END AS provenance_state,
             i.id AS inspection_id,
@@ -3326,8 +3325,12 @@ CREATE VIEW obs.maturity_provenance AS
             i.filing_context_id,
             structured.raw_value AS structured_raw,
             structured.maturity_date AS structured_date,
+            structured.maturity_year AS structured_year,
+            structured.maturity_month AS structured_month,
             i.raw_value AS displayed_raw,
             i.normalized_date AS displayed_date,
+            i.displayed_year,
+            i.displayed_month,
             i.evidence_id,
             i.no_bind_reason,
             structured.field_value_id AS structured_field_value_id
@@ -3337,24 +3340,35 @@ CREATE VIEW obs.maturity_provenance AS
                   WHERE (s.supersedes_id = i.id)))))))
              LEFT JOIN LATERAL ( SELECT (count(fv.id))::integer AS n,
                     (count(DISTINCT fv.normalized_date))::integer AS distinct_dates,
+                    (count(*) FILTER (WHERE ((fv.date_precision = 'MONTH'::text) AND (fv.normalized_date IS NULL) AND ((fv.normalized_year >= 1000) AND (fv.normalized_year <= 9999)) AND ((fv.normalized_month >= 1) AND (fv.normalized_month <= 12)) AND (fv.raw_value IS NOT NULL))))::integer AS month_rows,
                     min(fv.normalized_date) AS maturity_date,
                     min(fv.raw_value) AS raw_value,
+                    min(fv.normalized_year) FILTER (WHERE (fv.date_precision = 'MONTH'::text)) AS maturity_year,
+                    min(fv.normalized_month) FILTER (WHERE (fv.date_precision = 'MONTH'::text)) AS maturity_month,
                         CASE
                             WHEN (count(fv.id) = 1) THEN min(fv.id)
                             ELSE NULL::bigint
                         END AS field_value_id
-                   FROM obs.current_position_field_value fv
-                  WHERE ((fv.position_observation_id = p.id) AND (fv.field_code = 'MATURITY_DATE'::text) AND (fv.value_state = 'REPORTED'::ref.value_state))) structured ON (true))) b;
+                   FROM obs.position_field_value fv
+                  WHERE ((fv.position_observation_id = p.id) AND (fv.field_code = 'MATURITY_DATE'::text) AND (fv.value_state = 'REPORTED'::ref.value_state) AND (NOT (EXISTS ( SELECT 1
+                           FROM obs.position_field_value s
+                          WHERE (s.supersedes_id = fv.id)))))) structured ON (true))) b;
 
-COMMENT ON VIEW obs.maturity_provenance IS 'One product maturity per position. maturity_date comes from the structured MATURITY_DATE (REPORTED_STRUCTURED) or from the current FILING_DISPLAYED inspection (FILING_DISPLAYED); it is NULL for UNKNOWN and UNRESOLVED. Superseded inspections are never read. inspection_state and no_bind_reason say why a filing supplied no date; filing_context_id does not. FILING_DISPLAYED is not copied into MATURITY_DATE.';
+COMMENT ON VIEW obs.maturity_provenance IS 'One product maturity per position. maturity_date is a calendar day from REPORTED_STRUCTURED or FILING_DISPLAYED only. FILING_MONTH and REPORTED_MONTH keep maturity_date null and expose maturity_precision MONTH. UNRESOLVED selects nothing. FILING_DISPLAYED is not copied into MATURITY_DATE.';
 
-COMMENT ON COLUMN obs.maturity_provenance.maturity_date IS 'Product maturity. Source is provenance_state. NULL when UNKNOWN or UNRESOLVED.';
+COMMENT ON COLUMN obs.maturity_provenance.maturity_date IS 'Product maturity calendar day. NULL for UNKNOWN, UNRESOLVED, FILING_MONTH, and REPORTED_MONTH.';
 
 COMMENT ON COLUMN obs.maturity_provenance.maturity_raw IS 'The value exactly as disclosed by the source named in provenance_state.';
 
 COMMENT ON COLUMN obs.maturity_provenance.filing_verified IS 'The structured date is the product maturity and the current filing inspection displays the same date.';
 
 COMMENT ON COLUMN obs.maturity_provenance.structured_field_value_id IS 'The single current REPORTED MATURITY_DATE field value, when there is exactly one.';
+
+COMMENT ON COLUMN obs.maturity_provenance.maturity_precision IS 'MONTH when the product maturity is a disclosed month and year. NULL when it is a calendar day or absent.';
+
+COMMENT ON COLUMN obs.maturity_provenance.maturity_year IS 'Four-digit year for maturity_precision MONTH. NULL for a calendar day; that year stays on maturity_date.';
+
+COMMENT ON COLUMN obs.maturity_provenance.maturity_month IS 'Month 1 through 12 for maturity_precision MONTH. NULL otherwise.';
 
 CREATE TABLE obs.num_fact_observation (
     id bigint NOT NULL,
@@ -4974,7 +4988,10 @@ CREATE VIEW registry.maturity_read AS
     (mp.inspection_state)::text AS inspection_state,
     (mp.no_bind_reason)::text AS no_bind_reason,
     mp.filing_verified,
-    doc.document_url AS maturity_document_url
+    doc.document_url AS maturity_document_url,
+    mp.maturity_precision,
+    mp.maturity_year,
+    mp.maturity_month
    FROM ((obs.maturity_provenance mp
      JOIN obs.position_observation p ON ((p.id = mp.position_observation_id)))
      LEFT JOIN LATERAL ( SELECT
@@ -4985,15 +5002,21 @@ CREATE VIEW registry.maturity_read AS
            FROM ((evidence.evidence e
              JOIN registry.filing_document_artifact fda ON ((fda.artifact_id = e.artifact_id)))
              JOIN registry.filing_document fd ON (((fd.id = fda.filing_document_id) AND (fd.filing_id = p.filing_id))))
-          WHERE ((e.id = mp.evidence_id) AND ((mp.provenance_state = 'FILING_DISPLAYED'::ref.maturity_provenance_state) OR mp.filing_verified))) doc ON (true));
+          WHERE ((e.id = mp.evidence_id) AND (((mp.provenance_state)::text = ANY (ARRAY['FILING_DISPLAYED'::text, 'FILING_MONTH'::text])) OR mp.filing_verified))) doc ON (true));
 
-COMMENT ON VIEW registry.maturity_read IS 'The product maturity of one disclosed line, read from obs.maturity_provenance. maturity_date is NULL unless maturity_source is REPORTED_STRUCTURED or FILING_DISPLAYED.';
+COMMENT ON VIEW registry.maturity_read IS 'The product maturity of one disclosed line. maturity_date is a calendar day and is NULL for a month. maturity_precision MONTH carries maturity_year and maturity_month without a day.';
 
 COMMENT ON COLUMN registry.maturity_read.maturity_raw IS 'The maturity exactly as disclosed by the source named in maturity_source.';
 
 COMMENT ON COLUMN registry.maturity_read.maturity_source IS 'obs.maturity_provenance.provenance_state: REPORTED_STRUCTURED, FILING_DISPLAYED, UNKNOWN, or UNRESOLVED.';
 
 COMMENT ON COLUMN registry.maturity_read.maturity_document_url IS 'The EDGAR document of the current filing inspection, when that inspection supplies or confirms the maturity.';
+
+COMMENT ON COLUMN registry.maturity_read.maturity_precision IS 'MONTH for a month-precision product maturity. NULL when maturity_date is a calendar day or no maturity was selected.';
+
+COMMENT ON COLUMN registry.maturity_read.maturity_year IS 'Disclosed year for maturity_precision MONTH. Not the year extracted from maturity_date.';
+
+COMMENT ON COLUMN registry.maturity_read.maturity_month IS 'Disclosed month 1 through 12 for maturity_precision MONTH. NULL otherwise.';
 
 CREATE VIEW registry.maturity_position AS
  SELECT p.id AS position_observation_id,
@@ -5256,7 +5279,7 @@ CREATE VIEW registry.maturity_year AS
   WHERE (maturity_date IS NOT NULL)
   GROUP BY registrant_cik, reported_date, (EXTRACT(year FROM maturity_date));
 
-COMMENT ON VIEW registry.maturity_year IS 'Disclosed lines with one product maturity date, counted by the year of that date. Unknown and unresolved maturity are omitted here and kept on maturity_reported_date.';
+COMMENT ON VIEW registry.maturity_year IS 'Disclosed lines with one product maturity calendar date, counted by the year of that date. A month-precision maturity has a null maturity_date and is omitted here. Unknown and unresolved maturity are omitted here and kept on maturity_reported_date.';
 
 CREATE VIEW registry.portfolio_empty_period AS
  SELECT dr.release_label
