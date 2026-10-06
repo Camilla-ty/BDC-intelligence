@@ -150,7 +150,13 @@ function supersedeColumns(plan) {
   return `${num(plan.supersedesId)}, ${lit(plan.supersedeReason)}`;
 }
 
-function insertInspection(database, { position, bound, plan, artifactId, ruleId, runId }) {
+function scratch(prefix, positionId) {
+  return `${prefix}_${num(positionId)}`;
+}
+
+// Statements for one position. They contain no BEGIN or COMMIT. Temp names include the
+// position id so every position in one publication transaction can use them together.
+function inspectionStatements({ position, bound, plan, artifactId, ruleId, runId }) {
   const context = contextId(bound.contextId);
   const facts = bound.facts.map((fact) => factId(fact.id));
   if (facts.length === 0) throw new Error(`position ${position.positionId} has no corroborating fact`);
@@ -158,75 +164,75 @@ function insertInspection(database, { position, bound, plan, artifactId, ruleId,
   const candidateValues = (bound.candidates ?? []).map((candidate) => `(${lit(candidate.raw)}, ${
     candidate.normalized ? `DATE ${lit(candidate.normalized)}` : "NULL::date"
   }, ${candidate.factId ? lit(factId(candidate.factId)) : "NULL::text"})`).join(",");
-  const displayedRaw = bound.outcome === "FILING_DISPLAYED" ? lit(bound.rawValue) : "NULL";
-  const displayedDate = bound.outcome === "FILING_DISPLAYED" ? `DATE ${lit(bound.normalizedDate)}` : "NULL";
-  queryRows(database, `
-BEGIN;
-CREATE TEMP TABLE _anchor (id bigint) ON COMMIT DROP;
-CREATE TEMP TABLE _fact (fact_id text PRIMARY KEY, evidence_id bigint) ON COMMIT DROP;
-CREATE TEMP TABLE _inspection (id bigint) ON COMMIT DROP;
+  const displayedRaw = plan.state === "FILING_DISPLAYED" ? lit(bound.rawValue) : "NULL";
+  const displayedDate = plan.state === "FILING_DISPLAYED" ? `DATE ${lit(bound.normalizedDate)}` : "NULL";
+  const anchor = scratch("anchor", position.positionId);
+  const fact = scratch("fact", position.positionId);
+  const inspection = scratch("inspection", position.positionId);
+  return `
+CREATE TEMP TABLE ${anchor} (id bigint) ON COMMIT DROP;
+CREATE TEMP TABLE ${fact} (fact_id text PRIMARY KEY, evidence_id bigint) ON COMMIT DROP;
+CREATE TEMP TABLE ${inspection} (id bigint) ON COMMIT DROP;
 WITH anchor AS (
   INSERT INTO evidence.evidence (evidence_level, artifact_id, locator_type, html_anchor, run_id)
   VALUES ('L2_ORIGINAL_FILING', ${num(artifactId)}, 'HTML_ANCHOR', ${lit(`ix-context-row:${context}`)}, ${num(runId)})
   RETURNING id
 )
-INSERT INTO _anchor SELECT id FROM anchor;
+INSERT INTO ${anchor} SELECT id FROM anchor;
 WITH facts AS (
   INSERT INTO evidence.evidence (evidence_level, artifact_id, locator_type, ixbrl_fact_id, run_id)
   SELECT 'L2_ORIGINAL_FILING', ${num(artifactId)}, 'IXBRL_FACT', v.fact_id, ${num(runId)}
   FROM (VALUES ${factValues}) AS v(fact_id)
   RETURNING id, ixbrl_fact_id
 )
-INSERT INTO _fact SELECT ixbrl_fact_id, id FROM facts;
+INSERT INTO ${fact} SELECT ixbrl_fact_id, id FROM facts;
 INSERT INTO validation.validation_result
   (subject_table, subject_id, rule_version_id, outcome, detail, evidence_id, run_id)
 SELECT 'obs.position_observation', ${num(position.positionId)}, ${num(ruleId)}, 'PASS', ${lit(context)}, evidence_id, ${num(runId)}
-FROM _fact;
+FROM ${fact};
 WITH ins AS (
   INSERT INTO obs.maturity_inspection
     (position_observation_id, soi_row_observation_id, inspection_state, filing_context_id,
      raw_value, normalized_date, evidence_id, rule_version_id, run_id, supersedes_id, supersede_reason)
-  SELECT ${num(position.positionId)}, ${num(position.originId)}, ${lit(bound.outcome)}, ${lit(context)},
-         ${displayedRaw}, ${displayedDate}, _anchor.id, ${num(ruleId)}, ${num(runId)}, ${supersedeColumns(plan)}
-  FROM _anchor
+  SELECT ${num(position.positionId)}, ${num(position.originId)}, ${lit(plan.state)}, ${lit(context)},
+         ${displayedRaw}, ${displayedDate}, ${anchor}.id, ${num(ruleId)}, ${num(runId)}, ${supersedeColumns(plan)}
+  FROM ${anchor}
   RETURNING id
 )
-INSERT INTO _inspection SELECT id FROM ins;
+INSERT INTO ${inspection} SELECT id FROM ins;
 INSERT INTO evidence.supplementary_evidence (subject_table, subject_id, evidence_id, role, run_id)
-SELECT 'obs.maturity_inspection', _inspection.id, _fact.evidence_id, 'CORROBORATES', ${num(runId)}
-FROM _inspection CROSS JOIN _fact;
+SELECT 'obs.maturity_inspection', ${inspection}.id, ${fact}.evidence_id, 'CORROBORATES', ${num(runId)}
+FROM ${inspection} CROSS JOIN ${fact};
 INSERT INTO obs.maturity_inspection_candidate
   (maturity_inspection_id, raw_value, normalized_date, evidence_id, run_id)
-SELECT _inspection.id, c.raw_value, c.normalized_date, COALESCE(_fact.evidence_id, _anchor.id), ${num(runId)}
-FROM _inspection
-CROSS JOIN _anchor
+SELECT ${inspection}.id, c.raw_value, c.normalized_date, COALESCE(${fact}.evidence_id, ${anchor}.id), ${num(runId)}
+FROM ${inspection}
+CROSS JOIN ${anchor}
 CROSS JOIN (VALUES ${candidateValues || "(NULL::text, NULL::date, NULL::text)"}) AS c(raw_value, normalized_date, fact_id)
-LEFT JOIN _fact ON _fact.fact_id = c.fact_id
-WHERE c.raw_value IS NOT NULL;
-COMMIT;`);
+LEFT JOIN ${fact} ON ${fact}.fact_id = c.fact_id
+WHERE c.raw_value IS NOT NULL;`;
 }
 
-function insertNotBound(database, { position, plan, artifactId, ruleId, runId }) {
-  queryRows(database, `
-BEGIN;
-CREATE TEMP TABLE _document (id bigint) ON COMMIT DROP;
+function notBoundStatements({ position, plan, artifactId, ruleId, runId }) {
+  const document = scratch("document", position.positionId);
+  return `
+CREATE TEMP TABLE ${document} (id bigint) ON COMMIT DROP;
 WITH document AS (
   INSERT INTO evidence.evidence (evidence_level, artifact_id, locator_type, run_id)
   VALUES ('L2_ORIGINAL_FILING', ${num(artifactId)}, 'DOCUMENT', ${num(runId)})
   RETURNING id
 )
-INSERT INTO _document SELECT id FROM document;
+INSERT INTO ${document} SELECT id FROM document;
 INSERT INTO validation.validation_result
   (subject_table, subject_id, rule_version_id, outcome, detail, evidence_id, run_id)
 SELECT 'obs.position_observation', ${num(position.positionId)}, ${num(ruleId)}, 'FAIL', ${lit(plan.noBindReason)}, id, ${num(runId)}
-FROM _document;
+FROM ${document};
 INSERT INTO obs.maturity_inspection
   (position_observation_id, soi_row_observation_id, inspection_state, no_bind_reason,
    evidence_id, rule_version_id, run_id, supersedes_id, supersede_reason)
 SELECT ${num(position.positionId)}, ${num(position.originId)}, 'NOT_BOUND', ${lit(plan.noBindReason)},
        id, ${num(ruleId)}, ${num(runId)}, ${supersedeColumns(plan)}
-FROM _document;
-COMMIT;`);
+FROM ${document};`;
 }
 
 const NO_BIND_REASONS = new Set(Object.values(NO_BIND_REASON));
@@ -270,23 +276,83 @@ export function planInspection(bound, current, { ruleId, ruleVersion }) {
   };
 }
 
-// Records one inspected filing's binds. Each position is written in its own transaction.
-// A planning or write error records nothing for that position (in particular it never
-// falls back to NOT_BOUND); it is returned in `errors` for the caller to surface.
-export function recordFilingInspections({ positions, binds, currentById, rule, write }) {
+export function formatInspectionErrors(errors) {
+  return errors.map((error) => `position ${error.positionId}: ${error.message}`).join("\n");
+}
+
+// Plans one filing. Nothing is written. A planning error is collected and does not
+// become a NOT_BOUND row. Callers must refuse publication when errors is not empty.
+export function planFilingInspections({ positions, binds, currentById, rule }) {
+  if (!Array.isArray(binds) || binds.length !== positions.length) {
+    throw new Error("maturity inspection binds do not match the positions");
+  }
   const results = [];
   const errors = [];
   positions.forEach((position, index) => {
     const bound = binds[index];
     try {
-      const plan = planInspection(bound, currentById.get(position.positionId) ?? null, rule);
-      if (plan.action === "insert") write(position, bound, plan);
-      results.push({ position, bound, plan });
+      results.push({
+        position,
+        bound,
+        plan: planInspection(bound, currentById.get(position.positionId) ?? null, rule),
+      });
     } catch (caught) {
-      errors.push({ positionId: position.positionId, message: caught.message });
+      errors.push({
+        positionId: position.positionId,
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
     }
   });
   return { results, errors };
+}
+
+export function publishedInspectionCount(database, runId) {
+  const [row] = queryRows(database, `SELECT count(*)::text FROM obs.maturity_inspection WHERE run_id = ${num(runId)}`);
+  return Number(row[0]);
+}
+
+// The publication transaction has ended. The count is measured, not assumed: a rollback
+// reports 0, and any row that remained is reported with that count.
+export function recordMaturityRunFailure(database, runId, error) {
+  const [existing] = queryRows(database, `SELECT 1 FROM ops.run_outcome WHERE run_id = ${num(runId)}`);
+  if (existing) return;
+  const published = publishedInspectionCount(database, runId);
+  const detail = error instanceof Error ? error.message : String(error);
+  const summary = `maturity inspection published ${published} inspection rows. ${detail}`
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, 500);
+  queryRows(database, `INSERT INTO ops.run_outcome (run_id, status, finished_at, counts, error_summary)
+    VALUES (${num(runId)}, 'FAILED', now(), ${lit(JSON.stringify({ maturity_inspection: published }))}::jsonb, ${lit(summary)})`);
+}
+
+function outcomeStatement(runId, counts) {
+  return `INSERT INTO ops.run_outcome (run_id, status, finished_at, counts, error_summary)
+    VALUES (${num(runId)}, 'SUCCEEDED', now(), ${lit(JSON.stringify(counts))}::jsonb, NULL)`;
+}
+
+// Inserts every planned row and the SUCCEEDED outcome in one transaction.
+// A statement failure aborts that transaction, so an earlier position in the same
+// publication does not remain committed.
+export function commitInspectionPublication(database, { runId, ruleId, filings, counts }) {
+  const errors = filings.flatMap((filing) => filing.errors ?? []);
+  if (errors.length) throw new Error(formatInspectionErrors(errors));
+  const statements = [];
+  for (const filing of filings) {
+    if (!filing.artifactId) throw new Error("an inspected filing needs its stored HTML artifact");
+    for (const item of filing.results ?? []) {
+      if (item.plan.action !== "insert") continue;
+      const args = {
+        position: item.position,
+        bound: item.bound,
+        plan: item.plan,
+        artifactId: filing.artifactId,
+        ruleId,
+        runId,
+      };
+      statements.push(item.plan.state === "NOT_BOUND" ? notBoundStatements(args) : inspectionStatements(args));
+    }
+  }
+  queryRows(database, `BEGIN;\n${statements.join("\n")}\n${outcomeStatement(runId, counts)};\nCOMMIT;`);
 }
 
 export function loadCurrentInspections(database, positionIds) {
@@ -312,18 +378,15 @@ export function loadCurrentInspections(database, positionIds) {
 }
 
 // Positions must all belong to the filing whose stored HTML (artifactId) produced `binds`.
-export function inspectFilingPositions(database, { positions, binds, artifactId, ruleId, runId }) {
+// This plans only. Publication is commitInspectionPublication.
+export function inspectFilingPositions(database, { positions, binds, artifactId, ruleId }) {
   if (!artifactId) throw new Error("an inspected filing needs its stored HTML artifact");
   const currentById = loadCurrentInspections(database, positions.map((position) => position.positionId));
-  return recordFilingInspections({
+  return planFilingInspections({
     positions,
     binds,
     currentById,
     rule: { ruleId, ruleVersion: RULE_VERSION },
-    write: (position, bound, plan) => {
-      if (plan.state === "NOT_BOUND") insertNotBound(database, { position, plan, artifactId, ruleId, runId });
-      else insertInspection(database, { position, bound, plan, artifactId, ruleId, runId });
-    },
   });
 }
 
@@ -343,6 +406,8 @@ export async function runMaturityInspectionBatch({
   log = () => {},
 }) {
   if (!sessionId) throw new Error("maturity batch requires a session_id");
+  let runId;
+  try {
   const before = batchCounts(database);
   const positions = loadPositions(database);
   const store = createStore(dataDir);
@@ -397,11 +462,11 @@ export async function runMaturityInspectionBatch({
     VALUES ('MATURITY_INSPECTION_BATCH', ${lit(pipelineCodeVersion())},
       jsonb_build_object('positions', ${MATURITY_BATCH.length}), now())
     RETURNING id`);
-  const runId = Number(runRow[0]);
+  runId = Number(runRow[0]);
   const ruleId = ensureRule(database, runId);
 
   const results = [];
-  const errors = [];
+  const filings = [];
   for (const [accession, group] of byAccession) {
     const rows = listIxContextRows(htmlByAccession.get(accession));
     const recorded = inspectFilingPositions(database, {
@@ -409,9 +474,9 @@ export async function runMaturityInspectionBatch({
       binds: bindFilingPositions(rows, group),
       artifactId: artifactByAccession.get(accession),
       ruleId,
-      runId,
     });
-    errors.push(...recorded.errors);
+    if (recorded.errors.length) throw new Error(formatInspectionErrors(recorded.errors));
+    filings.push({ artifactId: artifactByAccession.get(accession), results: recorded.results, errors: recorded.errors });
     for (const { position, bound, plan } of recorded.results) {
       const isBound = plan.state !== "NOT_BOUND";
       results.push({
@@ -432,10 +497,17 @@ export async function runMaturityInspectionBatch({
       });
     }
   }
-  if (errors.length) {
-    const detail = errors.map((error) => `position ${error.positionId}: ${error.message}`).join("\n");
-    throw new Error(`maturity inspection recorded nothing for ${errors.length} position(s):\n${detail}`);
-  }
+  // All accessions in this batch commit together. A failure rolls back every position,
+  // so the batch cannot publish a prefix of its accessions.
+  commitInspectionPublication(database, {
+    runId,
+    ruleId,
+    filings,
+    counts: {
+      maturity_inspection: results.filter((row) => row.written).length,
+      positions: MATURITY_BATCH.length,
+    },
+  });
 
   const ids = MATURITY_BATCH.map((row) => num(row.positionId)).join(",");
   const provenance = queryRows(database, `SELECT position_observation_id, provenance_state::text,
@@ -451,5 +523,16 @@ export async function runMaturityInspectionBatch({
     result.structured_date = row?.[6] || null;
   }
   const after = batchCounts(database);
-  return { before, after, results };
+  return { before, after, results, run_id: runId };
+  } catch (error) {
+    if (runId !== undefined) {
+      try {
+        recordMaturityRunFailure(database, runId, error);
+      } catch {
+        // The original failure is the one that must surface. The run stays STARTED
+        // only when this outcome write itself fails.
+      }
+    }
+    throw error;
+  }
 }

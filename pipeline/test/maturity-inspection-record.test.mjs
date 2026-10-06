@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { NO_BIND_REASON } from "../normalize/maturity-context-bind.mjs";
 import {
-  noBindReasonOf, planInspection, recordFilingInspections,
+  commitInspectionPublication, formatInspectionErrors, noBindReasonOf, planFilingInspections, planInspection,
 } from "../load/maturity-inspection-batch.mjs";
 
 const RULE = { ruleId: 2, ruleVersion: "2" };
@@ -80,56 +80,50 @@ test("the same outcome under an older rule version, or a different outcome, is w
   assert.equal(planInspection(displayed("c-1", "3/4/2099"), currentDisplayed(10, RULE.ruleId), RULE).action, "insert");
 });
 
-test("recording writes inserts, skips identical reruns, and supersedes the current row", () => {
+test("planning inserts, skips identical reruns, and supersedes the current row", () => {
   const positions = [{ positionId: 101 }, { positionId: 102 }, { positionId: 103 }];
   const binds = [unbound(NO_BIND_REASON.SHARED_ROW), unbound(NO_BIND_REASON.MULTIPLE_ROWS), displayed("c-1", "1/2/2099")];
   const currentById = new Map([
     [101, currentDisplayed(55, OLD_RULE_ID)],
     [102, currentNotBound(56, RULE.ruleId, "MULTIPLE_ROWS")],
   ]);
-  const writes = [];
-  const recorded = recordFilingInspections({
-    positions, binds, currentById, rule: RULE,
-    write: (position, bound, plan) => writes.push([position.positionId, plan.state, plan.supersedesId, plan.supersedeReason]),
-  });
+  const recorded = planFilingInspections({ positions, binds, currentById, rule: RULE });
   assert.deepEqual(recorded.errors, []);
-  assert.deepEqual(writes, [
-    [101, "NOT_BOUND", 55, "superseded by binder rule v2: SHARED_ROW"],
-    [103, "FILING_DISPLAYED", null, null],
+  assert.deepEqual(recorded.results.map((item) => [
+    item.position.positionId, item.plan.action, item.plan.state, item.plan.supersedesId ?? null, item.plan.supersedeReason ?? null,
+  ]), [
+    [101, "insert", "NOT_BOUND", 55, "superseded by binder rule v2: SHARED_ROW"],
+    [102, "skip", "NOT_BOUND", null, null],
+    [103, "insert", "FILING_DISPLAYED", null, null],
   ]);
-  assert.deepEqual(recorded.results.map((r) => r.plan.action), ["insert", "skip", "insert"]);
-});
-
-test("a write error records nothing for that position and never falls back to NOT_BOUND", () => {
-  const positions = [{ positionId: 201 }, { positionId: 202 }];
-  const binds = [displayed("c-1", "1/2/2099"), unbound(NO_BIND_REASON.NO_MATCH)];
-  const attempts = [];
-  const recorded = recordFilingInspections({
-    positions, binds, currentById: new Map(), rule: RULE,
-    write: (position, bound, plan) => {
-      attempts.push([position.positionId, plan.state]);
-      throw new Error("test-only database failure");
-    },
-  });
-  assert.deepEqual(attempts, [[201, "FILING_DISPLAYED"], [202, "NOT_BOUND"]]);
-  assert.deepEqual(recorded.results, []);
-  assert.deepEqual(recorded.errors, [
-    { positionId: 201, message: "test-only database failure" },
-    { positionId: 202, message: "test-only database failure" },
-  ]);
+  assert.equal(recorded.results[1].plan.currentId, 56);
 });
 
 test("an unbound result without a valid reason is an error, not NOT_BOUND", () => {
-  const writes = [];
-  const recorded = recordFilingInspections({
-    positions: [{ positionId: 301 }],
-    binds: [unbound(undefined, "processing failed")],
+  const recorded = planFilingInspections({
+    positions: [{ positionId: 301 }, { positionId: 302 }],
+    binds: [unbound(undefined, "processing failed"), unbound(NO_BIND_REASON.NO_MATCH)],
     currentById: new Map(),
     rule: RULE,
-    write: (position, bound, plan) => writes.push(plan.state),
   });
-  assert.deepEqual(writes, []);
-  assert.deepEqual(recorded.results, []);
+  assert.equal(recorded.results.length, 1);
+  assert.equal(recorded.results[0].position.positionId, 302);
+  assert.equal(recorded.results[0].plan.state, "NOT_BOUND");
   assert.equal(recorded.errors.length, 1);
+  assert.equal(recorded.errors[0].positionId, 301);
   assert.match(recorded.errors[0].message, /no recognised no-bind reason/);
+  assert.match(formatInspectionErrors(recorded.errors), /position 301: /);
+});
+
+test("a filing with a planning error is refused before any publication statement", () => {
+  assert.throws(() => commitInspectionPublication("not_a_database", {
+    runId: 1,
+    ruleId: 1,
+    filings: [{
+      artifactId: 1,
+      errors: [{ positionId: 201, message: "test-only planning failure" }],
+      results: [{ position: { positionId: 202 }, plan: { action: "insert", state: "NOT_BOUND" } }],
+    }],
+    counts: {},
+  }), /position 201: test-only planning failure/);
 });
