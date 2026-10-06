@@ -74,6 +74,65 @@ test("the 2022 context stays on its own row", () => {
   assert.equal(earlier.contextId, COMPARATIVE);
 });
 
+test("Infogain keeps industry and type from the same bound row", () => {
+  const html = schedule(dataRow(
+    "Infogain Corporation",
+    "Software &amp; IT services",
+    "First Lien",
+    CURRENT,
+    "SOFR+",
+  ));
+  const result = boundContextResearchCells(html, CURRENT);
+  assert.equal(field(result, "INDUSTRY").rawText, "Software & IT services");
+  assert.equal(field(result, "INSTRUMENT_TYPE").rawText, "First Lien");
+  assert.equal(field(result, "INDUSTRY").heading.matchedText, "Industry");
+  assert.equal(field(result, "INSTRUMENT_TYPE").heading.matchedText, "Type");
+});
+
+test("an empty industry cell is not copied from the preceding instrument", () => {
+  const previous = "i628-first-lien";
+  const current = "i628692024b534100a423714cfc315564_I20230331";
+  const html = schedule(
+    dataRow("Tacala, LLC", "Consumer products &amp; retail", "First Lien", previous, "L+")
+    + `<tr><td colspan="3"></td><td colspan="3"></td><td colspan="3">Second Lien</td>`
+    + `<td colspan="3">2/4/2028</td><td colspan="3">L+${fact(current)}</td></tr>`,
+  );
+  const result = boundContextResearchCells(html, current);
+  assert.equal(field(result, "INSTRUMENT_TYPE").rawText, "Second Lien");
+  assert.equal(field(result, "INSTRUMENT_TYPE").heading.matchedText, "Type");
+  assert.equal(field(result, "INDUSTRY"), undefined);
+  assert.equal(result.fields.some((item) => item.rawText.includes("Consumer products")), false);
+});
+
+function raised(text) {
+  return `<span style="position:relative;top:-2.8pt;vertical-align:baseline">${text}</span>`;
+}
+
+test("Type of Investment is a type heading and a raised footnote marker is omitted", () => {
+  const html = "<table><tr>"
+    + `<td colspan="3">Portfolio Company${raised("1,18")}</td>`
+    + `<td colspan="3">Type of Investment${raised("2")}</td>`
+    + `<td colspan="3">Industry</td></tr>`
+    + "<tr><td colspan=\"3\">ACE GATHERING, INC.</td>"
+    + `<td colspan="3">Second Lien${raised("15")}</td>`
+    + `<td colspan="3">Energy services (midstream)</td>`
+    + `<td>${fact(CURRENT)}</td></tr></table>`;
+  const result = boundContextResearchCells(html, CURRENT);
+  assert.equal(field(result, "INDUSTRY").rawText, "Energy services (midstream)");
+  assert.equal(field(result, "INSTRUMENT_TYPE").rawText, "Second Lien");
+  assert.equal(field(result, "INSTRUMENT_TYPE").rawText.includes("15"), false);
+  assert.equal(field(result, "INSTRUMENT_TYPE").heading.matchedText, "Type of Investment");
+  assert.equal(field(result, "INSTRUMENT_TYPE").heading.rawText, "Type of Investment");
+  assert.equal(field(result, "INDUSTRY").heading.matchedText, "Industry");
+  assert.equal(field(result, "INSTRUMENT_TYPE").slotOrdinal, field(result, "INSTRUMENT_TYPE").heading.slotOrdinal);
+});
+
+test("a footnote digit written as ordinary text stays in the cell", () => {
+  const html = schedule(dataRow("ACE GATHERING, INC.", "Energy services (midstream)", "Second Lien15", CURRENT, "SOFR+"));
+  const result = boundContextResearchCells(html, CURRENT);
+  assert.equal(field(result, "INSTRUMENT_TYPE").rawText, "Second Lien15");
+});
+
 test("a New Mountain header is not read as Industry and Type", () => {
   const html = "<table><tr><td>Portfolio Company, Location and Industry</td><td>Type of Investment</td><td>Fair Value</td></tr>"
     + `<tr><td>Business Services</td><td>First Lien(2)(3)</td><td>${fact("nm")}</td></tr></table>`;

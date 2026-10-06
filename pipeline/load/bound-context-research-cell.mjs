@@ -1,5 +1,6 @@
 // Persist INDUSTRY and INSTRUMENT_TYPE from the HTML row of a stored maturity context.
-// A current head is kept when it is already the same text and is otherwise left untouched.
+// An empty Industry cell writes no INDUSTRY field. A current head is kept when it is
+// already the same text and is otherwise left untouched.
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,8 +65,8 @@ export function persistBoundContextResearchCells({
     WHERE fda.filing_document_id = ${num(Number(document[0]))}`), "filing HTML artifact");
   const html = createStore(dataDir).read(artifact[1], artifact[2]).toString("utf8");
   const selected = boundContextResearchCells(html, contextId);
-  if (!selected || selected.fields.length !== 2) {
-    throw new Error("the bound context row does not have both untagged Industry and Type cells");
+  if (!selected || !selected.fields.some((field) => field.fieldCode === "INSTRUMENT_TYPE")) {
+    throw new Error("the bound context row does not have an untagged Type cell");
   }
   const plans = selected.fields.map((field) => {
     const action = researchHeadAction(currentHeads(database, positionId, field.fieldCode), field.rawText);

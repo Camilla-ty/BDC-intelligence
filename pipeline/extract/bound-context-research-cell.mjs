@@ -1,17 +1,15 @@
 // Industry and Type cells on the one HTML row that already cites a bound context.
 // The context id locates that row. Column identity is the heading text on the
-// same slot. Identifier text is not read.
+// same slot. An empty Industry cell stays empty. Identifier text is not read.
 
 import { cellText } from "../parse/schedule-disclosure-block.mjs";
 import { tableRows } from "../normalize/ix-context-row.mjs";
 
 export const BOUND_CONTEXT_RESEARCH_CODE = "obs.research_field.bound_context_cell";
-export const BOUND_CONTEXT_RESEARCH_VERSION = "2";
+export const BOUND_CONTEXT_RESEARCH_VERSION = "3";
 
-const HEADING_FIELD = new Map([
-  ["Industry", "INDUSTRY"],
-  ["Type", "INSTRUMENT_TYPE"],
-]);
+const INDUSTRY_LABELS = new Set(["Industry"]);
+const TYPE_LABELS = new Set(["Type", "Type of Investment"]);
 
 function tagAt(html, index) {
   if (html[index] !== "<") return null;
@@ -49,8 +47,57 @@ function closeTagAt(html, from, name) {
   return -1;
 }
 
+function styleOf(raw) {
+  const match = raw.match(/\bstyle\s*=\s*("([^"]*)"|'([^']*)')/i);
+  return match?.[2] ?? match?.[3] ?? "";
+}
+
+function footnoteToken(text) {
+  const trimmed = text.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  return trimmed !== "" && /\d/.test(trimmed) && /^[\d,() ]+$/.test(trimmed);
+}
+
+// EDGAR renders these markers as a raised span, not a <sup> element.
+// Only a marker whose whole text is a footnote token is removed.
+function isFootnoteMarker(tag, body) {
+  if (!footnoteToken(cellText(body))) return false;
+  if (tag.name === "sup") return true;
+  if (tag.name !== "span") return false;
+  const style = styleOf(tag.raw);
+  return /position\s*:\s*relative/i.test(style) && /(?:^|;)\s*top\s*:\s*-/i.test(style);
+}
+
+function withoutFootnoteMarkers(inner) {
+  let out = "";
+  let index = 0;
+  while (index < inner.length) {
+    if (inner[index] !== "<") {
+      const next = inner.indexOf("<", index);
+      out += next < 0 ? inner.slice(index) : inner.slice(index, next);
+      index = next < 0 ? inner.length : next;
+      continue;
+    }
+    const tag = tagAt(inner, index);
+    if (!tag || tag.malformed) return inner;
+    if (!tag.closing && !tag.selfClosing && (tag.name === "span" || tag.name === "sup")) {
+      const close = closeTagAt(inner, tag.end, tag.name);
+      if (typeof close === "number" && close >= 0) {
+        const endTag = tagAt(inner, close);
+        if (endTag && isFootnoteMarker(tag, inner.slice(tag.end, close))) {
+          index = endTag.end;
+          continue;
+        }
+      }
+    }
+    out += inner[index];
+    index += 1;
+  }
+  return out;
+}
+
 function matchedText(inner) {
-  return cellText(inner.replace(/<br\s*\/?>/gi, " ")).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  return cellText(withoutFootnoteMarkers(inner.replace(/<br\s*\/?>/gi, " ")))
+    .replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function gridOf(rowHtml) {
@@ -78,7 +125,7 @@ function gridOf(rowHtml) {
       cells.push({
         slot: 0,
         colspan: colspanOf(tag.raw),
-        rawText: cellText(cellInner),
+        rawText: cellText(withoutFootnoteMarkers(cellInner)),
         matchedText: matchedText(cellInner),
         tagged: /<ix:/i.test(cellInner),
       });
@@ -124,11 +171,11 @@ function citesContext(rowHtml, contextId) {
   return false;
 }
 
-function headingFor(rows, grids, tableStart, rowIndex, label) {
+function headingFor(rows, grids, tableStart, rowIndex, labels) {
   const found = [];
   for (let index = rowIndex - 1; index >= 0; index -= 1) {
     if (rows[index].start < tableStart) break;
-    const hits = (grids[index] ?? []).filter((cell) => !cell.tagged && cell.matchedText === label);
+    const hits = (grids[index] ?? []).filter((cell) => !cell.tagged && labels.has(cell.matchedText));
     if (hits.length > 1) return { ambiguous: true };
     if (hits.length === 1) found.push({ index, cell: hits[0] });
   }
@@ -148,7 +195,23 @@ export function researchHeadAction(heads, rawText) {
   return "CONFLICT";
 }
 
-// Null means the bound row does not have both untagged cells. Nothing is inferred.
+function fieldFrom(fieldCode, value, rowIndex, heading) {
+  return {
+    fieldCode,
+    rawText: value.rawText,
+    rowOrdinal: rowIndex + 1,
+    slotOrdinal: value.slot,
+    heading: {
+      rowOrdinal: heading.index + 1,
+      slotOrdinal: heading.cell.slot,
+      rawText: heading.cell.rawText,
+      matchedText: heading.cell.matchedText,
+    },
+  };
+}
+
+// Null means this row has no untagged Type cell under an Industry heading.
+// An empty Industry cell is left absent. Another row is never consulted.
 export function boundContextResearchCells(html, contextId) {
   if (typeof html !== "string" || typeof contextId !== "string" || contextId === "") return null;
   const rows = locatedRows(html);
@@ -161,25 +224,19 @@ export function boundContextResearchCells(html, contextId) {
   const grids = rows.map((row) => gridOf(row.html));
   const valueCells = grids[rowIndex];
   if (!valueCells) return null;
+  const industryHeading = headingFor(rows, grids, tableStart, rowIndex, INDUSTRY_LABELS);
+  const typeHeading = headingFor(rows, grids, tableStart, rowIndex, TYPE_LABELS);
+  if (!industryHeading || industryHeading.ambiguous) return null;
+  if (!typeHeading || typeHeading.ambiguous) return null;
+  const typeValue = valueAt(valueCells, typeHeading.cell.slot);
+  if (!typeValue || typeValue.tagged || typeValue.rawText === "") return null;
   const fields = [];
-  for (const [label, fieldCode] of HEADING_FIELD) {
-    const heading = headingFor(rows, grids, tableStart, rowIndex, label);
-    if (!heading || heading.ambiguous) return null;
-    const value = valueAt(valueCells, heading.cell.slot);
-    if (!value || value.tagged || value.rawText === "") return null;
-    fields.push({
-      fieldCode,
-      rawText: value.rawText,
-      rowOrdinal: rowIndex + 1,
-      slotOrdinal: value.slot,
-      heading: {
-        rowOrdinal: heading.index + 1,
-        slotOrdinal: heading.cell.slot,
-        rawText: heading.cell.rawText,
-        matchedText: heading.cell.matchedText,
-      },
-    });
+  const industryValue = valueAt(valueCells, industryHeading.cell.slot);
+  if (industryValue?.tagged) return null;
+  if (industryValue && industryValue.rawText !== "") {
+    fields.push(fieldFrom("INDUSTRY", industryValue, rowIndex, industryHeading));
   }
+  fields.push(fieldFrom("INSTRUMENT_TYPE", typeValue, rowIndex, typeHeading));
   fields.sort((left, right) => left.fieldCode.localeCompare(right.fieldCode));
   return { contextId, rowOrdinal: rowIndex + 1, fields };
 }
