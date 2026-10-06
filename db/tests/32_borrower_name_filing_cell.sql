@@ -208,7 +208,7 @@ SELECT pg_temp.expect_ok('IXBRL_FACT is a second FILING_CELL locator on the same
     VALUES (%s, 'FILING_CELL', 'TEST IX COMPANY', 'RAW_ONLY', %s, %s, %s)$$,
   pg_temp.fx('po_a'), pg_temp.fx('r_field'), pg_temp.fx('e_ixbrl'), pg_temp.fx('run'))]);
 
-SELECT pg_temp.expect_error('the same FILING_CELL evidence cannot be stored twice on one position', '23505', ARRAY[format(
+SELECT pg_temp.expect_error('a second FILING_CELL root for the same evidence is rejected', 'BDCS1', ARRAY[format(
   $$INSERT INTO obs.borrower_name_observation (position_observation_id, name_source, raw_text,
       extraction_state, rule_version_id, evidence_id, run_id)
     VALUES (%s, 'FILING_CELL', 'TEST  COMPANY CELL', 'RAW_ONLY', %s, %s, %s)$$,

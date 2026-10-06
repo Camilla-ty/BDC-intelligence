@@ -632,6 +632,36 @@ $$;
 
 COMMENT ON FUNCTION obs.check_borrower_name_observation() IS 'SOI_CELL must match the origin SOI cell through L1 TSV_CELL evidence. FILING_CELL cites L2 HTML_ANCHOR, IXBRL_FACT, or an HTML_TABLE_CELL on the disclosure block start row. The function does not parse HTML and does not read holding_descriptor_raw.';
 
+CREATE FUNCTION obs.check_borrower_name_successor() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  previous_rule bigint;
+  previous_state text;
+  previous_text text;
+BEGIN
+  IF NEW.supersedes_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT rule_version_id, extraction_state, normalized_text
+    INTO previous_rule, previous_state, previous_text
+  FROM obs.borrower_name_observation
+  WHERE id = NEW.supersedes_id;
+  IF NOT FOUND THEN
+    RETURN NEW;
+  END IF;
+  IF previous_rule IS NOT DISTINCT FROM NEW.rule_version_id
+     AND previous_state IS NOT DISTINCT FROM NEW.extraction_state
+     AND previous_text IS NOT DISTINCT FROM NEW.normalized_text THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCS1',
+      MESSAGE = 'obs.borrower_name_observation: a successor must change rule_version_id, extraction_state, or normalized_text';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+COMMENT ON FUNCTION obs.check_borrower_name_successor() IS 'A successor must change the rule version, the extraction state, or the normalized text. raw_text may differ when the reason records a capture correction.';
+
 CREATE FUNCTION obs.check_field_value_corroboration() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -2861,9 +2891,12 @@ CREATE TABLE obs.borrower_name_observation (
     run_id bigint NOT NULL,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
     name_source text DEFAULT 'SOI_CELL'::text NOT NULL,
+    supersedes_id bigint,
+    supersede_reason text,
     CONSTRAINT borrower_name_observation_check CHECK (((extraction_state = 'EXTRACTED'::text) = (normalized_text IS NOT NULL))),
     CONSTRAINT borrower_name_observation_extraction_state_check CHECK ((extraction_state = ANY (ARRAY['RAW_ONLY'::text, 'EXTRACTED'::text, 'UNRESOLVED'::text]))),
     CONSTRAINT borrower_name_observation_name_source_check CHECK ((name_source = ANY (ARRAY['SOI_CELL'::text, 'FILING_CELL'::text]))),
+    CONSTRAINT borrower_name_observation_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id)),
     CONSTRAINT borrower_name_observation_raw_text_check CHECK ((raw_text <> ''::text)),
     CONSTRAINT borrower_name_observation_source_column_position_check CHECK ((source_column_position >= 1))
 );
@@ -2871,6 +2904,10 @@ CREATE TABLE obs.borrower_name_observation (
 COMMENT ON TABLE obs.borrower_name_observation IS 'Name text as disclosed. It is an observation, not a legal entity; linking happens only through resolution decisions.';
 
 COMMENT ON COLUMN obs.borrower_name_observation.name_source IS 'SOI_CELL cites an origin SOI cell. FILING_CELL cites a primary-filing cell and leaves the SOI source columns null. Neither source is derived from holding_descriptor_raw.';
+
+COMMENT ON COLUMN obs.borrower_name_observation.supersedes_id IS 'The borrower-name row this row replaces. Null on a root. The replaced row is not updated.';
+
+COMMENT ON COLUMN obs.borrower_name_observation.supersede_reason IS 'Why this row replaces supersedes_id. Required when supersedes_id is set. Null on a root.';
 
 ALTER TABLE obs.borrower_name_observation ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME obs.borrower_name_observation_id_seq
@@ -2880,6 +2917,28 @@ ALTER TABLE obs.borrower_name_observation ALTER COLUMN id ADD GENERATED ALWAYS A
     NO MAXVALUE
     CACHE 1
 );
+
+CREATE VIEW obs.current_borrower_name_observation AS
+ SELECT id,
+    position_observation_id,
+    source_column_label,
+    source_column_position,
+    raw_text,
+    normalized_text,
+    extraction_state,
+    rule_version_id,
+    evidence_id,
+    run_id,
+    recorded_at,
+    name_source,
+    supersedes_id,
+    supersede_reason
+   FROM obs.borrower_name_observation b
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM obs.borrower_name_observation s
+          WHERE (s.supersedes_id = b.id))));
+
+COMMENT ON VIEW obs.current_borrower_name_observation IS 'The head of each borrower-name chain. One position may have several heads when its cells differ. A head is not a legal entity.';
 
 CREATE TABLE obs.position_field_value (
     id bigint NOT NULL,
@@ -6108,7 +6167,13 @@ CREATE UNIQUE INDEX instrument_attribute_assertion_supersedes_once ON identity.i
 
 CREATE UNIQUE INDEX legal_entity_alias_supersedes_once ON identity.legal_entity_alias USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
-CREATE UNIQUE INDEX borrower_name_observation_filing_cell_evidence_uidx ON obs.borrower_name_observation USING btree (position_observation_id, evidence_id) WHERE (name_source = 'FILING_CELL'::text);
+CREATE UNIQUE INDEX borrower_name_observation_filing_cell_root_uidx ON obs.borrower_name_observation USING btree (position_observation_id, evidence_id) WHERE ((name_source = 'FILING_CELL'::text) AND (supersedes_id IS NULL));
+
+COMMENT ON INDEX obs.borrower_name_observation_filing_cell_root_uidx IS 'One FILING_CELL root per position and evidence. A successor reuses that evidence and sets supersedes_id.';
+
+CREATE INDEX borrower_name_observation_subject_idx ON obs.borrower_name_observation USING btree (position_observation_id, evidence_id, name_source, source_column_label, source_column_position);
+
+CREATE UNIQUE INDEX borrower_name_observation_supersedes_once ON obs.borrower_name_observation USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
 CREATE INDEX maturity_inspection_subject_idx ON obs.maturity_inspection USING btree (position_observation_id);
 
@@ -6314,6 +6379,8 @@ CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.soi_row_observation F
 
 CREATE TRIGGER check_borrower_name_observation BEFORE INSERT ON obs.borrower_name_observation FOR EACH ROW EXECUTE FUNCTION obs.check_borrower_name_observation();
 
+CREATE TRIGGER check_borrower_name_successor BEFORE INSERT ON obs.borrower_name_observation FOR EACH ROW EXECUTE FUNCTION obs.check_borrower_name_successor();
+
 CREATE TRIGGER check_field_value_corroboration BEFORE INSERT ON obs.field_value_corroboration FOR EACH ROW EXECUTE FUNCTION obs.check_field_value_corroboration();
 
 CREATE TRIGGER check_group_member BEFORE INSERT ON obs.position_observation_group_member FOR EACH ROW EXECUTE FUNCTION obs.check_group_member();
@@ -6335,6 +6402,8 @@ CREATE TRIGGER check_position_observation_source BEFORE INSERT ON obs.position_o
 CREATE TRIGGER check_soi_row_classification BEFORE INSERT ON obs.soi_row_classification FOR EACH ROW EXECUTE FUNCTION obs.check_soi_row_classification();
 
 CREATE TRIGGER check_soi_row_observation BEFORE INSERT ON obs.soi_row_observation FOR EACH ROW EXECUTE FUNCTION obs.check_soi_row_observation();
+
+CREATE TRIGGER check_supersession BEFORE INSERT ON obs.borrower_name_observation FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('position_observation_id,evidence_id,name_source,source_column_label,source_column_position', 'single_chain');
 
 CREATE TRIGGER check_supersession BEFORE INSERT ON obs.maturity_inspection FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('position_observation_id', 'single_chain');
 
@@ -6757,6 +6826,9 @@ ALTER TABLE ONLY obs.borrower_name_observation
 
 ALTER TABLE ONLY obs.borrower_name_observation
     ADD CONSTRAINT borrower_name_observation_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY obs.borrower_name_observation
+    ADD CONSTRAINT borrower_name_observation_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES obs.borrower_name_observation(id);
 
 ALTER TABLE ONLY obs.field_value_corroboration
     ADD CONSTRAINT field_value_corroboration_field_value_id_fkey FOREIGN KEY (field_value_id) REFERENCES obs.position_field_value(id);
@@ -7540,6 +7612,9 @@ GRANT SELECT,INSERT ON TABLE identity."position" TO bdc_pipeline_writer;
 GRANT SELECT,INSERT ON TABLE obs.borrower_name_observation TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE obs.borrower_name_observation_id_seq TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE obs.current_borrower_name_observation TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE obs.current_borrower_name_observation TO bdc_reader;
 
 GRANT SELECT,INSERT ON TABLE obs.position_field_value TO bdc_pipeline_writer;
 
