@@ -7,6 +7,7 @@ import { listIxContextRows } from "../normalize/ix-context-row.mjs";
 import {
   NO_BIND_REASON, bindMaturityContext, bindMaturityContextRows, normalizeDisplayedDate, rejectSharedContextBinds,
 } from "../normalize/maturity-context-bind.mjs";
+import { RULE_TEXT, RULE_TEXT_VERSION_3, RULE_VERSION } from "../load/maturity-inspection-batch.mjs";
 
 const REPORTED = "2099-12-31";
 
@@ -842,6 +843,109 @@ test("stored accession 0001976719-24-000003 selects the maturity month", (t) => 
   assert.equal(bound.displayedYear, 2028);
   assert.equal(bound.displayedMonth, 12);
   assert.notEqual(bound.rawValue, "10/2023");
+});
+
+const STORED_ACQUISITION = { field_code: "ACQUISITION_DATE", raw_value: "04/2099", normalized_numeric: null };
+const PRINCIPAL_WITH_ACQUISITION = [
+  { field_code: "PRINCIPAL_AMOUNT", raw_value: "100000.0000", normalized_numeric: "100000.0000" },
+  STORED_ACQUISITION,
+];
+
+function principalRow(contextId, factId, extraFacts = [], cells = "") {
+  return row(contextId, [
+    { id: factId, name: "InvestmentOwnedBalancePrincipalAmount", scale: "3", text: "100" },
+    ...extraFacts,
+  ], cells);
+}
+
+function acquisitionNames(bound) {
+  return bound.facts.filter((fact) => String(fact.name).endsWith("InvestmentAcquisitionDate")).map((fact) => fact.id);
+}
+
+test("a missing InvestmentAcquisitionDate fact does not reject a unique principal match", () => {
+  const html = `<table><tr>${td("Purchase Date")}${td("Maturity")}</tr>${principalRow("c-1", "f-p", [], `${td("04/2099")}${td("12/2099")}`)}</table>`;
+  const bound = bind(html, PRINCIPAL_WITH_ACQUISITION);
+  assert.equal(bound.outcome, "FILING_MONTH");
+  assert.equal(bound.contextId, "c-1");
+  assert.equal(bound.rawValue, "12/2099");
+  assert.equal(bound.displayedYear, 2099);
+  assert.equal(bound.displayedMonth, 12);
+  assert.deepEqual(bound.facts.map((fact) => fact.id), ["f-p"]);
+  assert.deepEqual(acquisitionNames(bound), []);
+});
+
+test("a matching InvestmentAcquisitionDate fact still binds", () => {
+  const html = `<table><tr>${td("Maturity")}</tr>${principalRow("c-1", "f-p", [
+    { id: "f-a", name: "InvestmentAcquisitionDate", text: "04/2099" },
+  ], td("12/2099"))}</table>`;
+  const bound = bind(html, PRINCIPAL_WITH_ACQUISITION);
+  assert.equal(bound.outcome, "FILING_MONTH");
+  assert.equal(bound.contextId, "c-1");
+  assert.deepEqual(acquisitionNames(bound), ["f-a"]);
+});
+
+test("a different InvestmentAcquisitionDate fact rejects the candidate", () => {
+  const html = `<table>${principalRow("c-1", "f-p", [
+    { id: "f-a", name: "InvestmentAcquisitionDate", text: "05/2099" },
+  ])}</table>`;
+  const bound = bind(html, PRINCIPAL_WITH_ACQUISITION);
+  assert.equal(bound.outcome, "UNKNOWN");
+  assert.equal(bound.noBindReason, NO_BIND_REASON.NO_MATCH);
+  assert.equal(bound.contextId, null);
+  assert.deepEqual(bound.facts, []);
+});
+
+test("untagged Purchase Date text is not an acquisition-date fact", () => {
+  const html = `<table><tr>${td("Purchase Date")}${td("Maturity")}</tr>${principalRow("c-1", "f-p", [], `${td("05/2099")}${td("12/2099")}`)}</table>`;
+  const bound = bind(html, PRINCIPAL_WITH_ACQUISITION);
+  assert.equal(bound.outcome, "FILING_MONTH");
+  assert.equal(bound.rawValue, "12/2099");
+  assert.notEqual(bound.rawValue, "05/2099");
+  assert.deepEqual(acquisitionNames(bound), []);
+});
+
+test("a different context instant is rejected when acquisition date is absent", () => {
+  const html = `<table>${principalRow("c-mar", "f-m", [], "<td>2/4/2099</td>")}${principalRow("c-jun", "f-j", [], "<td>2/4/2099</td>")}</table>`;
+  const bound = bind(html, PRINCIPAL_WITH_ACQUISITION, MARCH, { "c-mar": MARCH, "c-jun": JUNE });
+  assert.equal(bound.outcome, "FILING_DISPLAYED");
+  assert.equal(bound.contextId, "c-mar");
+  assert.equal(bound.normalizedDate, "2099-02-04");
+  assert.deepEqual(bound.facts.map((fact) => fact.id), ["f-m"]);
+});
+
+test("two rows that still match after skipping acquisition date stay unresolved", () => {
+  const html = `<table>${principalRow("c-1", "f-1")}${principalRow("c-2", "f-2")}</table>`;
+  const bound = bind(html, PRINCIPAL_WITH_ACQUISITION);
+  assert.equal(bound.outcome, "UNKNOWN");
+  assert.equal(bound.noBindReason, NO_BIND_REASON.MULTIPLE_ROWS);
+  assert.equal(bound.reason, "more than one context matched");
+  assert.equal(bound.contextId, null);
+  assert.deepEqual(bound.contextIds, ["c-1", "c-2"]);
+  assert.equal(bound.rawValue ?? null, null);
+});
+
+test("a missing principal fact still rejects the row when acquisition date is absent", () => {
+  const html = `<table>${row("c-1", [
+    { id: "f-r", name: "InvestmentInterestRate", scale: "-2", text: "8.44" },
+  ])}</table>`;
+  const bound = bind(html, [
+    { field_code: "PRINCIPAL_AMOUNT", raw_value: "100000.0000", normalized_numeric: "100000.0000" },
+    { field_code: "INTEREST_RATE", raw_value: "0.0844", normalized_numeric: null },
+    STORED_ACQUISITION,
+  ]);
+  assert.equal(bound.outcome, "UNKNOWN");
+  assert.equal(bound.noBindReason, NO_BIND_REASON.NO_MATCH);
+  assert.equal(bound.contextId, null);
+});
+
+test("maturity bind rule version 4 is separate from the stored version 3 definition", () => {
+  assert.equal(RULE_VERSION, "4");
+  assert.match(RULE_TEXT_VERSION_3, /^pipeline\.maturity_context_bind version 3\n/);
+  assert.equal(RULE_TEXT_VERSION_3.includes("no InvestmentAcquisitionDate fact"), false);
+  assert.match(RULE_TEXT, /^pipeline\.maturity_context_bind version 4\n/);
+  assert.match(RULE_TEXT, /except a stored ACQUISITION_DATE on a context that has no InvestmentAcquisitionDate fact/);
+  assert.match(RULE_TEXT, /untagged Purchase Date text is not used/);
+  assert.equal(RULE_TEXT.includes("A context row is eligible only when its context period end"), true);
 });
 
 test("a zero-value warrant keeps acquisition date and expiration prose out of maturity", () => {

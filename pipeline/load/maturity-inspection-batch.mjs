@@ -39,11 +39,28 @@ const FETCH_ACCESSIONS = new Set([
   "0001193125-26-348682",
 ]);
 
-export const RULE_VERSION = "3";
-
-const RULE_TEXT = [
-  `pipeline.maturity_context_bind version ${RULE_VERSION}`,
+// Stored definition for pipeline.maturity_context_bind version 3. Production runs keep
+// this text. ensureRule inserts version 4 and does not rewrite this definition.
+export const RULE_TEXT_VERSION_3 = [
+  "pipeline.maturity_context_bind version 3",
   "Bind a position only when every comparable stored field equals a tagged fact on one context row.",
+  "A context row is eligible only when its context period end (instant, or endDate of a duration) equals the position reported date as the same yyyy-mm-dd; no rounding.",
+  "A fact with format ixt:fixed-zero displayed as an em dash is the number 0; any other fixed-zero display is not compared.",
+  "A maturity header is the whole cell Maturity or Maturity/Expiration Date. Maturity Date is not a maturity header.",
+  "An acquisition header is the whole cell Purchase Date, or Acquisition Date with its numbered suffix. Purchase Date is never a maturity.",
+  "FILING_DISPLAYED stores one month/day/four-digit-year date.",
+  "FILING_MONTH stores one month/year from a maturity header or tagged maturity fact, with displayed_year and displayed_month. normalized_date stays null.",
+  "A two-digit year stays raw on an UNRESOLVED candidate and is not normalized.",
+  "An untagged month with no maturity header stays an unresolved candidate.",
+  "No context bind leaves the position UNKNOWN.",
+].join("\n");
+
+export const RULE_VERSION = "4";
+
+export const RULE_TEXT = [
+  `pipeline.maturity_context_bind version ${RULE_VERSION}`,
+  "Bind a position only when every comparable stored field equals a tagged fact on one context row, except a stored ACQUISITION_DATE on a context that has no InvestmentAcquisitionDate fact.",
+  "When that fact is present, every such fact text must equal the stored raw value or the candidate is rejected. When it is absent, the candidate is not rejected for that field, no acquisition evidence fact is recorded, and untagged Purchase Date text is not used.",
   "A context row is eligible only when its context period end (instant, or endDate of a duration) equals the position reported date as the same yyyy-mm-dd; no rounding.",
   "A fact with format ixt:fixed-zero displayed as an em dash is the number 0; any other fixed-zero display is not compared.",
   "A maturity header is the whole cell Maturity or Maturity/Expiration Date. Maturity Date is not a maturity header.",

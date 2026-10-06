@@ -1,8 +1,10 @@
 // Bind one position to a single iXBRL context row.
 // A context matches only when its period end equals the position's reported date and
-// every comparable stored field equals a tagged fact on that context. Identifier text is
-// not used. A displayed maturity date is read after the context is bound. A two-digit
-// year is kept as raw text and is not normalized.
+// every comparable stored field equals a tagged fact on that context. A stored
+// ACQUISITION_DATE is compared only when that context has an InvestmentAcquisitionDate
+// fact. Absence of that fact does not reject the row, and untagged Purchase Date text
+// is not used. Identifier text is not used. A displayed maturity date is read after
+// the context is bound. A two-digit year is kept as raw text and is not normalized.
 
 import { normalizeDisclosedDate } from "./date-heading.mjs";
 import { listIxContextRows } from "./ix-context-row.mjs";
@@ -97,7 +99,10 @@ export function normalizeDisplayedDate(raw) {
 function contextMatches(facts, fields) {
   for (const field of fields) {
     const conceptFacts = facts.filter((fact) => CONCEPT_FIELD[localName(fact.name)] === field.field_code);
-    if (conceptFacts.length === 0) return false;
+    if (conceptFacts.length === 0) {
+      if (field.field_code === "ACQUISITION_DATE") continue;
+      return false;
+    }
     if (field.field_code === "ACQUISITION_DATE") {
       if (!conceptFacts.every((fact) => fact.text === String(field.raw_value).trim())) return false;
       continue;
