@@ -12,6 +12,8 @@ export function SectionHeading() {
         ? "Maturity wall"
         : path.startsWith("/market")
           ? "Market coverage"
-          : "Find Borrowers";
+          : path === "/login" || path === "/account"
+            ? "Account"
+            : "Find Borrowers";
   return <p className="text-xs uppercase tracking-wider text-muted">{label}</p>;
 }
