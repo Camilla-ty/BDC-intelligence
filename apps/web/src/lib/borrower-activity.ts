@@ -28,7 +28,7 @@ export type StoredDifference = {
   text: string;
 };
 
-function storedSign(delta: string): "higher" | "lower" | "same" | null {
+export function storedDeltaSign(delta: string): "higher" | "lower" | "same" | null {
   if (!/^-?\d+(\.\d+)?$/.test(delta)) return null;
   const digits = delta.replace("-", "").replace(".", "");
   if ([...digits].every((digit) => digit === "0")) return "same";
@@ -82,7 +82,7 @@ export function storedDifferences(comparisons: PositionComparison[]): StoredDiff
         continue;
       }
       if (field.label !== "Principal" && field.label !== "Fair value") continue;
-      const sign = storedSign(field.change);
+      const sign = storedDeltaSign(field.change);
       if (sign == null) continue;
       const relation = sign === "higher" ? "higher" : sign === "lower" ? "lower" : "the same";
       differences.push({

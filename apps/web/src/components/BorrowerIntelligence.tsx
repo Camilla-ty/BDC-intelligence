@@ -28,6 +28,12 @@ import {
   type StoredField,
 } from "@/lib/borrower-positions";
 import {
+  EMPTY_WHAT_CHANGED,
+  WHAT_CHANGED_NOTE,
+  whatChanged,
+  type WhatChangedItem,
+} from "@/lib/borrower-what-changed";
+import {
   ABSENT_EVENT_LABEL,
   CIK_NOTE,
   COVERAGE_NOTE,
@@ -122,6 +128,66 @@ function PositionTable({ rows }: { rows: HistoricalPosition[] }) {
   );
 }
 
+function WhatChangedList({ items }: { items: WhatChangedItem[] }) {
+  return (
+    <div className="mt-3 flex flex-col gap-4">
+      {items.map((item) => (
+        <article key={item.key} className="text-sm">
+          <h4 className="font-semibold text-navy">{item.statement}</h4>
+          <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Legal entity</dt>
+              <dd className="break-words">{item.legalEntityName}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Instrument</dt>
+              <dd><StateText text={item.instrument} /></dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Position</dt>
+              <dd className="break-all">{item.positionId}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Reporting dates</dt>
+              <dd>{item.earlierDate} to {item.laterDate}</dd>
+            </div>
+            {item.storedDelta != null ? (
+              <div>
+                <dt className="text-xs uppercase tracking-wider text-muted">Stored delta</dt>
+                <dd>{item.storedDelta}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Earlier accession</dt>
+              <dd>
+                <SecLink href={item.earlierUrl} missing={item.earlierAccession}>{item.earlierAccession}</SecLink>
+                {" · "}
+                <StateText text={item.earlierEvidence} />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Earlier observation evidence</dt>
+              <dd><StateText text={item.earlierEvidenceId} /></dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Later accession</dt>
+              <dd>
+                <SecLink href={item.laterUrl} missing={item.laterAccession}>{item.laterAccession}</SecLink>
+                {" · "}
+                <StateText text={item.laterEvidence} />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Later observation evidence</dt>
+              <dd><StateText text={item.laterEvidenceId} /></dd>
+            </div>
+          </dl>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function bdcName(borrower: BorrowerDetail, cik: string): string {
   const matches = borrower.registrants.filter((registrant) => registrant.cik === cik);
   if (matches.length !== 1) return "Unknown";
@@ -171,6 +237,7 @@ export function BorrowerIntelligence({
   const groups = positionGroups(positions);
   const activity = observedActivity(positions, comparisons);
   const differences = storedDifferences(comparisons);
+  const changes = whatChanged(comparisons, positions, borrower.name);
   return (
     <article>
       <p className="text-xs uppercase tracking-wider text-muted">Borrower</p>
@@ -228,6 +295,11 @@ export function BorrowerIntelligence({
             <dd><StateText text={activity.latest} /></dd>
           </div>
         </dl>
+        <h3 className="mt-4 text-sm font-semibold text-navy">What Changed</h3>
+        <p className="mt-1 text-sm">{WHAT_CHANGED_NOTE}</p>
+        {comparisonError ? <p className="mt-3 text-sm">{comparisonError}</p> : null}
+        {!comparisonError && changes.length === 0 ? <p className="mt-3 text-sm">{EMPTY_WHAT_CHANGED}</p> : null}
+        {!comparisonError && changes.length > 0 ? <WhatChangedList items={changes} /> : null}
       </section>
 
       <section className="mt-8">

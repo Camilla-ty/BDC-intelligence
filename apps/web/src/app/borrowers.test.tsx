@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -12,6 +14,7 @@ import {
   type PositionComparisonRow,
 } from "@/lib/borrower-comparisons";
 import { observedActivity, storedDifferences } from "@/lib/borrower-activity";
+import { EMPTY_WHAT_CHANGED, WHAT_CHANGED_NOTE, whatChanged } from "@/lib/borrower-what-changed";
 import { BorrowerIntelligence } from "@/components/BorrowerIntelligence";
 import {
   ACQUISITION_LABEL,
@@ -705,6 +708,332 @@ describe("confirmed position changes", () => {
     expect(storedDifferences(positionComparisons([
       comparison({ principal_delta: "not-stored", fair_value_comparison_state: "INSUFFICIENT_DATA", maturity_changed: null, maturity_comparison_state: "INSUFFICIENT_DATA" }),
     ], listings, ID))).toEqual([]);
+  });
+});
+
+const LIEN = "00000000-0000-4000-8000-0000000000c1";
+const REVOLVER = "00000000-0000-4000-8000-0000000000c2";
+const PREFERRED_EQUITY = "00000000-0000-4000-8000-0000000000c3";
+const PREFERRED_STOCK = "00000000-0000-4000-8000-0000000000c4";
+
+function quietComparison(overrides: Partial<PositionComparisonRow> = {}): PositionComparisonRow {
+  return comparison({
+    principal_delta: "0",
+    fair_value_delta: "0",
+    maturity_changed: false,
+    cost_comparison_state: "INSUFFICIENT_DATA",
+    earlier_cost_raw: null,
+    later_cost_raw: null,
+    cost_delta: null,
+    interest_rate_floor_comparison_state: "INSUFFICIENT_DATA",
+    earlier_interest_rate_floor_raw: null,
+    later_interest_rate_floor_raw: null,
+    interest_rate_floor_delta: null,
+    acquisition_comparison_state: "INSUFFICIENT_DATA",
+    earlier_acquisition_raw: null,
+    later_acquisition_raw: null,
+    ...overrides,
+  });
+}
+
+describe("what changed", () => {
+  const listings = [
+    row({
+      alias_text: "TEST CHYRONHEGO",
+      accession_number: "0000000000-99-000001",
+      document_url: `${EDGAR_DOCUMENT_PREFIX}0000000000/000000000099000001/test-filing.htm`,
+    }),
+    row({
+      alias_text: "TEST CHYRONHEGO",
+      accession_number: "0000000000-99-000002",
+      document_url: `${EDGAR_DOCUMENT_PREFIX}0000000000/000000000099000002/other-filing.htm`,
+    }),
+  ];
+
+  function typedPositions(types: Array<[string, string]>) {
+    const observations = types.flatMap(([observationId], index) => [
+      position({
+        position_observation_id: observationId,
+        reported_date: index % 2 === 0 ? "2099-03-31" : "2099-06-30",
+        accession_number: index % 2 === 0 ? "0000000000-99-000001" : "0000000000-99-000002",
+        instrument_resolution_state: "MATCHED",
+        continuity_state: "MATCHED",
+      }),
+    ]);
+    const research: ResearchFieldRow[] = types.map(([observationId, instrument]) => ({
+      position_observation_id: observationId,
+      field_code: "INSTRUMENT_TYPE",
+      raw_value: instrument,
+      value_state: "REPORTED",
+      evidence_level: "L1_STRUCTURED_DATASET",
+    }));
+    return historicalPositions(observations, listings, ID, research);
+  }
+
+  it("lists only stored principal, fair value, and maturity movements", () => {
+    const comparisons = positionComparisons([
+      quietComparison({ principal_delta: "7" }),
+      quietComparison({
+        position_id: "00000000-0000-4000-8000-0000000000d1",
+        earlier_position_observation_id: "9100000011",
+        later_position_observation_id: "9100000012",
+        principal_delta: "-4",
+      }),
+      quietComparison({
+        position_id: "00000000-0000-4000-8000-0000000000d2",
+        earlier_position_observation_id: "9100000013",
+        later_position_observation_id: "9100000014",
+        fair_value_delta: "8",
+      }),
+      quietComparison({
+        position_id: "00000000-0000-4000-8000-0000000000d3",
+        earlier_position_observation_id: "9100000015",
+        later_position_observation_id: "9100000016",
+        fair_value_delta: "-2",
+      }),
+      quietComparison({
+        position_id: "00000000-0000-4000-8000-0000000000d4",
+        earlier_position_observation_id: "9100000017",
+        later_position_observation_id: "9100000018",
+        maturity_changed: true,
+        earlier_maturity_raw: "2099-01-31",
+        later_maturity_raw: "2100-01-31",
+        earlier_maturity_precision: "DAY",
+        later_maturity_precision: "DAY",
+      }),
+    ], listings, ID);
+    const items = whatChanged(comparisons, [], "TEST BORROWER A");
+    expect(items.map((item) => item.signal)).toEqual([
+      "principal-increased",
+      "principal-decreased",
+      "fair-value-increased",
+      "fair-value-decreased",
+      "maturity-changed",
+    ]);
+    expect(items.map((item) => item.statement)).toEqual([
+      "Principal increased by 7 · Currency Unknown.",
+      "Principal decreased by 4 · Currency Unknown.",
+      "Fair value increased by 8 · Currency Unknown.",
+      "Fair value decreased by 2 · Currency Unknown.",
+      "Maturity changed from 2099-01-31 to 2100-01-31.",
+    ]);
+    expect(items.map((item) => item.storedDelta)).toEqual(["7", "-4", "8", "-2", null]);
+    expect(items.every((item) => item.legalEntityName === "TEST BORROWER A")).toBe(true);
+    expect(items.every((item) => item.earlierDate === "2099-03-31" && item.laterDate === "2099-06-30")).toBe(true);
+    expect(new Set(items.map((item) => item.positionId)).size).toBe(5);
+  });
+
+  it("omits comparable-but-unchanged values and insufficient cost", () => {
+    const comparisons = positionComparisons([
+      quietComparison({
+        cost_comparison_state: "INSUFFICIENT_DATA",
+        cost_delta: "50",
+        interest_rate_comparison_state: "COMPARABLE",
+        earlier_interest_rate_raw: "0.01",
+        later_interest_rate_raw: "0.02",
+        interest_rate_delta: "0.01",
+        spread_comparison_state: "COMPARABLE",
+        earlier_spread_raw: "0.01",
+        later_spread_raw: "0.03",
+        spread_delta: "0.02",
+        interest_rate_floor_comparison_state: "COMPARABLE",
+        earlier_interest_rate_floor_raw: "0.01",
+        later_interest_rate_floor_raw: "0.04",
+        interest_rate_floor_delta: "0.03",
+        acquisition_comparison_state: "COMPARABLE",
+        earlier_acquisition_raw: "2099-01-01",
+        later_acquisition_raw: "2099-02-01",
+      }),
+    ], listings, ID);
+    expect(whatChanged(comparisons, [], "TEST BORROWER A")).toEqual([]);
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "What Changed" }).closest("section");
+    expect(section).toHaveTextContent(EMPTY_WHAT_CHANGED);
+    expect(section).toHaveTextContent(WHAT_CHANGED_NOTE);
+    expect(section).not.toHaveTextContent("Principal increased");
+    expect(section).not.toHaveTextContent("50");
+    expect(section).not.toHaveTextContent("0.01");
+    expect(section).not.toHaveTextContent("0.02");
+    expect(section).not.toHaveTextContent("0.03");
+  });
+
+  it("keeps ChyronHego First Lien and Revolver changes separate from Preferred Equity", () => {
+    const comparisons = positionComparisons([
+      quietComparison({
+        position_id: LIEN,
+        earlier_position_observation_id: "9100000101",
+        later_position_observation_id: "9100000102",
+        principal_delta: "11",
+        fair_value_delta: "12",
+        maturity_changed: true,
+        earlier_maturity_raw: "2099-12-31",
+        later_maturity_raw: "2101-12-31",
+        earlier_maturity_precision: "DAY",
+        later_maturity_precision: "DAY",
+      }),
+      quietComparison({
+        position_id: REVOLVER,
+        earlier_position_observation_id: "9100000201",
+        later_position_observation_id: "9100000202",
+        principal_delta: "13",
+        fair_value_delta: "-14",
+        maturity_changed: true,
+        earlier_maturity_raw: "2099-12-31",
+        later_maturity_raw: "2102-12-31",
+        earlier_maturity_precision: "DAY",
+        later_maturity_precision: "DAY",
+      }),
+      quietComparison({
+        position_id: PREFERRED_EQUITY,
+        earlier_position_observation_id: "9100000301",
+        later_position_observation_id: "9100000302",
+        principal_comparison_state: "INSUFFICIENT_DATA",
+        principal_delta: null,
+        fair_value_delta: "15",
+        maturity_comparison_state: "INSUFFICIENT_DATA",
+        maturity_changed: null,
+      }),
+      quietComparison({
+        position_id: PREFERRED_STOCK,
+        earlier_position_observation_id: "9100000401",
+        later_position_observation_id: "9100000402",
+        principal_comparison_state: "INSUFFICIENT_DATA",
+        principal_delta: null,
+        fair_value_comparison_state: "INSUFFICIENT_DATA",
+        fair_value_delta: null,
+        maturity_comparison_state: "INSUFFICIENT_DATA",
+        maturity_changed: null,
+      }),
+    ], listings, ID);
+    const positions = typedPositions([
+      ["9100000101", "First Lien"],
+      ["9100000102", "First Lien"],
+      ["9100000201", "Revolver"],
+      ["9100000202", "Revolver"],
+      ["9100000301", "Preferred Equity"],
+      ["9100000302", "Preferred Equity"],
+      ["9100000401", "Preferred Stock"],
+      ["9100000402", "Preferred Stock"],
+    ]);
+    const items = whatChanged(comparisons, positions, "TEST CHYRONHEGO");
+    const byPosition = (positionId: string) => items.filter((item) => item.positionId === positionId);
+    expect(byPosition(LIEN).map((item) => item.signal)).toEqual([
+      "principal-increased",
+      "fair-value-increased",
+      "maturity-changed",
+    ]);
+    expect(byPosition(LIEN).every((item) => item.instrument === "First Lien")).toBe(true);
+    expect(byPosition(REVOLVER).map((item) => `${item.signal}:${item.instrument}`)).toEqual([
+      "principal-increased:Revolver",
+      "fair-value-decreased:Revolver",
+      "maturity-changed:Revolver",
+    ]);
+    expect(byPosition(PREFERRED_EQUITY).map((item) => item.statement)).toEqual([
+      "Fair value increased by 15 · Currency Unknown.",
+    ]);
+    expect(byPosition(PREFERRED_EQUITY)[0]?.instrument).toBe("Preferred Equity");
+    expect(byPosition(PREFERRED_STOCK)).toEqual([]);
+    const preferred = byPosition(PREFERRED_EQUITY).map((item) => item.statement).join(" ");
+    expect(preferred).not.toContain("11");
+    expect(preferred).not.toContain("2101-12-31");
+    expect(preferred).not.toContain("2102-12-31");
+    expect(items.map((item) => item.statement).join(" ")).not.toMatch(
+      /credit improved|credit deteriorated|new money|repayment|refinanced|default|risk increased|risk decreased|origination|non-accrual|pik|exit|score|rank|new position/i,
+    );
+
+    const detail = borrowerDetail([row({ alias_text: "TEST CHYRONHEGO" })], ID);
+    render(<BorrowerIntelligence borrower={detail!} positions={positions} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "What Changed" }).closest("section");
+    expect(section).toHaveTextContent(WHAT_CHANGED_NOTE);
+    expect(section).toHaveTextContent("First Lien");
+    expect(section).toHaveTextContent("Revolver");
+    expect(section).toHaveTextContent("Preferred Equity");
+    expect(section).toHaveTextContent("Maturity changed from 2099-12-31 to 2101-12-31.");
+    expect(section).toHaveTextContent("Maturity changed from 2099-12-31 to 2102-12-31.");
+    expect(section).not.toHaveTextContent("Preferred Stock");
+    expect(section).not.toHaveTextContent(/credit improved|new money|repayment|refinanced|default/i);
+  });
+
+  it("keeps each observation evidence id with its own instrument and accession", () => {
+    const principal = quietComparison({
+      position_id: "00000000-0000-4000-8000-0000000000e1",
+      earlier_position_observation_id: "9100000501",
+      later_position_observation_id: "9100000502",
+      earlier_observation_evidence_id: "9199307",
+      later_observation_evidence_id: "9199308",
+      principal_delta: "7",
+      maturity_changed: false,
+    });
+    const maturity = quietComparison({
+      position_id: "00000000-0000-4000-8000-0000000000e2",
+      earlier_position_observation_id: "9100000601",
+      later_position_observation_id: "9100000602",
+      earlier_observation_evidence_id: "9200998",
+      later_observation_evidence_id: "9200999",
+      principal_delta: "0",
+      maturity_changed: true,
+      earlier_maturity_raw: "2099-02-01",
+      later_maturity_raw: "2100-02-01",
+      earlier_maturity_precision: "DAY",
+      later_maturity_precision: "DAY",
+    });
+    const missing = quietComparison({
+      position_id: "00000000-0000-4000-8000-0000000000e3",
+      earlier_position_observation_id: "9100000701",
+      later_position_observation_id: "9100000702",
+      earlier_observation_evidence_id: null,
+      later_observation_evidence_id: "   ",
+      principal_delta: "-3",
+      maturity_changed: false,
+    });
+    const comparisons = positionComparisons([principal, maturity, missing], listings, ID);
+    expect(comparisons.map((item) => [item.earlier.evidenceId, item.later.evidenceId])).toEqual([
+      ["9199307", "9199308"],
+      ["9200998", "9200999"],
+      ["Unknown", "Unknown"],
+    ]);
+    const items = whatChanged(comparisons, [], "TEST BORROWER A");
+    const principalItem = items.find((item) => item.signal === "principal-increased");
+    const maturityItem = items.find((item) => item.signal === "maturity-changed");
+    const missingItem = items.find((item) => item.signal === "principal-decreased");
+    expect(principalItem).toMatchObject({
+      earlierEvidenceId: "9199307",
+      laterEvidenceId: "9199308",
+      positionId: principal.position_id,
+      earlierAccession: "0000000000-99-000001",
+      laterAccession: "0000000000-99-000002",
+    });
+    expect(maturityItem).toMatchObject({
+      earlierEvidenceId: "9200998",
+      laterEvidenceId: "9200999",
+      positionId: maturity.position_id,
+    });
+    expect(missingItem).toMatchObject({ earlierEvidenceId: "Unknown", laterEvidenceId: "Unknown" });
+    expect(principalItem?.earlierEvidenceId).not.toBe(maturityItem?.earlierEvidenceId);
+    expect(maturityItem?.earlierEvidenceId).not.toBe(missingItem?.earlierEvidenceId);
+
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "What Changed" }).closest("section");
+    expect(section).toHaveTextContent("Earlier observation evidence");
+    expect(section).toHaveTextContent("Later observation evidence");
+    expect(section).toHaveTextContent("9199307");
+    expect(section).toHaveTextContent("9199308");
+    expect(section).toHaveTextContent("9200998");
+    expect(section).toHaveTextContent("9200999");
+    expect(section).toHaveTextContent("Unknown");
+    expect(section).toHaveTextContent(WHAT_CHANGED_NOTE);
+    const earlierLink = withinSectionLink(section, "0000000000-99-000001");
+    expect(earlierLink).toHaveAttribute("href", listings[0].document_url);
+    const laterLink = withinSectionLink(section, "0000000000-99-000002");
+    expect(laterLink).toHaveAttribute("href", listings[1].document_url);
+
+    const page = readFileSync(join(process.cwd(), "src/app/borrowers/[id]/page.tsx"), "utf8");
+    const loader = readFileSync(join(process.cwd(), "src/server/load-borrowers.ts"), "utf8");
+    expect(page.match(/loadBorrowerPositionComparisons/g)).toHaveLength(2);
+    expect(loader.match(/borrower_position_comparisons/g)).toHaveLength(1);
+    expect(loader).not.toMatch(/tsv_cell|TSV_CELL/);
   });
 });
 

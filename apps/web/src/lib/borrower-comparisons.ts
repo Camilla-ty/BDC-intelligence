@@ -84,6 +84,7 @@ export type ComparisonObservation = {
   accessionNumber: string;
   documentUrl: string | null;
   evidenceLabel: string;
+  evidenceId: string;
   registrantCik: string;
 };
 
@@ -143,6 +144,11 @@ function evidenceLabel(level: string | null): string {
   if (level === "L2_ORIGINAL_FILING") return "Original EDGAR filing";
   if (level === "L1_STRUCTURED_DATASET") return "Structured SEC data set";
   return "Unknown";
+}
+
+function storedEvidenceId(value: string | null): string {
+  if (value == null || value.trim() === "") return "Unknown";
+  return value;
 }
 
 function sideRegistrant(cik: string | null, status: string | null): string {
@@ -276,6 +282,7 @@ export function positionComparisons(
         accessionNumber: row.earlier_accession_number,
         documentUrl: documents.get(row.earlier_accession_number) ?? null,
         evidenceLabel: evidenceLabel(row.earlier_observation_evidence_level),
+        evidenceId: storedEvidenceId(row.earlier_observation_evidence_id),
         registrantCik: earlierRegistrant,
       },
       later: {
@@ -284,6 +291,7 @@ export function positionComparisons(
         accessionNumber: row.later_accession_number,
         documentUrl: documents.get(row.later_accession_number) ?? null,
         evidenceLabel: evidenceLabel(row.later_observation_evidence_level),
+        evidenceId: storedEvidenceId(row.later_observation_evidence_id),
         registrantCik: sideRegistrant(row.later_registrant_cik, row.later_registrant_link_status),
       },
       fields: [
