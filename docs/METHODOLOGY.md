@@ -33,6 +33,7 @@ implement them. The database structure that enforces these principles is describ
 | 0.10 | 2026-09-30 | P9-min: `event.registrant_first_observed_name` v1; other event types stay blocked |
 | 0.11 | 2026-10-07 | `resolution.entity_exact_company_cell_name` v1: legal entities come only from the primary-filing company cell or SOI `ISSUER_NAME`; Identifier Axis text is never a legal-entity name |
 | 0.12 | 2026-10-07 | `norm.instrument_type_footnote_ref` v1: trailing footnote markers on an HTML-cell instrument type are removed only when verified against row-linked Inline XBRL footnotes; P7 rules v2 use it for same-registrant, exact-identifier continuity only |
+| 0.13 | 2026-10-07 | `resolution.position_approved_continuity_supersession` v1: explicit historical correction that supersedes three audited run-49 continuity decisions; run 49 stays immutable; no automatic supersession |
 
 ## 2. Source hierarchy
 
@@ -203,7 +204,37 @@ Some filers print footnote references after the instrument type in the schedule 
 5. Fail closed: an unverifiable marker is never removed. The stored `INSTRUMENT_TYPE` field value is never rewritten.
 6. Use is limited to P7 continuity within one LINKED registrant and the exact identifier text (7.5). Instrument identity (`EXACT_IDENTIFIER_AND_TYPE`) still uses the raw type, so cross-BDC instrument identity is unchanged and this rule never merges instruments or series across BDCs.
 7. The raw type, normalized type, removed markers, footnote ids, and state with reason are recorded in the rationale of each new continuity decision whose type had a candidate run, and in the dry-run plan of `pipeline/resolve-eligible-instruments.mjs`. No schema change is needed: `identity.position` has no instrument column.
-8. Existing decisions are not updated. Observations decided under the version 1 P7 rules keep their decisions, including series that version 2 would key together. Replacing them requires explicit superseding decisions with a reason, which this rule does not create.
+8. Existing decisions are not updated. Observations decided under the version 1 P7 rules keep their decisions, including series that version 2 would key together. Replacing them requires explicit superseding decisions with a reason, which this rule does not create. The only such replacement is the approved correction in 7.8.
+
+### 7.8 `resolution.position_approved_continuity_supersession` v1 (historical correction)
+
+This is an explicit, approved historical correction. It is not P7 resolution: the P7 writer and `pipeline/resolve-eligible-instruments.mjs` never run it and never supersede an existing decision. It runs only through `npm run continuity:supersede-approved` (`pipeline/supersede-approved-continuity.mjs`).
+
+Run 49 decided continuity under the version 1 P7 rules, which keyed on the raw instrument type. Three later observations whose raw types differ from the earlier observation only in verified trailing footnote markers (7.7) were therefore placed in their own positions. A read-only evidence audit classified these three pairs as the same position in consecutive periods:
+
+| Later observation | Earlier observation | Registrant (CIK) | Exact identifier | Run 49 decision superseded | Target position (earlier observation's) |
+| --- | --- | --- | --- | --- | --- |
+| 893583 (2024-09-30) | 981407 (2024-06-30) | 1925531 | `Geo Parent Corporation, First Lien 1` | 1 | `4800a33c-eef6-47dc-a139-a038680ad3f5` |
+| 893584 (2024-09-30) | 981408 (2024-06-30) | 1925531 | `Geo Parent Corporation, First Lien 2` | 3 | `f852d4f5-73b2-4082-8b23-78ee2ba5f443` |
+| 893587 (2024-09-30) | 981411 (2024-06-30) | 1766037 | `Geo Parent Corporation, First Lien` | 5 | `d4b6ef3b-c03b-4615-8178-3ed688b0eb2d` |
+
+1. The allowlist is frozen in `pipeline/normalize/continuity-supersession.mjs` and is part of the rule checksum. The command takes no pair arguments. Changing a pair requires a new rule version and a new approval.
+2. Each entry pins the later and earlier observation ids, the exact identifier text, the registrant CIK, both reported dates, the run 49 decision id and run, and the target position. A pair is applied only when every pinned fact equals the stored fact and:
+   1. both observations have one LINKED registrant, the same registrant, and the pinned CIK;
+   2. both SOI identifiers and identifier-name observations are exactly the pinned text;
+   3. both current `INSTRUMENT_TYPE` values are `VERIFIED` under `norm.instrument_type_footnote_ref` v1 (re-verified from the stored filing documents at run time) with equal continuity type text;
+   4. both have a current `MATCHED` instrument decision;
+   5. the later observation's current decision is the pinned run 49 `SAME_REGISTRANT_AND_INSTRUMENT` decision, and its position has no other current member;
+   6. the earlier observation is currently `MATCHED` to the target position, and no other member of that position is dated on or after the earlier date;
+   7. no other observation of the same registrant and exact identifier is dated between the two dates or on either date (the no-skipped-middle rule of `registry.position_period_comparison`).
+   Any failure blocks the whole operation; nothing is written.
+3. For each pair it inserts one `resolution.match_candidate` (`POSITION`, later observation, target position) with three `AGREE` comparisons that carry the earlier and later evidence ids (`REGISTRANT_OBSERVATION`: SOI row evidence; `IDENTIFIER`: identifier-name evidence; `FOOTNOTE_VERIFIED_TYPE`: HTML type-cell evidence), and one `resolution.position_continuity_decision`: `MATCHED`, method `APPROVED_SUPERSESSION_SAME_REGISTRANT_IDENTIFIER_AND_FOOTNOTE_VERIFIED_TYPE`, the target position, the candidate, `supersedes_id` set to the run 49 decision, a `supersede_reason`, a rationale that lists the raw and verified types, removed markers, footnote ids, instrument ids, and evidence ids, the later observation's SOI evidence, this rule's `ops.rule_version` row (with its checksum), and a new `APPROVED_CONTINUITY_SUPERSESSION` run.
+4. Run 49 is immutable. Its decisions are never updated or deleted; each superseded decision stays in history and is no longer current only because a later row names it in `supersedes_id`. Instrument decisions are not touched, so the two observations of each pair keep their separate instruments (instrument identity still uses the raw type). No `identity.position` row is inserted or changed; the later observation's former position simply has no current member.
+5. Idempotent: a pair whose current decision already supersedes the pinned decision with this method is reported as already applied. When nothing is planned, no run is created and nothing is written. The database also refuses a second superseding row for one decision.
+6. The SOFR(S) to SOFR(Q) reference-rate reset frequency change seen in all three pairs is not treated as an identity change for this approved correction, because reset frequency is not part of the approved identity key. Whether it should be is a separate methodology question.
+7. Not linked: the earlier Guardian IV `Geo Parent Corporation, First Lien` series ending 2024-03-31 (observations 893588, 981412, 1067071, 1146287, 1067072) has no evidence connecting it to First Lien 1 or First Lien 2. Those observations and 1146289 and 1067074 are protected: any allowlist naming them is refused.
+8. No automatic future supersession: no other observation is superseded, and the P7 resolver does not create superseding decisions.
+9. A hosted database is refused unless `--allow-hosted` is passed. `--dry-run` only reads and prints the planned supersessions.
 
 Further normalization rules will be added in later phases.
 
