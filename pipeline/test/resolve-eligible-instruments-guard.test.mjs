@@ -65,14 +65,16 @@ test("eligible resolution keeps the local database-name check in local mode", ()
   });
 });
 
-test("eligible resolution links exactly the rules P4, P6, and P7 read", () => {
+test("eligible resolution links exactly the rules P4, P6 company cell, and P7 read", () => {
   const used = new Set();
-  for (const file of ["p4-min.mjs", "p6-min.mjs", "p7-min.mjs"]) {
+  for (const file of ["p4-min.mjs", "p6-company-cell.mjs", "p7-min.mjs"]) {
     const src = readFileSync(new URL(`../load/${file}`, import.meta.url), "utf8");
     for (const match of src.matchAll(/rules\["([^"]+)"\]/g)) used.add(match[1]);
   }
   assert.deepEqual(RESOLUTION_RULES.map((rule) => rule.code).sort(), [...used].sort());
-  assert.equal(RESOLUTION_RULES.length, 7);
+  assert.equal(RESOLUTION_RULES.length, 6);
+  assert.equal(RESOLUTION_RULES.some((rule) => rule.code === "resolution.entity_exact_normalized_name"), false);
+  assert.equal(RESOLUTION_RULES.some((rule) => rule.code === "resolution.entity_near_name_candidate"), false);
   for (const rule of RESOLUTION_RULES) {
     assert.ok(
       RULES.some((item) => item.code === rule.code && item.version === rule.version),
@@ -93,9 +95,16 @@ test("eligible resolution dry run returns before any write", () => {
   const dryRun = body.indexOf("if (dryRun)");
   const dryRunEnd = body.indexOf("return summary;", dryRun);
   assert.ok(dryRun > 0 && dryRunEnd > dryRun);
-  for (const write of ["INSERT INTO", "snapshotP4Min", "linkResolutionRules", "applyP4Min", "applyP6Min", "applyP7Min"]) {
+  for (const write of ["INSERT INTO", "snapshotP4Min", "linkResolutionRules", "applyP4Min", "applyP6CompanyCell", "applyP7Min"]) {
     const at = body.indexOf(write);
     assert.ok(at > dryRunEnd, `${write} comes after the dry-run return`);
   }
   assert.equal(body.slice(dryRun, dryRunEnd).includes("queryRows"), false);
+});
+
+test("the company-cell plan used by the dry run only reads", () => {
+  const src = readFileSync(new URL("../load/p6-company-cell.mjs", import.meta.url), "utf8");
+  const readers = src.slice(src.indexOf("export function loadCompanyCellInputs"), src.indexOf("export function applyP6CompanyCell"));
+  assert.ok(readers.includes("export function planP6CompanyCell"));
+  assert.equal(/INSERT|UPDATE|DELETE|runScript/.test(readers), false);
 });

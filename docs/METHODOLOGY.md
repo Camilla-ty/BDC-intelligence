@@ -31,6 +31,7 @@ implement them. The database structure that enforces these principles is describ
 | 0.8 | 2026-09-29 | P7-min: instrument exact-identifier-and-type MATCHED; unknown type UNRESOLVED; per-registrant continuity (golden slice only) |
 | 0.9 | 2026-09-30 | Phase 8 Golden Gate: `derived.golden_observation_count` v1; Q14 remains OPEN; unknown instrument type stays UNRESOLVED |
 | 0.10 | 2026-09-30 | P9-min: `event.registrant_first_observed_name` v1; other event types stay blocked |
+| 0.11 | 2026-10-07 | `resolution.entity_exact_company_cell_name` v1: legal entities come only from the primary-filing company cell or SOI `ISSUER_NAME`; Identifier Axis text is never a legal-entity name |
 
 ## 2. Source hierarchy
 
@@ -172,6 +173,20 @@ Applies to the P7-min golden slice only. It does not scan the SOI universe, does
 4. Continuity is `MATCHED` only for the same `registry.current_filing_registrant` `LINKED` registrant and the same `MATCHED` instrument. Method `SAME_REGISTRANT_AND_INSTRUMENT`. Different BDCs never share an `identity.position`.
 5. If the instrument or the filing registrant is not uniquely established, continuity is `UNRESOLVED` with no `position_id`.
 6. Dates with no observation in a series are not observed. They are not written as zero principal, cost, or fair value.
+
+### 7.6 `resolution.entity_exact_company_cell_name` v1
+
+Applies to the bounded eligible-instrument resolution (`pipeline/resolve-eligible-instruments.mjs`), which uses this rule instead of 7.4. The `Investment, Identifier Axis` text can combine the company name and instrument text (Q5 in `docs/SOURCE_SCHEMAS.md`), so it is not a legal-entity key (G-14, G-15).
+
+1. Company-name sources are the current `EXTRACTED` `FILING_CELL` name from the primary filing's company cell and the current `REPORTED` SOI `ISSUER_NAME` field after `norm.borrower_name` v1. Both have equal standing.
+2. Identifier Axis text is never stored as a legal-entity name or alias and is never split, trimmed of instrument words, or otherwise rewritten to produce one.
+3. One distinct company name gives `MATCHED`, method `EXACT_COMPANY_CELL_NAME`, actor `SYSTEM_RULE`. The legal entity is the one whose `VERIFIED` alias from this rule equals the name exactly; when there is none, one `identity.legal_entity` is created with the name as its `VERIFIED` alias. The decision cites the company-name evidence.
+4. No company name gives `UNRESOLVED`, method `NO_COMPANY_NAME_EVIDENCE`, with no legal entity. The decision cites the identifier name evidence.
+5. Company names that disagree give `UNRESOLVED`, method `CONFLICTING_COMPANY_NAMES`. A name equal to the alias of more than one legal entity gives `UNRESOLVED`, method `AMBIGUOUS_COMPANY_NAME`.
+6. Near-name, suffix, case, fuzzy, and LLM matches are never `MATCHED`. Names that differ in any character are different aliases.
+7. An identical identifier at several registrants is not evidence of one legal entity. Without a company name each observation stays `UNRESOLVED`.
+8. The decision is recorded on the observation's single current Identifier Axis name row, so `registry.matched_entity_position` and `registry.position_read` attach a legal entity only to `MATCHED` observations.
+9. Decisions are insert-only. An observation whose identifier name already has a current decision is skipped; company evidence stored later does not update that decision. Changing it requires an explicit superseding decision with a reason.
 
 Further normalization rules will be added in later phases.
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Apply existing P4, P6, and P7 to a bounded set of observations that already
-// have a SOI identifier and a reported instrument type. Match rules are unchanged.
+// Apply P4, P6 company-cell entity resolution, and P7 to a bounded set of observations
+// that already have a SOI identifier and a reported instrument type.
 //
 //   node pipeline/resolve-eligible-instruments.mjs [-- --db NAME] [--dry-run] [--allow-hosted]
 //
 // A hosted database is refused unless --allow-hosted is passed. --dry-run only
-// reads and prints the selection.
+// reads and prints the selection and the planned legal-entity outcomes.
 
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -17,15 +17,14 @@ import {
   selectBoundedEligibleObservations,
 } from "./load/eligible-instrument-scope.mjs";
 import { applyP4Min, snapshotP4Min } from "./load/p4-min.mjs";
-import { applyP6Min } from "./load/p6-min.mjs";
+import { applyP6CompanyCell, planP6CompanyCell } from "./load/p6-company-cell.mjs";
 import { applyP7Min } from "./load/p7-min.mjs";
 import { pipelineCodeVersion } from "./load/run.mjs";
 import { ensureAndLinkRuleForRun } from "./load/rules.mjs";
 
 export const RESOLUTION_RULES = [
   { code: "norm.borrower_name", version: "1" },
-  { code: "resolution.entity_exact_normalized_name", version: "1" },
-  { code: "resolution.entity_near_name_candidate", version: "1" },
+  { code: "resolution.entity_exact_company_cell_name", version: "1" },
   { code: "resolution.instrument_exact_identifier_and_type", version: "1" },
   { code: "resolution.instrument_unknown_attributes", version: "1" },
   { code: "resolution.position_same_registrant_and_instrument", version: "1" },
@@ -62,7 +61,7 @@ function linkResolutionRules(database, runId) {
   return ids;
 }
 
-function dryRunSummary(eligible, selected) {
+function dryRunSummary(eligible, selected, entityPlan) {
   return {
     mode: "dry-run",
     n_eligible: eligible.length,
@@ -80,6 +79,19 @@ function dryRunSummary(eligible, selected) {
     }),
     registrant_ids: [...new Set(selected.map((row) => row.registrantId))].sort((left, right) => left - right),
     reported_dates: [...new Set(selected.map((row) => row.reportedDate))].sort(),
+    entity_plan: {
+      already_decided: entityPlan.alreadyDecided,
+      matched: entityPlan.decisions.filter((decision) => decision.state === "MATCHED").length,
+      unresolved: entityPlan.decisions.filter((decision) => decision.state === "UNRESOLVED").length,
+      planned_legal_entities: entityPlan.newEntities.map((entity) => entity.aliasText),
+      observations: entityPlan.decisions.map((decision) => ({
+        id: decision.positionObservationId,
+        state: decision.state,
+        method: decision.method,
+        company_name: decision.companyName,
+        legal_entity: decision.legalEntityId ?? (decision.newEntityAlias == null ? null : `new: ${decision.newEntityAlias}`),
+      })),
+    },
   };
 }
 
@@ -91,7 +103,7 @@ export function resolveBoundedEligibleInstruments({
   const selected = selectBoundedEligibleObservations(eligible);
   if (selected.length === 0) throw new Error("no eligible instrument observations are stored");
   if (dryRun) {
-    const summary = dryRunSummary(eligible, selected);
+    const summary = dryRunSummary(eligible, selected, planP6CompanyCell(database, selected.map((row) => row.id)));
     logFn(JSON.stringify(summary));
     return summary;
   }
@@ -111,13 +123,8 @@ RETURNING id;`);
     const names = applyP4Min({
       database, positionObservationIds: groupIds, runId, rules, identifierSha256,
     });
-    const entity = applyP6Min({
-      database,
-      positionObservationIds: groupIds,
-      runId,
-      rules,
-      identifierSha256,
-      nearNamePositionObservationIds: [],
+    const entity = applyP6CompanyCell({
+      database, positionObservationIds: groupIds, runId, rules,
     });
     const instrument = applyP7Min({
       database, positionObservationIds: groupIds, runId, rules, identifierSha256,
@@ -125,8 +132,7 @@ RETURNING id;`);
     groups.push({
       n: groupIds.length,
       names,
-      legal_entity_id: entity.legal_entity_id,
-      matched_inserted: entity.matched_inserted,
+      entity,
       instrument,
     });
   }
