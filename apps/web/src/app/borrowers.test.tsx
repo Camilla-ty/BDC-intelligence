@@ -15,6 +15,14 @@ import {
 } from "@/lib/borrower-comparisons";
 import { observedActivity, storedDifferences } from "@/lib/borrower-activity";
 import { EMPTY_WHAT_CHANGED, WHAT_CHANGED_NOTE, whatChanged } from "@/lib/borrower-what-changed";
+import {
+  CROSS_BDC_UNAVAILABLE,
+  EMPTY_DERIVED,
+  EMPTY_VALUATION,
+  OMITTED_UNRESOLVED,
+  valuationHistory,
+  type ValuationRow,
+} from "@/lib/borrower-valuation";
 import { BorrowerIntelligence } from "@/components/BorrowerIntelligence";
 import {
   ACQUISITION_LABEL,
@@ -1034,6 +1042,158 @@ describe("what changed", () => {
     expect(page.match(/loadBorrowerPositionComparisons/g)).toHaveLength(2);
     expect(loader.match(/borrower_position_comparisons/g)).toHaveLength(1);
     expect(loader).not.toMatch(/tsv_cell|TSV_CELL/);
+  });
+});
+
+function valuationRow(overrides: Partial<ValuationRow> = {}): ValuationRow {
+  return {
+    legal_entity_id: ID,
+    position_observation_id: "9200000002",
+    position_id: "00000000-0000-4000-8000-0000000000ee",
+    instrument_id: "00000000-0000-4000-8000-0000000000ef",
+    borrower_name_raw: "TEST BORROWER A",
+    reported_date: "2099-06-30",
+    accession_number: "0000000000-99-000001",
+    registrant_cik: "0000000001",
+    registrant_link_status: "LINKED",
+    entity_resolution_state: "MATCHED",
+    instrument_resolution_state: "MATCHED",
+    continuity_state: "MATCHED",
+    instrument_type_state: "REPORTED",
+    instrument_type_raw: "TEST FIRST LIEN",
+    instrument_type_evidence_level: "L1_STRUCTURED_DATASET",
+    fair_value_state: "REPORTED",
+    fair_value_raw: "60",
+    fair_value_numeric: "60",
+    fair_value_currency_state: "UNKNOWN",
+    fair_value_currency_code: null,
+    principal_state: "UNKNOWN",
+    principal_raw: null,
+    principal_numeric: null,
+    principal_currency_state: null,
+    principal_currency_code: null,
+    cost_state: "UNKNOWN",
+    cost_raw: null,
+    cost_numeric: null,
+    cost_currency_state: null,
+    cost_currency_code: null,
+    observation_evidence_id: "701",
+    observation_evidence_level: "L1_STRUCTURED_DATASET",
+    earlier_reported_date: "2099-03-31",
+    fair_value_change_state: "COMPARABLE",
+    fair_value_delta: "STORED-DELTA",
+    fair_value_percentage_state: "COMPARABLE",
+    fair_value_percentage: "STORED-PERCENT",
+    fair_value_to_principal_state: "INSUFFICIENT_DATA",
+    fair_value_to_principal: null,
+    fair_value_to_cost_state: "INSUFFICIENT_DATA",
+    fair_value_to_cost: null,
+    cross_bdc_comparison_state: "UNAVAILABLE",
+    valuation_definition: "valuation.position_history.v1",
+    ...overrides,
+  };
+}
+
+describe("historical valuation", () => {
+  const listings = [
+    row({
+      accession_number: "0000000000-99-000001",
+      document_url: `${EDGAR_DOCUMENT_PREFIX}0000000000/000000000099000001/test-filing.htm`,
+    }),
+  ];
+
+  it("keeps the stored fair-value change and omits an unresolved instrument", () => {
+    const history = valuationHistory([
+      valuationRow(),
+      valuationRow({
+        position_observation_id: "9200000001",
+        reported_date: "2099-03-31",
+        earlier_reported_date: null,
+        fair_value_raw: "70",
+        fair_value_numeric: "70",
+        principal_state: "REPORTED",
+        principal_raw: "100",
+        principal_numeric: "100",
+        fair_value_change_state: "INSUFFICIENT_DATA",
+        fair_value_delta: null,
+        fair_value_percentage_state: "INSUFFICIENT_DATA",
+        fair_value_percentage: null,
+        fair_value_to_principal_state: "COMPARABLE",
+        fair_value_to_principal: "STORED-QUOTIENT",
+        fair_value_to_cost_state: "INSUFFICIENT_DATA",
+        fair_value_to_cost: "999",
+      }),
+      valuationRow({
+        position_observation_id: "9200000009",
+        reported_date: "2099-09-30",
+        instrument_resolution_state: "UNRESOLVED",
+        continuity_state: "UNRESOLVED",
+        fair_value_raw: "90",
+        fair_value_delta: "SHOULD-NOT-SHOW",
+        fair_value_percentage: "SHOULD-NOT-SHOW",
+        fair_value_to_principal_state: "COMPARABLE",
+        fair_value_to_principal: "SHOULD-NOT-SHOW",
+      }),
+    ], listings, ID);
+    expect(history.timeline.map((point) => point.reportedDate)).toEqual(["2099-06-30", "2099-03-31"]);
+    expect(history.timeline.map((point) => point.fairValueChange)).toEqual(["STORED-DELTA", "Insufficient data"]);
+    expect(history.timeline.map((point) => point.principal)).toEqual(["Unknown", "100"]);
+    expect(history.derived.map((metric) => metric.text)).toEqual([
+      "2099-03-31 to 2099-06-30: Fair value change STORED-DELTA.",
+      "2099-03-31 to 2099-06-30: Fair value percentage change STORED-PERCENT.",
+      "2099-03-31: Fair value / principal STORED-QUOTIENT.",
+    ]);
+    expect(history.omittedUnresolved).toBe(true);
+    expect(history.crossBdc).toBe("Unavailable");
+    expect(JSON.stringify(history.timeline)).not.toMatch(/SHOULD-NOT-SHOW/);
+    expect(history.timeline.some((point) => point.fairValue === "90")).toBe(false);
+    const detail = borrowerDetail(listings, ID);
+    render(<BorrowerIntelligence borrower={detail!} valuation={history} />);
+    const section = screen.getByRole("heading", { name: "Valuation & Pricing" }).closest("section");
+    expect(section).toHaveTextContent("2099-06-30");
+    expect(section).toHaveTextContent("2099-03-31");
+    expect(section).toHaveTextContent("TEST FIRST LIEN");
+    expect(section).toHaveTextContent("TEST BDC ONE");
+    expect(section).toHaveTextContent("STORED-DELTA");
+    expect(section).toHaveTextContent("STORED-PERCENT");
+    expect(section).toHaveTextContent("STORED-QUOTIENT");
+    expect(section).toHaveTextContent("Unknown");
+    expect(section).toHaveTextContent("Insufficient data");
+    expect(section).toHaveTextContent(OMITTED_UNRESOLVED);
+    expect(section).toHaveTextContent(CROSS_BDC_UNAVAILABLE);
+    expect(section).toHaveTextContent("Structured SEC data set");
+    expect(section).not.toHaveTextContent("SHOULD-NOT-SHOW");
+    expect(section).not.toHaveTextContent("999");
+    expect(section).not.toHaveTextContent(/score|rank|origination|exit/i);
+    const source = withinSectionLink(section, "0000000000-99-000001");
+    expect(source).toHaveAttribute("href", listings[0].document_url);
+  });
+
+  it("says derived metrics are unavailable when no stored inputs support them", () => {
+    const history = valuationHistory([
+      valuationRow({
+        fair_value_change_state: "INSUFFICIENT_DATA",
+        fair_value_delta: null,
+        fair_value_percentage_state: "INSUFFICIENT_DATA",
+        fair_value_percentage: "SHOULD-NOT-SHOW",
+      }),
+    ], listings, ID);
+    expect(history.derived).toEqual([]);
+    const detail = borrowerDetail(listings, ID);
+    render(<BorrowerIntelligence borrower={detail!} valuation={history} />);
+    const section = screen.getByRole("heading", { name: "Valuation & Pricing" }).closest("section");
+    expect(section).toHaveTextContent(EMPTY_DERIVED);
+    expect(section).toHaveTextContent("Insufficient data");
+    expect(section).not.toHaveTextContent("SHOULD-NOT-SHOW");
+  });
+
+  it("keeps an empty valuation history explicit", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} />);
+    const section = screen.getByRole("heading", { name: "Valuation & Pricing" }).closest("section");
+    expect(section).toHaveTextContent(EMPTY_VALUATION);
+    expect(section).toHaveTextContent(CROSS_BDC_UNAVAILABLE);
+    expect(section).not.toHaveTextContent("could not be read");
   });
 });
 

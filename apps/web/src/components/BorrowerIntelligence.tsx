@@ -34,6 +34,15 @@ import {
   type WhatChangedItem,
 } from "@/lib/borrower-what-changed";
 import {
+  CROSS_BDC_UNAVAILABLE,
+  DERIVED_NOTE,
+  EMPTY_DERIVED,
+  EMPTY_VALUATION,
+  OMITTED_UNRESOLVED,
+  VALUATION_HISTORY_NOTE,
+  type ValuationHistory,
+} from "@/lib/borrower-valuation";
+import {
   ABSENT_EVENT_LABEL,
   CIK_NOTE,
   COVERAGE_NOTE,
@@ -226,6 +235,8 @@ export function BorrowerIntelligence({
   researchError = null,
   comparisons = [],
   comparisonError = null,
+  valuation = null,
+  valuationError = null,
 }: {
   borrower: BorrowerDetail;
   positions?: HistoricalPosition[];
@@ -233,6 +244,8 @@ export function BorrowerIntelligence({
   researchError?: string | null;
   comparisons?: PositionComparison[];
   comparisonError?: string | null;
+  valuation?: ValuationHistory | null;
+  valuationError?: string | null;
 }) {
   const groups = positionGroups(positions);
   const activity = observedActivity(positions, comparisons);
@@ -407,6 +420,71 @@ export function BorrowerIntelligence({
             ))}
           </div>
         ) : null}
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-navy">Valuation & Pricing</h2>
+        <h3 className="mt-3 text-sm font-semibold text-navy">Historical Fair Value</h3>
+        <p className="mt-1 text-sm">{VALUATION_HISTORY_NOTE}</p>
+        {valuationError ? <p className="mt-3 text-sm">{valuationError}</p> : null}
+        {!valuationError && (!valuation || valuation.timeline.length === 0) ? <p className="mt-3 text-sm">{EMPTY_VALUATION}</p> : null}
+        {!valuationError && valuation && valuation.omittedUnresolved ? <p className="mt-3 text-sm">{OMITTED_UNRESOLVED}</p> : null}
+        {!valuationError && valuation && valuation.timeline.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="record-table mt-3 w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs uppercase tracking-wider text-muted">
+                  <th scope="col" className="sticky left-0 bg-background py-2 pr-4 font-semibold">Report date</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">BDC</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Instrument</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Fair value</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Principal</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Cost</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Fair value change</th>
+                  <th scope="col" className="py-2 font-semibold">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {valuation.timeline.map((point) => (
+                  <tr key={point.id} className="border-b border-line">
+                    <td data-label="Report date" className="sticky left-0 bg-background py-2 pr-4">{point.reportedDate}</td>
+                    <td data-label="BDC" className="py-2 pr-4"><StateText text={bdcName(borrower, point.registrantCik)} /></td>
+                    <td data-label="Instrument" className="py-2 pr-4">
+                      <StateText text={point.instrument} />
+                      <span className="text-muted"> · </span>
+                      <StateText text={point.instrumentState} />
+                      <span className="text-muted"> · Position continuity </span>
+                      <StateText text={point.continuityState} />
+                    </td>
+                    <td data-label="Fair value" className="py-2 pr-4"><ObservedValue value={point.fairValue} currency={point.fairValueCurrency} /></td>
+                    <td data-label="Principal" className="py-2 pr-4"><ObservedValue value={point.principal} currency={point.principalCurrency} /></td>
+                    <td data-label="Cost" className="py-2 pr-4"><ObservedValue value={point.cost} currency={point.costCurrency} /></td>
+                    <td data-label="Fair value change" className="py-2 pr-4"><StateText text={point.fairValueChange} /></td>
+                    <td data-label="Source" className="py-2">
+                      <StateText text={point.evidenceLabel} />
+                      <div>
+                        <SecLink href={point.documentUrl} missing={point.accessionNumber}>{point.accessionNumber}</SecLink>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        {!valuationError && valuation && valuation.timeline.length > 0 ? (
+          <div className="mt-4">
+            <h3 className="text-sm font-semibold text-navy">Derived metrics</h3>
+            <p className="mt-1 text-sm">{DERIVED_NOTE}</p>
+            <p className="mt-1 text-xs text-muted">{valuation.definition}</p>
+            {valuation.derived.length === 0 ? <p className="mt-2 text-sm">{EMPTY_DERIVED}</p> : (
+              <ul className="mt-2 list-disc pl-5 text-sm">
+                {valuation.derived.map((metric) => <li key={metric.key}>{metric.text}</li>)}
+              </ul>
+            )}
+          </div>
+        ) : null}
+        <p className="mt-3 text-sm">{CROSS_BDC_UNAVAILABLE}</p>
       </section>
 
       <section className="mt-8">

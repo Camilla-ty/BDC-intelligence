@@ -1,4 +1,5 @@
 import { assertComparisonFields, type PositionComparisonRow } from "@/lib/borrower-comparisons";
+import { assertValuationFields, type ValuationRow } from "@/lib/borrower-valuation";
 import { assertPositionFields, type PositionObservationRow, type ResearchFieldRow } from "@/lib/borrower-positions";
 import { assertListingFields, type ObservationRow } from "@/lib/borrowers";
 import { executeSql } from "@/server/sql-text";
@@ -465,6 +466,149 @@ export async function loadBorrowerPositionComparisons(legalEntityId: string): Pr
       earlier_interest_rate_floor_raw: optional.earlier_interest_rate_floor_raw ?? null,
       later_interest_rate_floor_raw: optional.later_interest_rate_floor_raw ?? null,
       interest_rate_floor_delta: optional.interest_rate_floor_delta ?? null,
+    });
+  }
+  return { rows, error: null };
+}
+
+const VALUATION_SQL = (legalEntityId: string) => `
+SET ROLE bdc_reader;
+SET statement_timeout = '30s';
+SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+  SELECT *
+  FROM registry.borrower_position_valuation('${legalEntityId}')
+) t;
+RESET ROLE;
+`;
+
+export type ValuationResult = { rows: ValuationRow[]; error: string | null };
+
+const VALUATION_TEXT = [
+  "legal_entity_id",
+  "position_observation_id",
+  "reported_date",
+  "accession_number",
+  "entity_resolution_state",
+  "instrument_resolution_state",
+  "continuity_state",
+  "instrument_type_state",
+  "fair_value_state",
+  "principal_state",
+  "cost_state",
+  "fair_value_change_state",
+  "fair_value_percentage_state",
+  "fair_value_to_principal_state",
+  "fair_value_to_cost_state",
+  "cross_bdc_comparison_state",
+  "valuation_definition",
+] as const;
+
+const VALUATION_NULLABLE = [
+  "position_id",
+  "instrument_id",
+  "borrower_name_raw",
+  "registrant_cik",
+  "registrant_link_status",
+  "instrument_type_raw",
+  "instrument_type_evidence_level",
+  "fair_value_raw",
+  "fair_value_numeric",
+  "fair_value_currency_state",
+  "fair_value_currency_code",
+  "principal_raw",
+  "principal_numeric",
+  "principal_currency_state",
+  "principal_currency_code",
+  "cost_raw",
+  "cost_numeric",
+  "cost_currency_state",
+  "cost_currency_code",
+  "observation_evidence_id",
+  "observation_evidence_level",
+  "earlier_reported_date",
+  "fair_value_delta",
+  "fair_value_percentage",
+  "fair_value_to_principal",
+  "fair_value_to_cost",
+] as const;
+
+export async function loadBorrowerPositionValuation(legalEntityId: string): Promise<ValuationResult> {
+  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: "The valuation history could not be read." };
+  const executed = await executeSql(VALUATION_SQL(legalEntityId));
+  if (!executed.ok) return { rows: [], error: "The valuation history could not be read." };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(executed.text === "" ? "[]" : executed.text);
+  } catch {
+    return { rows: [], error: "The valuation history could not be read." };
+  }
+  if (!Array.isArray(parsed)) return { rows: [], error: "The valuation history could not be read." };
+  const rows: ValuationRow[] = [];
+  for (const item of parsed) {
+    if (item == null || typeof item !== "object") return { rows: [], error: "The valuation history could not be read." };
+    try {
+      assertValuationFields(item);
+    } catch {
+      return { rows: [], error: "The valuation history could not be read." };
+    }
+    const record = item as Record<string, unknown>;
+    const text: Record<string, string> = {};
+    for (const key of VALUATION_TEXT) {
+      const value = requiredText(record, key);
+      if (value == null) return { rows: [], error: "The valuation history could not be read." };
+      text[key] = value;
+    }
+    const optional: Record<string, string | null> = {};
+    for (const key of VALUATION_NULLABLE) {
+      const value = textOrNull(record[key]);
+      if (value === undefined) return { rows: [], error: "The valuation history could not be read." };
+      optional[key] = value;
+    }
+    rows.push({
+      legal_entity_id: text.legal_entity_id,
+      position_observation_id: text.position_observation_id,
+      position_id: optional.position_id ?? null,
+      instrument_id: optional.instrument_id ?? null,
+      borrower_name_raw: optional.borrower_name_raw ?? null,
+      reported_date: text.reported_date,
+      accession_number: text.accession_number,
+      registrant_cik: optional.registrant_cik ?? null,
+      registrant_link_status: optional.registrant_link_status ?? null,
+      entity_resolution_state: text.entity_resolution_state,
+      instrument_resolution_state: text.instrument_resolution_state,
+      continuity_state: text.continuity_state,
+      instrument_type_state: text.instrument_type_state,
+      instrument_type_raw: optional.instrument_type_raw ?? null,
+      instrument_type_evidence_level: optional.instrument_type_evidence_level ?? null,
+      fair_value_state: text.fair_value_state,
+      fair_value_raw: optional.fair_value_raw ?? null,
+      fair_value_numeric: optional.fair_value_numeric ?? null,
+      fair_value_currency_state: optional.fair_value_currency_state ?? null,
+      fair_value_currency_code: optional.fair_value_currency_code ?? null,
+      principal_state: text.principal_state,
+      principal_raw: optional.principal_raw ?? null,
+      principal_numeric: optional.principal_numeric ?? null,
+      principal_currency_state: optional.principal_currency_state ?? null,
+      principal_currency_code: optional.principal_currency_code ?? null,
+      cost_state: text.cost_state,
+      cost_raw: optional.cost_raw ?? null,
+      cost_numeric: optional.cost_numeric ?? null,
+      cost_currency_state: optional.cost_currency_state ?? null,
+      cost_currency_code: optional.cost_currency_code ?? null,
+      observation_evidence_id: optional.observation_evidence_id ?? null,
+      observation_evidence_level: optional.observation_evidence_level ?? null,
+      earlier_reported_date: optional.earlier_reported_date ?? null,
+      fair_value_change_state: text.fair_value_change_state,
+      fair_value_delta: optional.fair_value_delta ?? null,
+      fair_value_percentage_state: text.fair_value_percentage_state,
+      fair_value_percentage: optional.fair_value_percentage ?? null,
+      fair_value_to_principal_state: text.fair_value_to_principal_state,
+      fair_value_to_principal: optional.fair_value_to_principal ?? null,
+      fair_value_to_cost_state: text.fair_value_to_cost_state,
+      fair_value_to_cost: optional.fair_value_to_cost ?? null,
+      cross_bdc_comparison_state: text.cross_bdc_comparison_state,
+      valuation_definition: text.valuation_definition,
     });
   }
   return { rows, error: null };

@@ -328,3 +328,41 @@ the earlier and the later observation are `MATCHED` to that legal entity on
 It does not subtract, and it does not match a raw borrower name. A comparison
 whose two observations resolve to different legal entities is not returned
 for either entity.
+
+## 14. Historical valuation
+
+`registry.borrower_position_valuation(uuid)` is one row per matched position
+observation of one legal entity. It starts from `registry.matched_entity_position`
+for that entity and then reads `registry.position_read`. It does not scan the
+observation population for other entities.
+
+Fair value, principal, and cost are the stored states, raw text, and normalized
+numbers already on `registry.position_read`. A missing field stays unknown.
+Currency codes are the stored codes. The function does not convert currency.
+
+A fair-value change is copied from `registry.position_period_comparison` when
+the observation is the later endpoint of a confirmed pair and both the
+instrument and the position continuity are `MATCHED`. The function does not
+subtract the two fair values again. The percentage is that stored delta
+divided by the earlier stored fair value, times 100, rounded to 6 decimal
+places, and only when the earlier number is stored and not zero. A zero
+denominator is `INSUFFICIENT_DATA` and null.
+
+Fair value / principal and fair value / cost are the stored fair-value number
+divided by the stored denominator on the same observation, rounded to 6
+decimal places. The denominator must be stored and not zero. The instrument
+must be `MATCHED`. An unresolved instrument keeps the reported fair value and
+does not receive a change, a percentage, or either quotient. A matching
+borrower name is not enough.
+
+Two stored currency codes that differ are not combined. An `AMBIGUOUS`
+currency state is not used as a denominator input. `UNKNOWN` currency stays
+unknown and is not treated as zero.
+
+`cross_bdc_comparison_state` is `UNAVAILABLE`. A cross-BDC comparison requires
+a resolved legal entity, a resolved instrument, established position
+continuity, comparable valuation observations, and compatible currency. This
+read does not perform that comparison.
+
+The definition label is `valuation.position_history.v1`. These figures are not
+a score, a rank, or a credit event. Acquisition date is not an origination date.
