@@ -6,7 +6,8 @@ import { EDGAR_ARCHIVES_PREFIX, secUrl } from "@/lib/portfolios";
 export const FIRST_OBSERVED_EVENT = "REGISTRANT_FIRST_OBSERVED_NAME";
 export const EDGAR_DOCUMENT_PREFIX = EDGAR_ARCHIVES_PREFIX;
 export const ABSENT_EVENT_LABEL = "Not a first-observed event";
-export const VALUATION_NOTE = "Cost and fair value remain an open question and are not shown.";
+export const VALUATION_NOTE =
+  "Cost and fair value in the historical observations are stored disclosures. They are not derived, and currency authority remains open.";
 export const COVERAGE_NOTE = "A date that is not listed was not observed. It is not zero exposure.";
 export const EVENT_SCOPE_NOTE =
   "Registrant first observed applies only to stored observations in this slice. It does not establish an instrument.";

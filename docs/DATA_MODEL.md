@@ -10,6 +10,8 @@ database. Universe-wide entity/instrument resolution, authoritative cost/fair va
 workspaces other than Borrowers are not in this phase. The schema is
 defined by the migrations in `db/migrations/` (PostgreSQL 17) and checked by
 `npm run db:test`. `db/schema.snapshot.sql` is the reviewed, normalized schema dump.
+`registry.position_read` is the position-observation read contract. It does not
+resolve an identity that has no stored decision.
 
 Decisions: [ADR 0009](adr/0009-postgresql-and-plain-sql-migrations.md) (database and
 migrations), [ADR 0010](adr/0010-observation-provenance-and-authority-model.md) (observation,
@@ -211,3 +213,118 @@ Other event types stay blocked. Phase 10-min reads `registry.borrower_observatio
 for the Borrowers, Borrower Intelligence, and Sources pages. That view has no cost,
 fair value, or instrument identity column. Refinancing, portfolio, market, authentication,
 watchlists, and export are not started.
+
+## 12. Position read model
+
+`registry.position_read` is one row per `obs.position_observation`. It is the
+shared read contract for later borrower, portfolio, valuation, credit,
+refinancing, and market screens. It does not implement those screens.
+
+Observed values are the current `obs.position_field_value` head for principal,
+cost, fair value, acquisition date, interest rate, spread, and interest-rate
+floor. A head is `REPORTED` only when that field has exactly one current raw
+value. The normalized number or calendar date is the stored normalized value.
+The view does not parse raw text into a number.
+
+`UNKNOWN` is the text state `UNKNOWN` with a null raw value and a null
+normalized value. A field with no row, and a single current row whose stored
+state is `UNKNOWN`, both read as `UNKNOWN`. Neither becomes zero.
+`NOT_APPLICABLE` is passed through when that is the single current state.
+`MULTIPLE_VALUES` means more than one current head, and the view does not pick
+one.
+
+`UNRESOLVED` is the resolution state when a legal entity, economic group,
+instrument, or position has no single current decision. The target id is null.
+A stored `MATCHED`, `PROBABLE`, or `REJECTED` decision is repeated with its
+id, method, and evidence. More than one current decision is not collapsed:
+the state stays `UNRESOLVED` and the id stays null. Economic-group membership
+is read only from `resolution.current_group_membership`. Instrument identity
+is read only from a current instrument decision on that observation. Position
+continuity is read only from a current continuity decision on that observation.
+
+Maturity columns are `registry.maturity_read`, which reads
+`obs.maturity_provenance`. A calendar day stays in `maturity_date`. A month
+stays in `maturity_precision`, `maturity_year`, and `maturity_month`, with
+`maturity_date` null. Filing-month and reported-month states are the existing
+provenance states. This view does not recompute them.
+
+Provenance on each row includes the position observation id, origin SOI row,
+filing id, accession, reported date, observation evidence id and level, the
+field evidence id when one current field head exists, the resolution evidence
+id when one current decision exists, and the maturity evidence id. CIK is the
+filing registrant from `registry.current_filing_registrant`, and only when
+that link is a single `LINKED` registrant.
+
+`first_observed_event_code` is `REGISTRANT_FIRST_OBSERVED_NAME` when that
+stored event exists, and null otherwise.
+
+The view does not infer a fair-value ratio, an origination date, an economic
+group, instrument continuity, a similarity score, a rank, or an exit.
+`acquisition_date` is the stored acquisition date. A month-only acquisition
+does not become a calendar day, and neither form is an origination date.
+A period with no position observation has no row. Absence in a later period
+is not a repayment or an exit. Cost is not derived from principal. Fair value
+is not derived from cost. Q14 cost and fair-value authority stays open:
+`principal_currency_state` and the matching cost and fair-value currency
+states are the stored states, including `UNKNOWN`.
+
+`registry.borrower_position_observations(uuid)` returns the matched rows of
+that view for one legal entity. It filters `legal_entity_id` and
+`entity_resolution_state = 'MATCHED'`. It does not match a raw borrower name,
+and it does not add a row for a period that has no observation.
+
+## 13. Confirmed position period comparison
+
+`registry.position_period_comparison` is one row for one confirmed position
+and two observations. The position is `identity.position`. An observation is
+eligible only when `resolution.current_position_continuity` is `MATCHED` to
+that position. `PROBABLE`, `UNRESOLVED`, `REJECTED`, and a missing decision
+produce no row.
+
+The two reporting dates are the observations' `reported_date` values. The
+earlier date is strictly before the later date. The pair is the next stored
+`MATCHED` observation of that position: no other `MATCHED` observation of the
+position has a reporting date strictly between them. A date with more than one
+`MATCHED` observation is not an endpoint, and it blocks a comparison across
+that date. The view does not pair an observation with itself, does not pair
+two observations from the same reporting date, and does not pair observations
+because their row ids are adjacent. Filing date is not the comparison period.
+
+Principal, cost, fair value, interest rate, spread, and interest-rate floor
+use the normalized numbers already on `registry.position_read`. When both
+numbers are stored, `delta` is the later number minus the earlier number.
+When either number is missing, `delta` is null and the comparison state is
+`INSUFFICIENT_DATA`. Unknown is not zero. A reported raw rate with no
+normalized number is not parsed. No percentage is calculated.
+
+Maturity is comparable only when both sides are calendar days
+(`REPORTED_STRUCTURED` or `FILING_DISPLAYED`) or both sides are month
+precision (`REPORTED_MONTH` or `FILING_MONTH`) with a stored year and month.
+`maturity_changed` is true only in those cases when the stored values differ.
+A month is not turned into a calendar day. A calendar day compared with a
+month is `INSUFFICIENT_DATA`.
+
+Acquisition exposes the earlier and later stored values, including month
+precision. A difference is not an origination and not a new investment.
+
+Each row keeps `position_id`, both `position_observation_id` values, both
+reporting dates, both accession numbers, and both observation evidence ids.
+The chain is comparison, later observation, earlier observation, filing and
+evidence.
+
+Observed field change is not itself a credit event.
+Absence of a later observation is not evidence of repayment or exit.
+
+The view does not calculate a fair-value ratio, yield, OID, credit score,
+risk score, or rank. It does not insert `derived.observation_event`. That
+table still allows only `REGISTRANT_FIRST_OBSERVED_NAME`. A principal change,
+a fair-value decrease, and a maturity change stay numeric or date comparisons.
+They are not repayment, exit, credit deterioration, default, non-accrual, or
+refinancing.
+
+`registry.borrower_position_comparisons(uuid)` returns those rows when both
+the earlier and the later observation are `MATCHED` to that legal entity on
+`registry.position_read`. It copies the stored deltas and comparison states.
+It does not subtract, and it does not match a raw borrower name. A comparison
+whose two observations resolve to different legal entities is not returned
+for either entity.
