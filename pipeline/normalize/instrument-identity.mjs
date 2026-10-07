@@ -1,13 +1,18 @@
 // P7-min instrument identity and per-registrant continuity (G-13, G-14, G-15).
 // MATCHED requires exact identifier text plus a disclosed Investment Type Axis member.
-// Missing type is UNKNOWN/UNRESOLVED. Continuity is registrant × MATCHED instrument only.
-// Gaps are dates with no observation, never a zero amount.
+// Missing type is UNKNOWN/UNRESOLVED. Instrument identity always uses the raw type text.
+// Continuity is one LINKED registrant × exact identifier × continuity type, where the continuity
+// type is the norm.instrument_type_footnote_ref v1 text when VERIFIED and the raw text otherwise.
+// It never spans registrants. Gaps are dates with no observation, never a zero amount.
 
 export const INSTRUMENT_MATCH_METHOD = "EXACT_IDENTIFIER_AND_TYPE";
 export const INSTRUMENT_UNRESOLVED_METHOD = "UNKNOWN_INSTRUMENT_ATTRIBUTES";
 export const CONTINUITY_MATCH_METHOD = "SAME_REGISTRANT_AND_INSTRUMENT";
+export const CONTINUITY_FOOTNOTE_REF_METHOD = "SAME_REGISTRANT_IDENTIFIER_AND_FOOTNOTE_VERIFIED_TYPE";
+export const CONTINUITY_MATCH_METHODS = Object.freeze([CONTINUITY_MATCH_METHOD, CONTINUITY_FOOTNOTE_REF_METHOD]);
 export const CONTINUITY_UNRESOLVED_INSTRUMENT_METHOD = "UNRESOLVED_INSTRUMENT";
 export const CONTINUITY_UNRESOLVED_REGISTRANT_METHOD = "UNRESOLVED_REGISTRANT";
+export const CONTINUITY_AMBIGUOUS_SERIES_METHOD = "AMBIGUOUS_EXISTING_SERIES";
 
 export function canMatchInstrument({ identifierNorm, typeState, typeText }) {
   return typeof identifierNorm === "string" && identifierNorm !== ""
@@ -20,6 +25,11 @@ export function instrumentKey(identifierNorm, typeText) {
     throw new Error("instrumentKey requires a MATCHED identifier and disclosed type");
   }
   return `${identifierNorm}\u0000${typeText}`;
+}
+
+export function continuityKey(registrantId, identifierNorm, continuityTypeText) {
+  if (registrantId == null) throw new Error("continuityKey requires a LINKED registrant");
+  return `${registrantId}\u0000${instrumentKey(identifierNorm, continuityTypeText)}`;
 }
 
 export function lastDayOfMonth(year, monthIndex0) {

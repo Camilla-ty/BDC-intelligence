@@ -72,7 +72,7 @@ test("eligible resolution links exactly the rules P4, P6 company cell, and P7 re
     for (const match of src.matchAll(/rules\["([^"]+)"\]/g)) used.add(match[1]);
   }
   assert.deepEqual(RESOLUTION_RULES.map((rule) => rule.code).sort(), [...used].sort());
-  assert.equal(RESOLUTION_RULES.length, 6);
+  assert.equal(RESOLUTION_RULES.length, 7);
   assert.equal(RESOLUTION_RULES.some((rule) => rule.code === "resolution.entity_exact_normalized_name"), false);
   assert.equal(RESOLUTION_RULES.some((rule) => rule.code === "resolution.entity_near_name_candidate"), false);
   for (const rule of RESOLUTION_RULES) {
@@ -100,6 +100,15 @@ test("eligible resolution dry run returns before any write", () => {
     assert.ok(at > dryRunEnd, `${write} comes after the dry-run return`);
   }
   assert.equal(body.slice(dryRun, dryRunEnd).includes("queryRows"), false);
+});
+
+test("the instrument plan used by the dry run only reads", () => {
+  const src = readFileSync(new URL("../load/p7-min.mjs", import.meta.url), "utf8");
+  const readers = src.slice(src.indexOf("function loadFacts"), src.indexOf("export function applyP7Min"));
+  assert.ok(readers.includes("export function planP7Min"));
+  assert.equal(/INSERT|UPDATE|DELETE|runScript/.test(readers), false);
+  const loader = readFileSync(new URL("../load/instrument-type-footnote-ref.mjs", import.meta.url), "utf8");
+  assert.equal(/INSERT|UPDATE|DELETE|runScript|\.put\(/.test(loader), false);
 });
 
 test("the company-cell plan used by the dry run only reads", () => {

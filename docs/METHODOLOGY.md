@@ -32,6 +32,7 @@ implement them. The database structure that enforces these principles is describ
 | 0.9 | 2026-09-30 | Phase 8 Golden Gate: `derived.golden_observation_count` v1; Q14 remains OPEN; unknown instrument type stays UNRESOLVED |
 | 0.10 | 2026-09-30 | P9-min: `event.registrant_first_observed_name` v1; other event types stay blocked |
 | 0.11 | 2026-10-07 | `resolution.entity_exact_company_cell_name` v1: legal entities come only from the primary-filing company cell or SOI `ISSUER_NAME`; Identifier Axis text is never a legal-entity name |
+| 0.12 | 2026-10-07 | `norm.instrument_type_footnote_ref` v1: trailing footnote markers on an HTML-cell instrument type are removed only when verified against row-linked Inline XBRL footnotes; P7 rules v2 use it for same-registrant, exact-identifier continuity only |
 
 ## 2. Source hierarchy
 
@@ -170,8 +171,8 @@ Applies to the P7-min golden slice only. It does not scan the SOI universe, does
 1. `MATCHED` instrument identity requires the `obs.borrower_name_observation` identifier after `norm.borrower_name` v1 and a non-empty `REPORTED` `Investment Type Axis` member (`INSTRUMENT_TYPE`). Method `EXACT_IDENTIFIER_AND_TYPE`, actor `SYSTEM_RULE`. The legal entity is not used as an instrument key (G-14, G-15).
 2. Missing or empty type is `UNKNOWN`. The decision is `UNRESOLVED` with no `instrument_id`. Method `UNKNOWN_INSTRUMENT_ATTRIBUTES`. Fuzzy, LLM, seniority, and secured flags are not inferred.
 3. Distinct identifier strings are distinct instruments, including two loans of the same borrower.
-4. Continuity is `MATCHED` only for the same `registry.current_filing_registrant` `LINKED` registrant and the same `MATCHED` instrument. Method `SAME_REGISTRANT_AND_INSTRUMENT`. Different BDCs never share an `identity.position`.
-5. If the instrument or the filing registrant is not uniquely established, continuity is `UNRESOLVED` with no `position_id`.
+4. Continuity is `MATCHED` only for the same `registry.current_filing_registrant` `LINKED` registrant, a `MATCHED` instrument, the exact same identifier text, and the same continuity type text. Version 2 of the four P7 rules takes the continuity type text from `norm.instrument_type_footnote_ref` v1 (7.7): the verified text when `VERIFIED`, otherwise the raw type unchanged. Version 1 keyed continuity on registrant and instrument, which is the same key whenever no marker is removed. Method `SAME_REGISTRANT_AND_INSTRUMENT`, or `SAME_REGISTRANT_IDENTIFIER_AND_FOOTNOTE_VERIFIED_TYPE` when the observation's own type was verified. Different BDCs never share an `identity.position`.
+5. If the instrument or the filing registrant is not uniquely established, continuity is `UNRESOLVED` with no `position_id`. If existing `MATCHED` continuity already names more than one position for the same key, the new observation is `UNRESOLVED`, method `AMBIGUOUS_EXISTING_SERIES`; no series is chosen and the existing decisions are not changed.
 6. Dates with no observation in a series are not observed. They are not written as zero principal, cost, or fair value.
 
 ### 7.6 `resolution.entity_exact_company_cell_name` v1
@@ -187,6 +188,22 @@ Applies to the bounded eligible-instrument resolution (`pipeline/resolve-eligibl
 7. An identical identifier at several registrants is not evidence of one legal entity. Without a company name each observation stays `UNRESOLVED`.
 8. The decision is recorded on the observation's single current Identifier Axis name row, so `registry.matched_entity_position` and `registry.position_read` attach a legal entity only to `MATCHED` observations.
 9. Decisions are insert-only. An observation whose identifier name already has a current decision is skipped; company evidence stored later does not update that decision. Changing it requires an explicit superseding decision with a reason.
+
+### 7.7 `norm.instrument_type_footnote_ref` v1
+
+Some filers print footnote references after the instrument type in the schedule cell, for example `First Lien(2)(6)(8)` in one period and `First Lien(2)(5)` in the next. The markers change between periods while the disclosed type does not. This rule removes such markers only when the filing itself proves they are footnote references. Sources: Inline XBRL Part 1: Specification 1.1, Recommendation 2013-11-18 (https://www.xbrl.org/specification/inlinexbrl-part1/rec-2013-11-18/inlinexbrl-part1-rec-2013-11-18.html), sections 6 and 13.1; the EDGAR XBRL Guide; and `docs/SOURCE_SCHEMAS.md` 8.1.
+
+1. Scope: `INSTRUMENT_TYPE` values whose evidence is an `HTML_TABLE_CELL` written by `obs.research_field.exact_disclosure_cell` or `obs.research_field.bound_context_cell`. SOI dataset values (`obs.projection.soi`) are never in scope and never changed.
+2. Candidate: only a run of `(digits)` groups at the very end of the text. Whitespace between groups and before the first group belongs to the run. Parentheses that contain letters or other terms, markers in the middle of the text, attached digits such as `Class A2` or `Loan4`, and text with trailing whitespace after the last group are not candidates. Case and other spacing are never changed.
+3. Verification uses the stored filing document named by the type value's own evidence (artifact checksum verified on read) and the recorded 1-based table row. A marker `(n)` is verified only when:
+   1. a cell on that row has exactly the stored raw type text;
+   2. an `ix:relationship` links at least one Inline XBRL fact on that row to an `ix:footnote`, where the relationship has no `arcrole` (Inline XBRL 1.1 default, http://www.xbrl.org/2003/arcrole/fact-footnote) or has exactly that arcrole;
+   3. exactly one of the `ix:footnote` elements linked from that row carries the visible label `(n)`. The label is the text ending immediately before the `ix:footnote` element. This placement is a filing presentation convention, not an XBRL requirement, so it is only trusted after the row link in (2). Uniqueness is checked among the footnotes linked from the row, not the whole document, because filers reuse the same label for different footnotes in one document (`docs/SOURCE_SCHEMAS.md` 8.1).
+4. If every candidate marker is verified the state is `VERIFIED` and the normalized text is the text before the run (`First Lien(2)(6)(8)` gives `First Lien`; `First lien (2)(3)` gives `First lien`). If any marker fails, the state is `UNVERIFIED` and the whole text is kept unchanged. Reasons: `DOCUMENT_UNAVAILABLE`, `ROW_NOT_FOUND`, `TYPE_CELL_NOT_IN_ROW`, `NO_ROW_FACTS`, `MARKER_NOT_LINKED`, `AMBIGUOUS_MARKER_LABEL`, `NOTHING_LEFT_AFTER_MARKERS`. Values with no candidate are `NO_CANDIDATE`; values outside scope are `NOT_APPLICABLE`.
+5. Fail closed: an unverifiable marker is never removed. The stored `INSTRUMENT_TYPE` field value is never rewritten.
+6. Use is limited to P7 continuity within one LINKED registrant and the exact identifier text (7.5). Instrument identity (`EXACT_IDENTIFIER_AND_TYPE`) still uses the raw type, so cross-BDC instrument identity is unchanged and this rule never merges instruments or series across BDCs.
+7. The raw type, normalized type, removed markers, footnote ids, and state with reason are recorded in the rationale of each new continuity decision whose type had a candidate run, and in the dry-run plan of `pipeline/resolve-eligible-instruments.mjs`. No schema change is needed: `identity.position` has no instrument column.
+8. Existing decisions are not updated. Observations decided under the version 1 P7 rules keep their decisions, including series that version 2 would key together. Replacing them requires explicit superseding decisions with a reason, which this rule does not create.
 
 Further normalization rules will be added in later phases.
 

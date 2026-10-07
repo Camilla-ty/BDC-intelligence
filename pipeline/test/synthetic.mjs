@@ -220,7 +220,24 @@ export function defaultSources() {
   };
 }
 
-export function p7Sources() {
+// SOI identifier rows with no Investment Type Axis member on the P7 filings.
+export function p7UntypedSoiRows(identifier, { cik1Q1 = 0, cik1Q3 = 0, cik2Q1 = 0 } = {}) {
+  const rows = [];
+  const add = (count, acc, cik, name, date, doc) => {
+    for (let i = 0; i < count; i += 1) {
+      rows.push(soiBase(acc, String(cik), name, {
+        form: "10-Q", ddate: date, period: date, identifier, principal: String(100 + i),
+        inlineurl: `https://www.sec.gov/ix?doc=/Archives/edgar/data/${cik}/${doc}/test-only.htm`,
+      }));
+    }
+  };
+  add(cik1Q1, FAKE.accP7q1, FAKE.cik1, FAKE.name1, "2099-03-31", "000000000000000020");
+  add(cik1Q3, FAKE.accP7q3, FAKE.cik1, FAKE.name1, "2099-09-30", "000000000000000021");
+  add(cik2Q1, FAKE.accP7cik2, FAKE.cik2, FAKE.name2, "2099-03-31", "000000000000000022");
+  return rows;
+}
+
+export function p7Sources({ extraSoi = [] } = {}) {
   const filedQ1 = "20990331";
   const filedQ3 = "20990930";
   const sub = [
@@ -247,6 +264,7 @@ export function p7Sources() {
       form: "10-Q", ddate: "2099-03-31", period: "2099-03-31", type: FAKE.typeFirst,
       inlineurl: `https://www.sec.gov/ix?doc=/Archives/edgar/data/${FAKE.cik2}/000000000000000022/test-only.htm`,
     }),
+    ...extraSoi,
   ];
   const sources = defaultSources();
   sources.zipFilled = buildStoredZip({

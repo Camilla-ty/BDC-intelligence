@@ -679,6 +679,42 @@ documentation status in `ref.registry_field_mapping`.
   `xbrli:startDate`/`xbrli:endDate` pair; the binder compares the instant or end date with SOI
   `ddate` as the same `yyyy-mm-dd` with no rounding (5.5).
 
+### 8.1 Inline XBRL footnotes
+
+Authoritative sources: XBRL International, *Inline XBRL Part 1: Specification 1.1*,
+Recommendation of 2013-11-18 (sections 6 and 13; full URL in docs/METHODOLOGY.md 7.7, because
+this document links only SEC hosts), and the EDGAR XBRL Guide
+https://www.sec.gov/files/edgar/filer-information/specifications/xbrl-guide-2026-05-15.pdf
+(chapter 9, section 9.4, section 11.11). EDGAR instances follow Inline XBRL 1.1 (section 8 above).
+
+- **`ix:footnote` (Documented, Inline XBRL 1.1 section 6).** Represents an XBRL footnote
+  resource (`link:footnote`). It MUST have an `id` attribute and an `xml:lang` in scope; its
+  `footnoteRole` defaults to the XBRL 2.1 footnote role when absent. The specification ties an
+  `ix:footnote` to the facts it refers to only through `ix:relationship`.
+- **`ix:relationship` (Documented, Inline XBRL 1.1 section 13.1).** A child of `ix:resources`
+  with required `fromRefs` and `toRefs` lists of ids and optional `arcrole`, `linkRole`, and
+  `order`. Table 14 defines the `{arcrole}` property as "the actual value of the `arcrole`
+  attribute or, if absent," the XBRL 2.1 `fact-footnote` arcrole. If any `toRefs` target is an
+  `ix:footnote`, every target must be one, and each fact in `fromRefs` maps to a footnote arc
+  from that fact to each footnote in the target document. Fact-to-fact relationships use other
+  arcroles, for example `fact-explanatoryFact`.
+- **Fact-footnote relationship.** A footnote is linked to a fact when an `ix:relationship` lists
+  the fact id in `fromRefs`, the `ix:footnote` id in `toRefs`, and either has no `arcrole`
+  (specification default) or has exactly the `fact-footnote` arcrole.
+- **EDGAR restrictions (Documented, EDGAR XBRL Guide).** Chapter 9 lists "XBRL footnotes that
+  are not local or use custom relationships" among features EDGAR does not permit. Section 9.4
+  requires every `link:footnote` to be the target of at least one footnote arc (Dangling Footnote,
+  EFM 6.5.33) and requires standard footnote roles. Section 11.11 does not restrict `ix:footnote`
+  or `ix:relationship` (it disallows `ix:tuple`, `ix:fraction`, `target`, and `xml:base`).
+- **Visible "(n)" label (Observed presentation convention, not an XBRL requirement).** Neither
+  source defines a visible label, its text, or its position. In the stored BDC schedules audited
+  for P7 (14 documents) the filer prints a label such as "(2)" immediately before the
+  `ix:footnote` element and prints the same "(n)" after the text of a schedule cell. Labels are
+  not unique within a document: the same "(n)" labels a different `ix:footnote` in 13 of the 14
+  documents (for example once per period schedule). One filer's documents omit `arcrole` on
+  `ix:relationship`. A label is therefore treated as a candidate only, verified against the
+  footnotes linked from facts on the same table row (docs/METHODOLOGY.md 7.7).
+
 ## 9. Identifiers and join keys
 
 | Key | Where it appears | Documented join? | Observed match | Caveats |
@@ -901,3 +937,4 @@ retrieval.
 | 2026-09-28 | Initial verified version (Phase 0.2). |
 | 2026-09-28 | Version 2: BDC Report yearly layouts (6.1), additional submissions pages (7.1), registry field register (7.2), fixtures F19a–F33, discrepancies 18–20, questions Q21–Q24. Corrections: the Data Sets page lists 21 ZIPs, not 22 (3.2); the 2012–2015 BDC Report links have no "Updated" label (6). |
 | 2026-10-02 | Section 8: Inline XBRL `ixt:fixed-zero` format and context period end, as used by the maturity binder. |
+| 2026-10-07 | Section 8.1: Inline XBRL `ix:footnote`, `ix:relationship`, the default `fact-footnote` arcrole, EDGAR footnote restrictions, and the visible "(n)" label as an observed presentation convention. |

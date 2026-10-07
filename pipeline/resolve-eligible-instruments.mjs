@@ -2,15 +2,16 @@
 // Apply P4, P6 company-cell entity resolution, and P7 to a bounded set of observations
 // that already have a SOI identifier and a reported instrument type.
 //
-//   node pipeline/resolve-eligible-instruments.mjs [-- --db NAME] [--dry-run] [--allow-hosted]
+//   node pipeline/resolve-eligible-instruments.mjs [-- --db NAME] [--dry-run] [--allow-hosted] [--data-dir DIR]
 //
 // A hosted database is refused unless --allow-hosted is passed. --dry-run only
-// reads and prints the selection and the planned legal-entity outcomes.
+// reads and prints the selection, the planned legal-entity outcomes, the instrument-type
+// footnote normalization, and the planned instrument and continuity outcomes.
 
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_DATABASE } from "./lib/config.mjs";
+import { DEFAULT_DATA_DIR, DEFAULT_DATABASE } from "./lib/config.mjs";
 import { lit, num, pipelineConnectionTarget, queryRows } from "./lib/db.mjs";
 import {
   loadEligibleInstrumentObservations,
@@ -18,17 +19,18 @@ import {
 } from "./load/eligible-instrument-scope.mjs";
 import { applyP4Min, snapshotP4Min } from "./load/p4-min.mjs";
 import { applyP6CompanyCell, planP6CompanyCell } from "./load/p6-company-cell.mjs";
-import { applyP7Min } from "./load/p7-min.mjs";
+import { applyP7Min, planP7Min } from "./load/p7-min.mjs";
 import { pipelineCodeVersion } from "./load/run.mjs";
 import { ensureAndLinkRuleForRun } from "./load/rules.mjs";
 
 export const RESOLUTION_RULES = [
   { code: "norm.borrower_name", version: "1" },
   { code: "resolution.entity_exact_company_cell_name", version: "1" },
-  { code: "resolution.instrument_exact_identifier_and_type", version: "1" },
-  { code: "resolution.instrument_unknown_attributes", version: "1" },
-  { code: "resolution.position_same_registrant_and_instrument", version: "1" },
-  { code: "resolution.position_unresolved_without_instrument", version: "1" },
+  { code: "norm.instrument_type_footnote_ref", version: "1" },
+  { code: "resolution.instrument_exact_identifier_and_type", version: "2" },
+  { code: "resolution.instrument_unknown_attributes", version: "2" },
+  { code: "resolution.position_same_registrant_and_instrument", version: "2" },
+  { code: "resolution.position_unresolved_without_instrument", version: "2" },
 ];
 
 function opt(args, name) {
@@ -61,7 +63,56 @@ function linkResolutionRules(database, runId) {
   return ids;
 }
 
-function dryRunSummary(eligible, selected, entityPlan) {
+function instrumentPlanSummary(groupPlans) {
+  const observations = groupPlans.flatMap((plan) => plan.observations ?? []);
+  const keys = new Map();
+  for (const row of observations) {
+    if (row.continuity_type_text == null || row.registrant_id == null) continue;
+    const key = JSON.stringify([row.registrant_id, row.identifier, row.continuity_type_text]);
+    if (!keys.has(key)) keys.set(key, []);
+    keys.get(key).push(row);
+  }
+  const count = (pick, value) => observations.filter((row) => pick(row) === value).length;
+  return {
+    not_planned: groupPlans.filter((plan) => plan.not_planned).map((plan) => plan.not_planned),
+    type_states: Object.fromEntries(["NOT_APPLICABLE", "NO_CANDIDATE", "VERIFIED", "UNVERIFIED"]
+      .map((state) => [state, count((row) => row.type?.state, state)])),
+    already_decided_continuity: count((row) => row.continuity?.already_decided, true),
+    planned_continuity_matched: observations.filter((row) => row.continuity && !row.continuity.already_decided
+      && row.continuity.state === "MATCHED").length,
+    planned_continuity_unresolved: observations.filter((row) => row.continuity && !row.continuity.already_decided
+      && row.continuity.state === "UNRESOLVED").length,
+    planned_new_instruments: observations.filter((row) => row.instrument?.new_instrument).length,
+    planned_new_positions: new Set(observations.filter((row) => row.continuity?.new_position)
+      .map((row) => row.continuity.position_id)).size,
+    observations,
+    continuity_keys: [...keys.values()].map((rows) => ({
+      registrant_id: rows[0].registrant_id,
+      identifier: rows[0].identifier,
+      continuity_type_text: rows[0].continuity_type_text,
+      ids: rows.map((row) => row.position_observation_id),
+      raw_types: rows.map((row) => row.type?.raw_text ?? null),
+      current_position_ids: [...new Set(rows.map((row) => row.continuity?.position_id).filter(Boolean))],
+    })),
+  };
+}
+
+function planInstruments(database, selected, dataDir) {
+  return groupsOf(selected).map(([identifierRaw, groupIds]) => {
+    try {
+      return planP7Min({
+        database,
+        positionObservationIds: groupIds,
+        identifierSha256: createHash("sha256").update(identifierRaw, "utf8").digest("hex"),
+        dataDir,
+      });
+    } catch (error) {
+      return { not_planned: { ids: groupIds, reason: error.message } };
+    }
+  });
+}
+
+function dryRunSummary(eligible, selected, entityPlan, groupPlans) {
   return {
     mode: "dry-run",
     n_eligible: eligible.length,
@@ -92,18 +143,24 @@ function dryRunSummary(eligible, selected, entityPlan) {
         legal_entity: decision.legalEntityId ?? (decision.newEntityAlias == null ? null : `new: ${decision.newEntityAlias}`),
       })),
     },
+    instrument_plan: instrumentPlanSummary(groupPlans),
   };
 }
 
 export function resolveBoundedEligibleInstruments({
-  database, allowHosted = false, dryRun = false, log: logFn = console.log,
+  database, allowHosted = false, dryRun = false, dataDir = DEFAULT_DATA_DIR, log: logFn = console.log,
 }) {
   assertResolutionDatabase(database, { allowHosted });
   const eligible = loadEligibleInstrumentObservations(database);
   const selected = selectBoundedEligibleObservations(eligible);
   if (selected.length === 0) throw new Error("no eligible instrument observations are stored");
   if (dryRun) {
-    const summary = dryRunSummary(eligible, selected, planP6CompanyCell(database, selected.map((row) => row.id)));
+    const summary = dryRunSummary(
+      eligible,
+      selected,
+      planP6CompanyCell(database, selected.map((row) => row.id)),
+      planInstruments(database, selected, dataDir),
+    );
     logFn(JSON.stringify(summary));
     return summary;
   }
@@ -127,7 +184,7 @@ RETURNING id;`);
       database, positionObservationIds: groupIds, runId, rules,
     });
     const instrument = applyP7Min({
-      database, positionObservationIds: groupIds, runId, rules, identifierSha256,
+      database, positionObservationIds: groupIds, runId, rules, identifierSha256, dataDir,
     });
     groups.push({
       n: groupIds.length,
@@ -165,5 +222,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     database,
     allowHosted: args.includes("--allow-hosted"),
     dryRun: args.includes("--dry-run"),
+    dataDir: opt(args, "--data-dir") ?? DEFAULT_DATA_DIR,
   });
 }
