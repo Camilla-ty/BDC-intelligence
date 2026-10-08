@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("/admin/coverage/arcc authorization", () => {
-  it("denies MEMBER and PRO via requireAdmin", async () => {
+  it("denies MEMBER and PRO via requireAdmin before loading coverage", async () => {
     mocks.requireAdmin.mockRejectedValue(new mocks.NotFoundSignal());
     await expect(ArccSecCoveragePage()).rejects.toBeInstanceOf(mocks.NotFoundSignal);
     expect(mocks.loadArccSecCoverage).not.toHaveBeenCalled();
@@ -49,6 +49,9 @@ describe("/admin/coverage/arcc authorization", () => {
         filings: [],
         coverageNote: "test",
       },
+      reconciliation: null,
+      reconciliationError: null,
+      bdcFlowOnlyCount: null,
       error: null,
     });
     await expect(ArccSecCoveragePage()).resolves.toBeTruthy();

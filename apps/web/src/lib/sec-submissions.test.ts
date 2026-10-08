@@ -150,7 +150,7 @@ describe("SEC submissions normalization", () => {
       "0001287750-20-000001",
     ]);
     expect(coverage.coverageNote).toMatch(/filings\.recent plus every fetched/);
-    expect(coverage.coverageNote).toMatch(/does not reconcile/);
+    expect(coverage.coverageNote).toMatch(/exact accession number only/);
     expect(coverage.coverageFrom).toBe("2020-01-01");
     expect(coverage.coverageTo).toBe("2026-05-01");
   });

@@ -6,6 +6,15 @@ export const dynamic = "force-dynamic";
 
 export default async function ArccSecCoveragePage() {
   await requireAdmin();
-  const { coverage, error } = await loadArccSecCoverage();
-  return <ArccSecCoverage coverage={coverage} error={error} />;
+  const { coverage, reconciliation, reconciliationError, bdcFlowOnlyCount, error } =
+    await loadArccSecCoverage();
+  return (
+    <ArccSecCoverage
+      coverage={coverage}
+      reconciliation={reconciliation}
+      reconciliationError={reconciliationError}
+      bdcFlowOnlyCount={bdcFlowOnlyCount}
+      error={error}
+    />
+  );
 }

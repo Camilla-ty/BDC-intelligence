@@ -59,7 +59,13 @@ describe("authentication boundaries", () => {
     const arccLoader = files.find(({ file }) => file === "server/load-arcc-sec-coverage.ts");
     expect(arccLoader?.text).toMatch(/requireAdmin\s*\(/);
     expect(arccLoader?.text).not.toMatch(/grant_event|SERVICE_ROLE|INSERT INTO/i);
-    expect(arccLoader?.text).not.toMatch(/SET ROLE admin_reader|SET ROLE bdc_reader/);
+    expect(arccLoader?.text).not.toMatch(/\bFROM\s+(raw|registry|ops|obs)\./i);
+    expect(arccLoader?.text).not.toMatch(/SET ROLE bdc_reader/);
+    const arccInventory = files.find(({ file }) => file === "server/load-arcc-bdc-filings.ts");
+    expect(arccInventory?.text).toMatch(/SET ROLE admin_reader/);
+    expect(arccInventory?.text).toMatch(/admin\.filing_inventory/);
+    expect(arccInventory?.text).not.toMatch(/\bFROM\s+(raw|registry|ops|obs)\./i);
+    expect(arccInventory?.text).not.toMatch(/INSERT INTO|grant_event|SERVICE_ROLE/i);
   });
 
   it("keeps the proxy matcher to the sign-in routes", () => {

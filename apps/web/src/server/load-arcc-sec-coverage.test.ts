@@ -33,12 +33,48 @@ function columnar(rows: Array<Record<string, string>>) {
   return out;
 }
 
+function mockSecFetch() {
+  const main = {
+    cik: "0001287750",
+    name: "Ares Capital Corporation",
+    filings: {
+      recent: columnar([
+        {
+          accessionNumber: "0001628280-26-050307",
+          filingDate: "2026-07-29",
+          reportDate: "2026-06-30",
+          acceptanceDateTime: "2026-07-29T21:00:00.000Z",
+          form: "10-Q",
+          primaryDocument: "arcc-20260630.htm",
+        },
+        {
+          accessionNumber: "0001104659-26-106734",
+          filingDate: "2026-09-10",
+          form: "424B2",
+          primaryDocument: "tm.htm",
+        },
+      ]),
+      files: [],
+    },
+  };
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    void init;
+    if (url === "https://data.sec.gov/submissions/CIK0001287750.json") {
+      return new Response(JSON.stringify(main), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("missing", { status: 404 });
+  });
+}
+
 afterEach(() => {
   vi.clearAllMocks();
 });
 
 describe("loadArccSecCoverage", () => {
-  it("requires ADMIN before any SEC request", async () => {
+  it("requires ADMIN before any SEC request or inventory lookup", async () => {
     mocks.requireAdmin.mockRejectedValue(new mocks.NotFoundSignal());
     const fetchImpl = vi.fn();
     await expect(loadArccSecCoverage({ fetchImpl })).rejects.toBeInstanceOf(
@@ -47,86 +83,56 @@ describe("loadArccSecCoverage", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("fetches the live SEC submissions URL shape for ARCC with mocked HTTP", async () => {
+  it("reconciles exact accessions after a successful SEC fetch", async () => {
     mocks.requireAdmin.mockResolvedValue({ isAdmin: true });
-    const main = {
-      cik: "0001287750",
-      name: "Ares Capital Corporation",
-      filings: {
-        recent: columnar([
-          {
-            accessionNumber: "0001628280-26-050307",
-            filingDate: "2026-07-29",
-            reportDate: "2026-06-30",
-            acceptanceDateTime: "2026-07-29T21:00:00.000Z",
-            form: "10-Q",
-            primaryDocument: "arcc-20260630.htm",
-          },
-        ]),
-        files: [
-          {
-            name: "CIK0001287750-submissions-001.json",
-            filingCount: 1,
-            filingFrom: "2019-01-01",
-            filingTo: "2019-12-31",
-          },
-        ],
-      },
-    };
-    const page = columnar([
-      {
-        accessionNumber: "0001287750-19-000001",
-        filingDate: "2019-02-01",
-        reportDate: "2018-12-31",
-        form: "10-K",
-        primaryDocument: "arcc.htm",
-      },
-    ]);
-
-    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      void init;
-      if (url === "https://data.sec.gov/submissions/CIK0001287750.json") {
-        return new Response(JSON.stringify(main), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url === "https://data.sec.gov/submissions/CIK0001287750-submissions-001.json") {
-        return new Response(JSON.stringify(page), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("missing", { status: 404 });
-    });
-
-    const { coverage, error } = await loadArccSecCoverage({
+    const fetchImpl = mockSecFetch();
+    const { coverage, reconciliation, reconciliationError, error } = await loadArccSecCoverage({
       fetchImpl,
       env: { SEC_USER_AGENT: "BDC Flow test@example.test" },
       now: () => new Date("2099-01-01T00:00:00.000Z"),
+      bdcFlowRefs: {
+        refs: [{ accessionNumber: "0001628280-26-050307", filingId: 42 }],
+        bdcFlowOnlyCount: 3,
+      },
     });
 
     expect(error).toBeNull();
+    expect(reconciliationError).toBeNull();
     expect(coverage?.filings).toHaveLength(2);
-    expect(coverage?.filings[0]?.accessionNumber).toBe("0001628280-26-050307");
-    expect(coverage?.filings[0]?.primaryDocumentUrl).toBe(
-      "https://www.sec.gov/Archives/edgar/data/1287750/000162828026050307/arcc-20260630.htm",
-    );
-    expect(coverage?.sourceUrl).toBe("https://data.sec.gov/submissions/CIK0001287750.json");
-    expect(coverage?.coverageNote).toMatch(/does not reconcile/);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    const init = fetchImpl.mock.calls[0]?.[1];
-    const headers = init?.headers as Record<string, string>;
-    expect(headers["User-Agent"]).toBe("BDC Flow test@example.test");
+    expect(reconciliation?.rows.map((r) => r.bdcFlowStatus)).toEqual(["RECEIVED", "MISSING"]);
+    expect(reconciliation?.rows[0]?.filingDetailHref).toBe("/admin/filings/42");
+    expect(reconciliation?.summary.coveragePercent).toBe(50);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("surfaces a clear error when SEC_USER_AGENT is missing", async () => {
+  it("does not convert SEC fetch failure into MISSING classifications", async () => {
     mocks.requireAdmin.mockResolvedValue({ isAdmin: true });
-    const { coverage, error } = await loadArccSecCoverage({
+    const { coverage, reconciliation, reconciliationError, error } = await loadArccSecCoverage({
       fetchImpl: vi.fn(),
       env: {},
+      bdcFlowRefs: {
+        refs: [{ accessionNumber: "0001628280-26-050307", filingId: 1 }],
+      },
     });
     expect(coverage).toBeNull();
+    expect(reconciliation).toBeNull();
+    expect(reconciliationError).toBeNull();
     expect(error).toMatch(/SEC_USER_AGENT/);
+  });
+
+  it("does not convert BDC Flow lookup failure into MISSING classifications", async () => {
+    mocks.requireAdmin.mockResolvedValue({ isAdmin: true });
+    const { coverage, reconciliation, reconciliationError, error } = await loadArccSecCoverage({
+      fetchImpl: mockSecFetch(),
+      env: { SEC_USER_AGENT: "BDC Flow test@example.test" },
+      now: () => new Date("2099-01-01T00:00:00.000Z"),
+      bdcFlowRefs: {
+        error: "The BDC Flow filing inventory could not be read for reconciliation.",
+      },
+    });
+    expect(error).toBeNull();
+    expect(coverage?.filings).toHaveLength(2);
+    expect(reconciliation).toBeNull();
+    expect(reconciliationError).toMatch(/inventory could not be read/);
   });
 });

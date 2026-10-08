@@ -1,16 +1,25 @@
 import Link from "next/link";
 import { SecLink } from "@/components/SecLink";
 import { StateText } from "@/components/StateText";
+import type { SecCoverageReconciliation } from "@/lib/sec-coverage-reconcile";
 import { viewSecFilingUrl, type SecSubmissionsCoverage } from "@/lib/sec-submissions";
 import { ARCC_CIK, ARCC_NAME, ARCC_TICKER } from "@/server/sec/config";
 
 export function ArccSecCoverage({
   coverage,
+  reconciliation,
+  reconciliationError,
+  bdcFlowOnlyCount,
   error,
 }: {
   coverage: SecSubmissionsCoverage | null;
+  reconciliation: SecCoverageReconciliation | null;
+  reconciliationError: string | null;
+  bdcFlowOnlyCount: number | null;
   error: string | null;
 }) {
+  const summary = reconciliation?.summary;
+
   return (
     <section>
       <p className="text-sm">
@@ -21,8 +30,10 @@ export function ArccSecCoverage({
       <p className="mt-1 text-sm font-semibold">{coverage?.registrantName ?? ARCC_NAME}</p>
       <p className="mt-1 text-sm text-muted">CIK {coverage?.cik ?? ARCC_CIK}</p>
       <p className="mt-3 max-w-3xl text-sm text-muted">
-        This page shows the filing list reported by the official SEC submissions API.
-        It does not reconcile those filings with BDC Flow, and it does not update or ingest filings.
+        This page shows the filing list reported by the official SEC submissions API and reconciles
+        it with BDC Flow by exact accession number only. It does not update or ingest filings.
+        MISSING means the SEC filing is in this coverage set but no matching BDC Flow filing was found —
+        not that ingestion failed.
       </p>
 
       {error ? <p className="mt-6 text-sm text-foreground">{error}</p> : null}
@@ -41,7 +52,7 @@ export function ArccSecCoverage({
               <dd className="mt-1">{coverage.fetchedAt}</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wider text-muted">Filings in this list</dt>
+              <dt className="text-xs uppercase tracking-wider text-muted">SEC filings in coverage</dt>
               <dd className="mt-1 font-semibold">{coverage.filings.length}</dd>
             </div>
             <div>
@@ -69,8 +80,46 @@ export function ArccSecCoverage({
                 />
               </dd>
             </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Received in BDC Flow</dt>
+              <dd className="mt-1 font-semibold">
+                {summary ? summary.receivedInBdcFlow : <StateText text="Unavailable" />}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Missing from BDC Flow</dt>
+              <dd className="mt-1 font-semibold">
+                {summary ? summary.missingFromBdcFlow : <StateText text="Unavailable" />}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Coverage</dt>
+              <dd className="mt-1 font-semibold">
+                {summary?.coveragePercent != null ? (
+                  `${summary.coveragePercent}%`
+                ) : (
+                  <StateText text="Unavailable" />
+                )}
+              </dd>
+            </div>
           </dl>
+
           <p className="mt-4 max-w-4xl text-sm text-muted">{coverage.coverageNote}</p>
+          {reconciliation ? (
+            <p className="mt-2 max-w-4xl text-sm text-muted">{reconciliation.matchKeyNote}</p>
+          ) : null}
+          {reconciliationError ? (
+            <p className="mt-2 max-w-4xl text-sm text-foreground">
+              Reconciliation unavailable: {reconciliationError} SEC filings are listed below without
+              RECEIVED/MISSING classification.
+            </p>
+          ) : null}
+          {bdcFlowOnlyCount != null ? (
+            <p className="mt-2 max-w-4xl text-sm text-muted">
+              BDC Flow filings linked to ARCC CIK but not in this SEC coverage list: {bdcFlowOnlyCount}.
+              Those rows are not shown in the table below.
+            </p>
+          ) : null}
 
           {coverage.filings.length === 0 ? (
             <p className="mt-6 text-sm">No SEC filings were returned for this CIK.</p>
@@ -82,13 +131,17 @@ export function ArccSecCoverage({
                     <th scope="col" className="py-2 pr-3 font-semibold">SEC Accession</th>
                     <th scope="col" className="py-2 pr-3 font-semibold">Form</th>
                     <th scope="col" className="py-2 pr-3 font-semibold">Filed</th>
-                    <th scope="col" className="py-2 pr-3 font-semibold">Report Date</th>
-                    <th scope="col" className="py-2 pr-3 font-semibold">Primary Document</th>
+                    <th scope="col" className="py-2 pr-3 font-semibold">BDC Flow</th>
                     <th scope="col" className="py-2 font-semibold">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {coverage.filings.map((row) => {
+                  {(reconciliation?.rows ?? coverage.filings.map((sec) => ({
+                    ...sec,
+                    bdcFlowStatus: null as null,
+                    filingId: null as null,
+                    filingDetailHref: null as null,
+                  }))).map((row) => {
                     const viewUrl = viewSecFilingUrl(row);
                     return (
                       <tr key={row.accessionNumber} className="border-b border-line align-top">
@@ -97,29 +150,33 @@ export function ArccSecCoverage({
                         </td>
                         <td data-label="Form" className="py-2 pr-3">{row.form}</td>
                         <td data-label="Filed" className="py-2 pr-3">{row.filingDate}</td>
-                        <td data-label="Report Date" className="py-2 pr-3">
-                          <StateText text={row.reportDate ?? "Unknown"} />
-                        </td>
-                        <td data-label="Primary Document" className="py-2 pr-3 break-all">
-                          {row.primaryDocument ? (
-                            row.primaryDocumentUrl ? (
-                              <SecLink href={row.primaryDocumentUrl}>{row.primaryDocument}</SecLink>
-                            ) : (
-                              row.primaryDocument
-                            )
+                        <td data-label="BDC Flow" className="py-2 pr-3">
+                          {row.bdcFlowStatus == null ? (
+                            <StateText text="Unavailable" />
                           ) : (
-                            <StateText text="Unknown" />
+                            row.bdcFlowStatus
                           )}
-                          {row.acceptanceDateTime ? (
-                            <div className="mt-1 text-xs text-muted">Accepted {row.acceptanceDateTime}</div>
-                          ) : null}
                         </td>
                         <td data-label="Action" className="py-2">
-                          {viewUrl ? (
-                            <SecLink href={viewUrl}>View SEC filing</SecLink>
-                          ) : (
-                            <span className="text-muted">Unavailable</span>
-                          )}
+                          {row.bdcFlowStatus === "RECEIVED" && row.filingDetailHref ? (
+                            <Link href={row.filingDetailHref} className="text-accent font-semibold">
+                              View
+                            </Link>
+                          ) : null}
+                          {row.bdcFlowStatus === "MISSING" || row.bdcFlowStatus == null ? (
+                            <span className="inline-flex flex-col gap-1">
+                              {viewUrl ? (
+                                <SecLink href={viewUrl}>View SEC filing</SecLink>
+                              ) : (
+                                <span className="text-muted">SEC link unavailable</span>
+                              )}
+                              {row.bdcFlowStatus === "MISSING" ? (
+                                <span className="text-muted" title="Ingestion arrives in a later phase">
+                                  Update (not available yet)
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : null}
                         </td>
                       </tr>
                     );

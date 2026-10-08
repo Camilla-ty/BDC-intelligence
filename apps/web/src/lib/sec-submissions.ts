@@ -236,7 +236,9 @@ export function buildCoverageNote(args: {
   } else {
     parts.push("This list includes filings.recent plus every fetched filings.files[] history page.");
   }
-  parts.push("This page does not reconcile SEC filings with BDC Flow.");
+  parts.push(
+    "BDC Flow reconciliation, when available, matches this SEC list to inventory by exact accession number only.",
+  );
   return parts.join(" ");
 }
 
