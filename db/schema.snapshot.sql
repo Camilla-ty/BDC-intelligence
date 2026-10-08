@@ -66,6 +66,12 @@ CREATE TYPE access.grant_source AS ENUM (
     'SUBSCRIPTION'
 );
 
+CREATE TYPE obs.soi_fact_member_role AS ENUM (
+    'BALANCE',
+    'SPREAD',
+    'PIK'
+);
+
 CREATE TYPE ops.rule_kind AS ENUM (
     'PARSER',
     'NORMALIZATION',
@@ -704,6 +710,25 @@ $$;
 
 COMMENT ON FUNCTION obs.check_borrower_name_successor() IS 'A successor must change the rule version, the extraction state, or the normalized text. raw_text may differ when the reason records a capture correction.';
 
+CREATE FUNCTION obs.check_fact_group_member_evidence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM obs.position_observation_source src
+    JOIN obs.soi_row_observation s ON s.id = src.soi_row_observation_id
+    JOIN evidence.evidence e ON e.id = NEW.evidence_id AND e.tabular_row_id = s.tabular_row_id
+    WHERE src.position_observation_id = NEW.position_observation_id
+      AND src.source_role = 'PRIMARY'
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'fact group member evidence must point at the member source row';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
 CREATE FUNCTION obs.check_field_value_corroboration() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1039,6 +1064,42 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM evidence.evidence e WHERE e.id = p_evidence_id AND e.tabular_row_id = p_row_id) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'evidence must point at the same source row';
   END IF;
+END
+$$;
+
+CREATE FUNCTION obs.check_soi_fact_group_shape() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  rule_code text;
+  n_balance integer;
+  n_spread integer;
+  n_pik integer;
+  n_all integer;
+BEGIN
+  SELECT rv.rule_code INTO rule_code
+  FROM ops.rule_version rv
+  WHERE rv.id = NEW.rule_version_id;
+  IF rule_code IS DISTINCT FROM 'obs.soi_fact_group' THEN
+    RETURN NULL;
+  END IF;
+  IF NEW.grouping_key IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCL1',
+      MESSAGE = 'soi fact group requires a grouping key';
+  END IF;
+  SELECT count(*) FILTER (WHERE m.member_role = 'BALANCE'),
+         count(*) FILTER (WHERE m.member_role = 'SPREAD'),
+         count(*) FILTER (WHERE m.member_role = 'PIK'),
+         count(*)
+    INTO n_balance, n_spread, n_pik, n_all
+  FROM obs.position_observation_group_member m
+  WHERE m.group_id = NEW.id;
+  IF n_balance <> 1 OR n_spread <> 1 OR n_pik > 1 OR n_all <> n_balance + n_spread + n_pik
+     OR n_all NOT IN (2, 3) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCL1',
+      MESSAGE = 'soi fact group must be one balance row, one spread row, and at most one PIK row';
+  END IF;
+  RETURN NULL;
 END
 $$;
 
@@ -1504,6 +1565,793 @@ $$;
 
 COMMENT ON FUNCTION ref.current_mapping_status(mapping_id bigint) IS 'Status of the current (non-superseded) mapping in the same chain as mapping_id.';
 
+CREATE FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) RETURNS TABLE(position_id text, earlier_reported_date text, later_reported_date text, earlier_accession_number text, later_accession_number text, principal_comparison_state text, earlier_principal_raw text, later_principal_raw text, principal_delta text, fair_value_comparison_state text, earlier_fair_value_raw text, later_fair_value_raw text, fair_value_delta text, maturity_comparison_state text, maturity_changed boolean, earlier_maturity_raw text, later_maturity_raw text, holdings_definition text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  SELECT c.position_id::text,
+         c.earlier_reported_date::text,
+         c.later_reported_date::text,
+         c.earlier_accession_number,
+         c.later_accession_number,
+         c.principal_comparison_state,
+         c.earlier_principal_raw,
+         c.later_principal_raw,
+         c.principal_delta::text,
+         c.fair_value_comparison_state,
+         c.earlier_fair_value_raw,
+         c.later_fair_value_raw,
+         c.fair_value_delta::text,
+         c.maturity_comparison_state,
+         c.maturity_changed,
+         c.earlier_maturity_raw,
+         c.later_maturity_raw,
+         'portfolio.holdings.v1'
+  FROM registry.position_period_comparison c
+  JOIN registry.bdc_portfolio_scope(p_cik, p_reported_date) scoped
+    ON scoped.position_observation_id = c.later_position_observation_id
+  ORDER BY c.later_reported_date DESC, c.position_id, c.later_position_observation_id
+$$;
+
+COMMENT ON FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) IS 'Confirmed comparisons whose later observation is in this CIK and reported date. Deltas are copied from registry.position_period_comparison. A missing later observation is not a row and is not a repayment or a refinancing.';
+
+CREATE FUNCTION registry.bdc_portfolio_holdings(p_cik text, p_reported_date date, p_limit integer, p_offset integer) RETURNS TABLE(registrant_cik text, reported_date text, position_observation_id text, position_id text, borrower_name_raw text, holding_descriptor_raw text, instrument_id text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, principal_state text, principal_raw text, principal_currency_state text, principal_currency_code text, cost_state text, cost_raw text, cost_currency_state text, cost_currency_code text, fair_value_state text, fair_value_raw text, fair_value_currency_state text, fair_value_currency_code text, maturity_source text, maturity_raw text, maturity_precision text, accession_number text, observation_evidence_level text, document_url text, holdings_definition text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  SELECT r.registrant_cik,
+         r.reported_date::text,
+         r.position_observation_id::text,
+         r.position_id::text,
+         r.borrower_name_raw,
+         r.holding_descriptor_raw,
+         r.instrument_id::text,
+         r.instrument_resolution_state,
+         r.continuity_state,
+         CASE
+           WHEN instrument_type.n IS NULL OR instrument_type.n = 0 THEN 'UNKNOWN'
+           WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN 'REPORTED'
+           ELSE 'MULTIPLE_VALUES'
+         END,
+         CASE WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN instrument_type.raw_value END,
+         r.principal_state,
+         r.principal_raw,
+         r.principal_currency_state,
+         principal_code.currency_code,
+         r.cost_state,
+         r.cost_raw,
+         r.cost_currency_state,
+         cost_code.currency_code,
+         r.fair_value_state,
+         r.fair_value_raw,
+         r.fair_value_currency_state,
+         fair_value_code.currency_code,
+         r.maturity_source,
+         r.maturity_raw,
+         r.maturity_precision,
+         r.accession_number,
+         r.observation_evidence_level,
+         doc.document_url,
+         'portfolio.holdings.v1'
+  FROM registry.bdc_portfolio_scope(p_cik, p_reported_date) scoped
+  JOIN LATERAL (
+    SELECT observed.*
+    FROM registry.position_read observed
+    WHERE observed.position_observation_id = scoped.position_observation_id
+      AND observed.reported_date = p_reported_date
+    OFFSET 0
+  ) r ON true
+  LEFT JOIN LATERAL (
+    SELECT count(*)::integer AS n,
+           count(*) FILTER (WHERE rf.value_state = 'REPORTED')::integer AS reported_n,
+           min(rf.raw_value) AS raw_value
+    FROM obs.current_position_research_field rf
+    WHERE rf.position_observation_id = r.position_observation_id
+      AND rf.field_code = 'INSTRUMENT_TYPE'
+  ) instrument_type ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = r.position_observation_id
+      AND fv.field_code = 'PRINCIPAL_AMOUNT'
+  ) principal_code ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = r.position_observation_id
+      AND fv.field_code = 'COST'
+  ) cost_code ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = r.position_observation_id
+      AND fv.field_code = 'FAIR_VALUE'
+  ) fair_value_code ON true
+  LEFT JOIN LATERAL (
+    SELECT filing_document.document_url
+    FROM registry.filing_document filing_document
+    WHERE filing_document.filing_id = r.filing_id
+      AND filing_document.document_url ~ '^https://www\.sec\.gov/Archives/edgar/data/'
+    ORDER BY CASE WHEN filing_document.named_by = 'SUBMISSIONS_PRIMARY_DOCUMENT' THEN 0 ELSE 1 END,
+             filing_document.id
+    LIMIT 1
+  ) doc ON true
+  ORDER BY r.borrower_name_raw ASC NULLS LAST, r.position_observation_id ASC
+  LIMIT greatest(coalesce(p_limit, 0), 0)
+  OFFSET greatest(coalesce(p_offset, 0), 0)
+$$;
+
+COMMENT ON FUNCTION registry.bdc_portfolio_holdings(p_cik text, p_reported_date date, p_limit integer, p_offset integer) IS 'One page of holdings for one CIK and one reported date under portfolio.holdings.v1. Facts are registry.position_read. A missing amount stays unknown. Currency is not converted.';
+
+CREATE FUNCTION registry.bdc_portfolio_period_changes(p_cik text, p_earlier date, p_later date) RETURNS TABLE(change_type text, registrant_cik text, earlier_reported_date text, later_reported_date text, position_id text, instrument_id text, legal_entity_id text, borrower_name_raw text, holding_descriptor_raw text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, principal_comparison_state text, principal_delta text, earlier_principal_raw text, later_principal_raw text, earlier_principal_currency_state text, later_principal_currency_state text, fair_value_comparison_state text, fair_value_delta text, earlier_fair_value_raw text, later_fair_value_raw text, earlier_fair_value_currency_state text, later_fair_value_currency_state text, cost_comparison_state text, cost_delta text, earlier_cost_raw text, later_cost_raw text, maturity_comparison_state text, maturity_changed boolean, earlier_maturity_raw text, later_maturity_raw text, earlier_accession_number text, later_accession_number text, earlier_document_url text, later_document_url text, earlier_position_observation_id text, later_position_observation_id text, changes_definition text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  WITH earlier_resolved AS (
+    SELECT position_id,
+           count(*)::integer AS n,
+           min(position_observation_id) AS position_observation_id
+    FROM registry.bdc_portfolio_period_identity(p_cik, p_earlier)
+    WHERE p_earlier < p_later
+      AND instrument_resolution_state = 'MATCHED'
+      AND continuity_state = 'MATCHED'
+      AND position_id IS NOT NULL
+    GROUP BY position_id
+  ),
+  later_resolved AS (
+    SELECT position_id,
+           count(*)::integer AS n,
+           min(position_observation_id) AS position_observation_id
+    FROM registry.bdc_portfolio_period_identity(p_cik, p_later)
+    WHERE p_earlier < p_later
+      AND instrument_resolution_state = 'MATCHED'
+      AND continuity_state = 'MATCHED'
+      AND position_id IS NOT NULL
+    GROUP BY position_id
+  ),
+  classified AS (
+    SELECT 'EXISTING_POSITION_CHANGED'::text AS change_type,
+           earlier_resolved.position_observation_id AS earlier_id,
+           later_resolved.position_observation_id AS later_id
+    FROM earlier_resolved
+    JOIN later_resolved ON later_resolved.position_id = earlier_resolved.position_id
+    JOIN registry.position_period_comparison compared
+      ON compared.earlier_position_observation_id = earlier_resolved.position_observation_id
+     AND compared.later_position_observation_id = later_resolved.position_observation_id
+     AND compared.earlier_reported_date = p_earlier
+     AND compared.later_reported_date = p_later
+    WHERE earlier_resolved.n = 1
+      AND later_resolved.n = 1
+      AND (compared.fair_value_changed IS TRUE
+           OR compared.principal_changed IS TRUE
+           OR compared.cost_changed IS TRUE
+           OR compared.maturity_changed IS TRUE)
+    UNION ALL
+    SELECT 'NEW_POSITION_OBSERVED',
+           NULL::bigint,
+           later_resolved.position_observation_id
+    FROM later_resolved
+    WHERE later_resolved.n = 1
+      AND NOT EXISTS (
+        SELECT 1
+        FROM earlier_resolved earlier_position
+        WHERE earlier_position.position_id = later_resolved.position_id)
+    UNION ALL
+    SELECT 'POSITION_NO_LONGER_OBSERVED',
+           earlier_resolved.position_observation_id,
+           NULL::bigint
+    FROM earlier_resolved
+    WHERE earlier_resolved.n = 1
+      AND NOT EXISTS (
+        SELECT 1
+        FROM later_resolved later_position
+        WHERE later_position.position_id = earlier_resolved.position_id)
+  )
+  SELECT classified.change_type,
+         p_cik,
+         p_earlier::text,
+         p_later::text,
+         coalesce(later_read.position_id, earlier_read.position_id)::text,
+         coalesce(later_read.instrument_id, earlier_read.instrument_id)::text,
+         coalesce(later_read.legal_entity_id, earlier_read.legal_entity_id)::text,
+         coalesce(later_read.borrower_name_raw, earlier_read.borrower_name_raw),
+         coalesce(later_read.holding_descriptor_raw, earlier_read.holding_descriptor_raw),
+         coalesce(later_read.instrument_resolution_state, earlier_read.instrument_resolution_state),
+         coalesce(later_read.continuity_state, earlier_read.continuity_state),
+         CASE
+           WHEN instrument_type.n IS NULL OR instrument_type.n = 0 THEN 'UNKNOWN'
+           WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN 'REPORTED'
+           ELSE 'MULTIPLE_VALUES'
+         END,
+         CASE WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN instrument_type.raw_value END,
+         compared.principal_comparison_state,
+         compared.principal_delta::text,
+         coalesce(compared.earlier_principal_raw, earlier_read.principal_raw),
+         coalesce(compared.later_principal_raw, later_read.principal_raw),
+         earlier_read.principal_currency_state,
+         later_read.principal_currency_state,
+         compared.fair_value_comparison_state,
+         compared.fair_value_delta::text,
+         coalesce(compared.earlier_fair_value_raw, earlier_read.fair_value_raw),
+         coalesce(compared.later_fair_value_raw, later_read.fair_value_raw),
+         earlier_read.fair_value_currency_state,
+         later_read.fair_value_currency_state,
+         compared.cost_comparison_state,
+         compared.cost_delta::text,
+         coalesce(compared.earlier_cost_raw, earlier_read.cost_raw),
+         coalesce(compared.later_cost_raw, later_read.cost_raw),
+         compared.maturity_comparison_state,
+         compared.maturity_changed,
+         coalesce(compared.earlier_maturity_raw, earlier_read.maturity_raw),
+         coalesce(compared.later_maturity_raw, later_read.maturity_raw),
+         coalesce(compared.earlier_accession_number, earlier_read.accession_number),
+         coalesce(compared.later_accession_number, later_read.accession_number),
+         earlier_doc.document_url,
+         later_doc.document_url,
+         classified.earlier_id::text,
+         classified.later_id::text,
+         'portfolio.period_changes.v1'
+  FROM classified
+  LEFT JOIN registry.position_period_comparison compared
+    ON compared.earlier_position_observation_id = classified.earlier_id
+   AND compared.later_position_observation_id = classified.later_id
+   AND classified.change_type = 'EXISTING_POSITION_CHANGED'
+  LEFT JOIN LATERAL (
+    SELECT observed.*
+    FROM registry.position_read observed
+    WHERE observed.position_observation_id = classified.earlier_id
+    OFFSET 0
+  ) earlier_read ON classified.earlier_id IS NOT NULL
+  LEFT JOIN LATERAL (
+    SELECT observed.*
+    FROM registry.position_read observed
+    WHERE observed.position_observation_id = classified.later_id
+    OFFSET 0
+  ) later_read ON classified.later_id IS NOT NULL
+  LEFT JOIN LATERAL (
+    SELECT count(*)::integer AS n,
+           count(*) FILTER (WHERE rf.value_state = 'REPORTED')::integer AS reported_n,
+           min(rf.raw_value) AS raw_value
+    FROM obs.current_position_research_field rf
+    WHERE rf.position_observation_id = coalesce(classified.later_id, classified.earlier_id)
+      AND rf.field_code = 'INSTRUMENT_TYPE'
+  ) instrument_type ON true
+  LEFT JOIN LATERAL (
+    SELECT filing_document.document_url
+    FROM registry.filing_document filing_document
+    WHERE filing_document.filing_id = earlier_read.filing_id
+      AND filing_document.document_url ~ '^https://www\.sec\.gov/Archives/edgar/data/'
+    ORDER BY CASE WHEN filing_document.named_by = 'SUBMISSIONS_PRIMARY_DOCUMENT' THEN 0 ELSE 1 END,
+             filing_document.id
+    LIMIT 1
+  ) earlier_doc ON true
+  LEFT JOIN LATERAL (
+    SELECT filing_document.document_url
+    FROM registry.filing_document filing_document
+    WHERE filing_document.filing_id = later_read.filing_id
+      AND filing_document.document_url ~ '^https://www\.sec\.gov/Archives/edgar/data/'
+    ORDER BY CASE WHEN filing_document.named_by = 'SUBMISSIONS_PRIMARY_DOCUMENT' THEN 0 ELSE 1 END,
+             filing_document.id
+    LIMIT 1
+  ) later_doc ON true
+  ORDER BY classified.change_type, coalesce(later_read.borrower_name_raw, earlier_read.borrower_name_raw), classified.later_id, classified.earlier_id
+$$;
+
+COMMENT ON FUNCTION registry.bdc_portfolio_period_changes(p_cik text, p_earlier date, p_later date) IS 'Observable changes between two reporting periods of one CIK under portfolio.period_changes.v1. EXISTING_POSITION_CHANGED copies registry.position_period_comparison for that pair. NEW_POSITION_OBSERVED is a resolved position present only in the later period. POSITION_NO_LONGER_OBSERVED is a resolved position present only in the earlier period. Neither is an origination, a repayment, or a refinancing. An unresolved instrument is absent. A borrower name is not an instrument.';
+
+CREATE FUNCTION registry.bdc_portfolio_period_identity(p_cik text, p_reported_date date) RETURNS TABLE(position_observation_id bigint, position_id uuid, instrument_resolution_state text, continuity_state text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  SELECT r.position_observation_id,
+         r.position_id,
+         r.instrument_resolution_state,
+         r.continuity_state
+  FROM registry.bdc_portfolio_scope(p_cik, p_reported_date) scoped
+  JOIN LATERAL (
+    SELECT observed.position_observation_id,
+           observed.position_id,
+           observed.instrument_resolution_state,
+           observed.continuity_state
+    FROM registry.position_read observed
+    WHERE observed.position_observation_id = scoped.position_observation_id
+      AND observed.reported_date = p_reported_date
+    OFFSET 0
+  ) r ON true
+$$;
+
+COMMENT ON FUNCTION registry.bdc_portfolio_period_identity(p_cik text, p_reported_date date) IS 'Position identity for one CIK and one reported date. The population is registry.bdc_portfolio_scope. Resolution columns are registry.position_read.';
+
+CREATE FUNCTION registry.bdc_portfolio_period_summary(p_cik text, p_earlier date, p_later date) RETURNS TABLE(earlier_observation_count text, later_observation_count text, unresolved_count text, observed_in_both_count text, changed_count text, new_count text, no_longer_count text, ambiguous_position_count text, changes_definition text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  WITH earlier_rows AS (
+    SELECT *
+    FROM registry.bdc_portfolio_period_identity(p_cik, p_earlier)
+    WHERE p_earlier < p_later
+  ),
+  later_rows AS (
+    SELECT *
+    FROM registry.bdc_portfolio_period_identity(p_cik, p_later)
+    WHERE p_earlier < p_later
+  ),
+  earlier_resolved AS (
+    SELECT position_id,
+           count(*)::integer AS n,
+           min(position_observation_id) AS position_observation_id
+    FROM earlier_rows
+    WHERE instrument_resolution_state = 'MATCHED'
+      AND continuity_state = 'MATCHED'
+      AND position_id IS NOT NULL
+    GROUP BY position_id
+  ),
+  later_resolved AS (
+    SELECT position_id,
+           count(*)::integer AS n,
+           min(position_observation_id) AS position_observation_id
+    FROM later_rows
+    WHERE instrument_resolution_state = 'MATCHED'
+      AND continuity_state = 'MATCHED'
+      AND position_id IS NOT NULL
+    GROUP BY position_id
+  )
+  SELECT (SELECT count(*) FROM earlier_rows)::text,
+         (SELECT count(*) FROM later_rows)::text,
+         (
+           (SELECT count(*) FROM earlier_rows
+            WHERE instrument_resolution_state IS DISTINCT FROM 'MATCHED'
+               OR continuity_state IS DISTINCT FROM 'MATCHED'
+               OR position_id IS NULL)
+           +
+           (SELECT count(*) FROM later_rows
+            WHERE instrument_resolution_state IS DISTINCT FROM 'MATCHED'
+               OR continuity_state IS DISTINCT FROM 'MATCHED'
+               OR position_id IS NULL)
+         )::text,
+         (SELECT count(*)
+          FROM earlier_resolved
+          JOIN later_resolved USING (position_id)
+          WHERE earlier_resolved.n = 1 AND later_resolved.n = 1)::text,
+         (SELECT count(*)
+          FROM earlier_resolved
+          JOIN later_resolved USING (position_id)
+          JOIN registry.position_period_comparison compared
+            ON compared.earlier_position_observation_id = earlier_resolved.position_observation_id
+           AND compared.later_position_observation_id = later_resolved.position_observation_id
+           AND compared.earlier_reported_date = p_earlier
+           AND compared.later_reported_date = p_later
+          WHERE earlier_resolved.n = 1
+            AND later_resolved.n = 1
+            AND (compared.fair_value_changed IS TRUE
+                 OR compared.principal_changed IS TRUE
+                 OR compared.cost_changed IS TRUE
+                 OR compared.maturity_changed IS TRUE))::text,
+         (SELECT count(*)
+          FROM later_resolved
+          WHERE n = 1
+            AND NOT EXISTS (
+              SELECT 1 FROM earlier_resolved earlier_position
+              WHERE earlier_position.position_id = later_resolved.position_id))::text,
+         (SELECT count(*)
+          FROM earlier_resolved
+          WHERE n = 1
+            AND NOT EXISTS (
+              SELECT 1 FROM later_resolved later_position
+              WHERE later_position.position_id = earlier_resolved.position_id))::text,
+         (
+           (SELECT count(*) FROM earlier_resolved WHERE n > 1)
+           +
+           (SELECT count(*) FROM later_resolved WHERE n > 1)
+         )::text,
+         'portfolio.period_changes.v1'
+$$;
+
+COMMENT ON FUNCTION registry.bdc_portfolio_period_summary(p_cik text, p_earlier date, p_later date) IS 'Counts for two reporting periods of one CIK. Counts are stored rows or stored positions, not a score. Unresolved instruments stay out of the change counts. A position with more than one matched observation on a selected date is ambiguous and is not a new or absent position.';
+
+CREATE FUNCTION registry.bdc_portfolio_scope(p_cik text, p_reported_date date) RETURNS TABLE(position_observation_id bigint)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  SELECT p.id
+  FROM registry.portfolio_detail_filing(p_cik) filing
+  JOIN obs.position_observation p
+    ON p.filing_id = filing.filing_id
+   AND p.reported_date = p_reported_date
+$$;
+
+COMMENT ON FUNCTION registry.bdc_portfolio_scope(p_cik text, p_reported_date date) IS 'Position observations for one CIK and one reported date. The CIK filter is registry.portfolio_detail_filing. A filing with more than one registrant is absent. Another reported date is absent.';
+
+CREATE FUNCTION registry.bdc_portfolio_summary(p_cik text, p_reported_date date) RETURNS TABLE(observation_count text, resolved_position_count text, unresolved_count text, known_principal_count text, known_fair_value_count text, known_maturity_count text, unknown_currency_count text, principal_aggregation_state text, principal_total text, principal_currency_code text, fair_value_aggregation_state text, fair_value_total text, fair_value_currency_code text, holdings_definition text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'registry', 'obs'
+    AS $$
+  SELECT count(*)::text,
+         count(*) FILTER (
+           WHERE instrument_resolution_state = 'MATCHED' AND continuity_state = 'MATCHED'
+         )::text,
+         count(*) FILTER (
+           WHERE instrument_resolution_state IS DISTINCT FROM 'MATCHED'
+              OR continuity_state IS DISTINCT FROM 'MATCHED'
+         )::text,
+         count(*) FILTER (WHERE principal_state = 'REPORTED')::text,
+         count(*) FILTER (WHERE fair_value_state = 'REPORTED')::text,
+         count(*) FILTER (
+           WHERE maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED', 'REPORTED_MONTH', 'FILING_MONTH')
+         )::text,
+         count(*) FILTER (
+           WHERE (principal_state = 'REPORTED' AND principal_currency_state IN ('UNKNOWN', 'AMBIGUOUS'))
+              OR (fair_value_state = 'REPORTED' AND fair_value_currency_state IN ('UNKNOWN', 'AMBIGUOUS'))
+         )::text,
+         CASE
+           WHEN count(*) > 0
+            AND bool_and(
+                  principal_state = 'REPORTED'
+                  AND principal_numeric IS NOT NULL
+                  AND principal_currency_state IS NOT NULL
+                  AND principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND principal_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT principal_currency_code) = 1
+           THEN 'COMPARABLE'
+           ELSE 'INSUFFICIENT_DATA'
+         END,
+         CASE
+           WHEN count(*) > 0
+            AND bool_and(
+                  principal_state = 'REPORTED'
+                  AND principal_numeric IS NOT NULL
+                  AND principal_currency_state IS NOT NULL
+                  AND principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND principal_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT principal_currency_code) = 1
+           THEN sum(principal_numeric::numeric)::text
+         END,
+         CASE
+           WHEN count(*) > 0
+            AND bool_and(
+                  principal_state = 'REPORTED'
+                  AND principal_numeric IS NOT NULL
+                  AND principal_currency_state IS NOT NULL
+                  AND principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND principal_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT principal_currency_code) = 1
+           THEN min(principal_currency_code)
+         END,
+         CASE
+           WHEN count(*) > 0
+            AND bool_and(
+                  fair_value_state = 'REPORTED'
+                  AND fair_value_numeric IS NOT NULL
+                  AND fair_value_currency_state IS NOT NULL
+                  AND fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND fair_value_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT fair_value_currency_code) = 1
+           THEN 'COMPARABLE'
+           ELSE 'INSUFFICIENT_DATA'
+         END,
+         CASE
+           WHEN count(*) > 0
+            AND bool_and(
+                  fair_value_state = 'REPORTED'
+                  AND fair_value_numeric IS NOT NULL
+                  AND fair_value_currency_state IS NOT NULL
+                  AND fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND fair_value_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT fair_value_currency_code) = 1
+           THEN sum(fair_value_numeric::numeric)::text
+         END,
+         CASE
+           WHEN count(*) > 0
+            AND bool_and(
+                  fair_value_state = 'REPORTED'
+                  AND fair_value_numeric IS NOT NULL
+                  AND fair_value_currency_state IS NOT NULL
+                  AND fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND fair_value_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT fair_value_currency_code) = 1
+           THEN min(fair_value_currency_code)
+         END,
+         'portfolio.holdings.v1'
+  FROM (
+    SELECT r.instrument_resolution_state,
+           r.continuity_state,
+           r.principal_state,
+           r.principal_numeric,
+           r.principal_currency_state,
+           principal_code.currency_code AS principal_currency_code,
+           r.fair_value_state,
+           r.fair_value_numeric,
+           r.fair_value_currency_state,
+           fair_value_code.currency_code AS fair_value_currency_code,
+           r.maturity_source
+    FROM registry.bdc_portfolio_scope(p_cik, p_reported_date) scoped
+    JOIN LATERAL (
+      SELECT observed.*
+      FROM registry.position_read observed
+      WHERE observed.position_observation_id = scoped.position_observation_id
+        AND observed.reported_date = p_reported_date
+      OFFSET 0
+    ) r ON true
+    LEFT JOIN LATERAL (
+      SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+      FROM obs.current_position_field_value fv
+      WHERE fv.position_observation_id = r.position_observation_id
+        AND fv.field_code = 'PRINCIPAL_AMOUNT'
+    ) principal_code ON true
+    LEFT JOIN LATERAL (
+      SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+      FROM obs.current_position_field_value fv
+      WHERE fv.position_observation_id = r.position_observation_id
+        AND fv.field_code = 'FAIR_VALUE'
+    ) fair_value_code ON true
+  ) holding
+$$;
+
+COMMENT ON FUNCTION registry.bdc_portfolio_summary(p_cik text, p_reported_date date) IS 'Observable counts for one CIK and one reported date. Principal and fair value are totaled only when every holding in that date has a reported number and the same known currency. A missing amount is not zero. Unknown currency is not a total. Counts are stored rows, not a score.';
+
+CREATE FUNCTION registry.borrower_maturity_observations(p_legal_entity_id uuid) RETURNS TABLE(legal_entity_id text, position_observation_id text, position_id text, instrument_id text, borrower_name_raw text, reported_date text, accession_number text, registrant_cik text, registrant_link_status text, entity_resolution_state text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, maturity_source text, maturity_raw text, maturity_date text, maturity_precision text, maturity_year text, maturity_month text, maturity_precision_class text, maturity_bucket_year text, maturity_observation_state text, maturity_evidence_id text, maturity_filing_verified boolean, maturity_document_url text, observation_evidence_level text, principal_state text, principal_raw text, principal_numeric text, principal_currency_state text, principal_currency_code text, fair_value_state text, fair_value_raw text, fair_value_numeric text, fair_value_currency_state text, fair_value_currency_code text, refinancing_outcome_state text, maturity_definition text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT r.legal_entity_id::text,
+         r.position_observation_id::text,
+         r.position_id::text,
+         r.instrument_id::text,
+         r.borrower_name_raw,
+         r.reported_date::text,
+         r.accession_number,
+         r.registrant_cik,
+         r.registrant_link_status,
+         r.entity_resolution_state,
+         r.instrument_resolution_state,
+         r.continuity_state,
+         CASE
+           WHEN instrument_type.n IS NULL OR instrument_type.n = 0 THEN 'UNKNOWN'
+           WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN 'REPORTED'
+           ELSE 'MULTIPLE_VALUES'
+         END,
+         CASE WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN instrument_type.raw_value END,
+         r.maturity_source,
+         r.maturity_raw,
+         r.maturity_date::text,
+         r.maturity_precision,
+         r.maturity_year::text,
+         r.maturity_month::text,
+         CASE
+           WHEN r.instrument_resolution_state = 'MATCHED'
+            AND r.continuity_state = 'MATCHED'
+            AND r.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+            AND r.maturity_date IS NOT NULL
+            AND r.maturity_precision IS NULL
+           THEN 'DAY'
+           WHEN r.instrument_resolution_state = 'MATCHED'
+            AND r.continuity_state = 'MATCHED'
+            AND r.maturity_precision = 'MONTH'
+            AND r.maturity_year IS NOT NULL
+            AND r.maturity_month IS NOT NULL
+            AND r.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+           THEN 'MONTH'
+           ELSE 'NONE'
+         END,
+         CASE
+           WHEN r.instrument_resolution_state = 'MATCHED'
+            AND r.continuity_state = 'MATCHED'
+            AND r.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+            AND r.maturity_date IS NOT NULL
+            AND r.maturity_precision IS NULL
+           THEN extract(year FROM r.maturity_date)::integer::text
+           WHEN r.instrument_resolution_state = 'MATCHED'
+            AND r.continuity_state = 'MATCHED'
+            AND r.maturity_precision = 'MONTH'
+            AND r.maturity_year IS NOT NULL
+            AND r.maturity_month IS NOT NULL
+            AND r.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+           THEN r.maturity_year::text
+         END,
+         CASE
+           WHEN r.instrument_resolution_state IS DISTINCT FROM 'MATCHED'
+           THEN 'UNRESOLVED_INSTRUMENT'
+           WHEN r.continuity_state IS DISTINCT FROM 'MATCHED'
+           THEN 'UNRESOLVED_POSITION'
+           WHEN r.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+            AND r.maturity_date IS NOT NULL
+            AND r.maturity_precision IS NULL
+           THEN 'OBSERVED'
+           WHEN r.maturity_precision = 'MONTH'
+            AND r.maturity_year IS NOT NULL
+            AND r.maturity_month IS NOT NULL
+            AND r.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+           THEN 'OBSERVED'
+           ELSE 'UNKNOWN'
+         END,
+         r.maturity_evidence_id::text,
+         r.maturity_filing_verified,
+         r.maturity_document_url,
+         r.observation_evidence_level,
+         r.principal_state,
+         r.principal_raw,
+         r.principal_numeric::text,
+         r.principal_currency_state,
+         principal_code.currency_code,
+         r.fair_value_state,
+         r.fair_value_raw,
+         r.fair_value_numeric::text,
+         r.fair_value_currency_state,
+         fair_value_code.currency_code,
+         'UNKNOWN',
+         'maturity.position_history.v1'
+  FROM (
+    SELECT DISTINCT m.position_observation_id
+    FROM registry.matched_entity_position m
+    WHERE m.legal_entity_id = p_legal_entity_id
+  ) matched
+  JOIN LATERAL (
+    SELECT observed.*
+    FROM registry.position_read observed
+    WHERE observed.position_observation_id = matched.position_observation_id
+      AND observed.legal_entity_id = p_legal_entity_id
+      AND observed.entity_resolution_state = 'MATCHED'
+    OFFSET 0
+  ) r ON true
+  LEFT JOIN LATERAL (
+    SELECT count(*)::integer AS n,
+           count(*) FILTER (WHERE rf.value_state = 'REPORTED')::integer AS reported_n,
+           min(rf.raw_value) AS raw_value
+    FROM obs.current_position_research_field rf
+    WHERE rf.position_observation_id = r.position_observation_id
+      AND rf.field_code = 'INSTRUMENT_TYPE'
+  ) instrument_type ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = r.position_observation_id
+      AND fv.field_code = 'PRINCIPAL_AMOUNT'
+  ) principal_code ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = r.position_observation_id
+      AND fv.field_code = 'FAIR_VALUE'
+  ) fair_value_code ON true
+  ORDER BY CASE
+             WHEN r.instrument_resolution_state = 'MATCHED'
+              AND r.continuity_state = 'MATCHED'
+              AND r.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+              AND r.maturity_date IS NOT NULL
+              AND r.maturity_precision IS NULL
+             THEN 0
+             WHEN r.instrument_resolution_state = 'MATCHED'
+              AND r.continuity_state = 'MATCHED'
+              AND r.maturity_precision = 'MONTH'
+              AND r.maturity_year IS NOT NULL
+              AND r.maturity_month IS NOT NULL
+              AND r.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+             THEN 1
+             ELSE 2
+           END,
+           r.maturity_date ASC NULLS LAST,
+           r.maturity_year ASC NULLS LAST,
+           r.maturity_month ASC NULLS LAST,
+           r.reported_date DESC,
+           r.position_observation_id ASC
+$$;
+
+COMMENT ON FUNCTION registry.borrower_maturity_observations(p_legal_entity_id uuid) IS 'Historical maturity for one legal entity under maturity.position_history.v1. Values come from registry.position_read. A calendar day is not created from a month. Unknown stays unknown. refinancing_outcome_state is UNKNOWN: a maturity change, a missing later observation, and an acquisition date are not a refinancing or an origination. Unresolved instruments stay out of observed maturity buckets.';
+
+CREATE FUNCTION registry.borrower_maturity_summary(p_legal_entity_id uuid) RETURNS TABLE(resolved_observation_count text, known_maturity_count text, unknown_maturity_count text, unresolved_count text, earliest_calendar_maturity text, earliest_month_maturity text, refinancing_outcome_state text, maturity_definition text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT count(*) FILTER (
+           WHERE instrument_resolution_state = 'MATCHED' AND continuity_state = 'MATCHED'
+         )::text,
+         count(*) FILTER (WHERE maturity_observation_state = 'OBSERVED')::text,
+         count(*) FILTER (
+           WHERE instrument_resolution_state = 'MATCHED'
+             AND continuity_state = 'MATCHED'
+             AND maturity_observation_state = 'UNKNOWN'
+         )::text,
+         count(*) FILTER (
+           WHERE maturity_observation_state IN ('UNRESOLVED_INSTRUMENT', 'UNRESOLVED_POSITION')
+         )::text,
+         (array_agg(maturity_raw ORDER BY maturity_date)
+            FILTER (WHERE maturity_precision_class = 'DAY'))[1],
+         (array_agg(maturity_raw ORDER BY maturity_year::integer, maturity_month::integer)
+            FILTER (WHERE maturity_precision_class = 'MONTH'))[1],
+         'UNKNOWN',
+         'maturity.position_history.v1'
+  FROM registry.borrower_maturity_observations(p_legal_entity_id)
+$$;
+
+COMMENT ON FUNCTION registry.borrower_maturity_summary(p_legal_entity_id uuid) IS 'Counts for one legal entity. Known maturity is an observed day or month on a resolved position. Earliest calendar maturity and earliest month maturity stay separate. A count is a stored-row count, not exposure. refinancing_outcome_state stays UNKNOWN.';
+
+CREATE FUNCTION registry.borrower_maturity_years(p_legal_entity_id uuid) RETURNS TABLE(maturity_year text, maturity_precision_class text, observation_count text, principal_aggregation_state text, principal_total text, principal_currency_code text, fair_value_aggregation_state text, fair_value_total text, fair_value_currency_code text, maturity_definition text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT observed.maturity_bucket_year,
+         observed.maturity_precision_class,
+         count(*)::text,
+         CASE
+           WHEN bool_and(
+                  observed.principal_state = 'REPORTED'
+                  AND observed.principal_numeric IS NOT NULL
+                  AND observed.principal_currency_state IS NOT NULL
+                  AND observed.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND observed.principal_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT observed.principal_currency_code) = 1
+           THEN 'COMPARABLE'
+           ELSE 'INSUFFICIENT_DATA'
+         END,
+         CASE
+           WHEN bool_and(
+                  observed.principal_state = 'REPORTED'
+                  AND observed.principal_numeric IS NOT NULL
+                  AND observed.principal_currency_state IS NOT NULL
+                  AND observed.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND observed.principal_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT observed.principal_currency_code) = 1
+           THEN sum(observed.principal_numeric::numeric)::text
+         END,
+         CASE
+           WHEN bool_and(
+                  observed.principal_state = 'REPORTED'
+                  AND observed.principal_numeric IS NOT NULL
+                  AND observed.principal_currency_state IS NOT NULL
+                  AND observed.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND observed.principal_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT observed.principal_currency_code) = 1
+           THEN min(observed.principal_currency_code)
+         END,
+         CASE
+           WHEN bool_and(
+                  observed.fair_value_state = 'REPORTED'
+                  AND observed.fair_value_numeric IS NOT NULL
+                  AND observed.fair_value_currency_state IS NOT NULL
+                  AND observed.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND observed.fair_value_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT observed.fair_value_currency_code) = 1
+           THEN 'COMPARABLE'
+           ELSE 'INSUFFICIENT_DATA'
+         END,
+         CASE
+           WHEN bool_and(
+                  observed.fair_value_state = 'REPORTED'
+                  AND observed.fair_value_numeric IS NOT NULL
+                  AND observed.fair_value_currency_state IS NOT NULL
+                  AND observed.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND observed.fair_value_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT observed.fair_value_currency_code) = 1
+           THEN sum(observed.fair_value_numeric::numeric)::text
+         END,
+         CASE
+           WHEN bool_and(
+                  observed.fair_value_state = 'REPORTED'
+                  AND observed.fair_value_numeric IS NOT NULL
+                  AND observed.fair_value_currency_state IS NOT NULL
+                  AND observed.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+                  AND observed.fair_value_currency_code IS NOT NULL
+                )
+            AND count(DISTINCT observed.fair_value_currency_code) = 1
+           THEN min(observed.fair_value_currency_code)
+         END,
+         'maturity.position_history.v1'
+  FROM registry.borrower_maturity_observations(p_legal_entity_id) observed
+  WHERE observed.maturity_observation_state = 'OBSERVED'
+  GROUP BY observed.maturity_bucket_year, observed.maturity_precision_class
+  ORDER BY observed.maturity_bucket_year, observed.maturity_precision_class
+$$;
+
+COMMENT ON FUNCTION registry.borrower_maturity_years(p_legal_entity_id uuid) IS 'Observed maturity counts by stored year and precision. Principal and fair value are summed only when every observation in the bucket has a reported number and the same non-unknown currency code. A missing amount is not zero. Unknown currency is not a total. Fair value is not a substitute for principal. Unresolved instruments are excluded.';
+
 CREATE FUNCTION registry.borrower_position_comparisons(p_legal_entity_id uuid) RETURNS TABLE(legal_entity_id text, position_id text, earlier_position_observation_id text, later_position_observation_id text, earlier_reported_date text, later_reported_date text, earlier_accession_number text, later_accession_number text, earlier_observation_evidence_id text, later_observation_evidence_id text, earlier_observation_evidence_level text, later_observation_evidence_level text, earlier_registrant_cik text, earlier_registrant_link_status text, later_registrant_cik text, later_registrant_link_status text, principal_comparison_state text, earlier_principal_raw text, later_principal_raw text, principal_delta text, earlier_principal_currency_state text, later_principal_currency_state text, cost_comparison_state text, earlier_cost_raw text, later_cost_raw text, cost_delta text, earlier_cost_currency_state text, later_cost_currency_state text, fair_value_comparison_state text, earlier_fair_value_raw text, later_fair_value_raw text, fair_value_delta text, earlier_fair_value_currency_state text, later_fair_value_currency_state text, maturity_comparison_state text, maturity_changed boolean, earlier_maturity_raw text, later_maturity_raw text, earlier_maturity_precision text, later_maturity_precision text, earlier_maturity_date text, later_maturity_date text, acquisition_comparison_state text, earlier_acquisition_raw text, later_acquisition_raw text, earlier_acquisition_precision text, later_acquisition_precision text, earlier_acquisition_date text, later_acquisition_date text, interest_rate_comparison_state text, earlier_interest_rate_raw text, later_interest_rate_raw text, interest_rate_delta text, spread_comparison_state text, earlier_spread_raw text, later_spread_raw text, spread_delta text, interest_rate_floor_comparison_state text, earlier_interest_rate_floor_raw text, later_interest_rate_floor_raw text, interest_rate_floor_delta text)
     LANGUAGE sql STABLE
     AS $$
@@ -1883,6 +2731,114 @@ CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RET
 $$;
 
 COMMENT ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) IS 'Historical valuation for one legal entity under valuation.position_history.v1. The legal entity filter is applied before registry.position_read. A fair-value delta is copied from registry.position_period_comparison. The percentage is that stored delta divided by the earlier fair_value_numeric, times 100, rounded to 6 decimal places, and only when the earlier number is stored and not zero. Fair value / principal and fair value / cost use the stored numerics on one observation and require a non-zero denominator. An unresolved instrument does not receive those figures. Different stored currency codes are not combined. Currency is not converted. cross_bdc_comparison_state stays UNAVAILABLE: a cross-BDC comparison requires a resolved legal entity, a resolved instrument, established position continuity, comparable observations, and compatible currency. Unknown is not zero.';
+
+CREATE FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) RETURNS TABLE(legal_entity_id text, position_id text, instrument_id text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, earlier_position_observation_id text, later_position_observation_id text, earlier_reported_date text, later_reported_date text, event_date text, event_type text, refinancing_outcome_state text, earlier_maturity_raw text, later_maturity_raw text, earlier_maturity_precision text, later_maturity_precision text, earlier_principal_state text, earlier_principal_raw text, earlier_principal_currency_state text, earlier_principal_currency_code text, later_principal_state text, later_principal_raw text, later_principal_currency_state text, later_principal_currency_code text, earlier_accession_number text, later_accession_number text, earlier_observation_evidence_id text, later_observation_evidence_id text, earlier_observation_evidence_level text, later_observation_evidence_level text, registrant_cik text, registrant_link_status text, outcome_definition text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT p_legal_entity_id::text,
+         c.position_id,
+         later.instrument_id::text,
+         later.instrument_resolution_state,
+         later.continuity_state,
+         CASE
+           WHEN instrument_type.n IS NULL OR instrument_type.n = 0 THEN 'UNKNOWN'
+           WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN 'REPORTED'
+           ELSE 'MULTIPLE_VALUES'
+         END,
+         CASE WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN instrument_type.raw_value END,
+         c.earlier_position_observation_id,
+         c.later_position_observation_id,
+         c.earlier_reported_date,
+         c.later_reported_date,
+         NULL::text,
+         'MATURITY_CHANGED',
+         'UNKNOWN',
+         c.earlier_maturity_raw,
+         c.later_maturity_raw,
+         c.earlier_maturity_precision,
+         c.later_maturity_precision,
+         earlier.principal_state,
+         earlier.principal_raw,
+         earlier.principal_currency_state,
+         earlier_principal.currency_code,
+         later.principal_state,
+         later.principal_raw,
+         later.principal_currency_state,
+         later_principal.currency_code,
+         c.earlier_accession_number,
+         c.later_accession_number,
+         c.earlier_observation_evidence_id,
+         c.later_observation_evidence_id,
+         earlier.observation_evidence_level,
+         later.observation_evidence_level,
+         later.registrant_cik,
+         later.registrant_link_status,
+         'refinancing.outcome_history.v1'
+  FROM registry.borrower_position_comparisons(p_legal_entity_id) c
+  JOIN LATERAL (
+    SELECT observed.instrument_id,
+           observed.instrument_resolution_state,
+           observed.continuity_state,
+           observed.principal_state,
+           observed.principal_raw,
+           observed.principal_currency_state,
+           observed.observation_evidence_level,
+           observed.registrant_cik,
+           observed.registrant_link_status
+    FROM registry.position_read observed
+    WHERE observed.position_observation_id = c.later_position_observation_id::bigint
+      AND observed.legal_entity_id = p_legal_entity_id
+      AND observed.entity_resolution_state = 'MATCHED'
+    OFFSET 0
+  ) later ON true
+  JOIN LATERAL (
+    SELECT observed.instrument_id,
+           observed.instrument_resolution_state,
+           observed.continuity_state,
+           observed.principal_state,
+           observed.principal_raw,
+           observed.principal_currency_state,
+           observed.observation_evidence_level
+    FROM registry.position_read observed
+    WHERE observed.position_observation_id = c.earlier_position_observation_id::bigint
+      AND observed.legal_entity_id = p_legal_entity_id
+      AND observed.entity_resolution_state = 'MATCHED'
+    OFFSET 0
+  ) earlier ON true
+  LEFT JOIN LATERAL (
+    SELECT count(*)::integer AS n,
+           count(*) FILTER (WHERE rf.value_state = 'REPORTED')::integer AS reported_n,
+           min(rf.raw_value) AS raw_value
+    FROM obs.current_position_research_field rf
+    WHERE rf.position_observation_id = c.later_position_observation_id::bigint
+      AND rf.field_code = 'INSTRUMENT_TYPE'
+  ) instrument_type ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = c.earlier_position_observation_id::bigint
+      AND fv.field_code = 'PRINCIPAL_AMOUNT'
+  ) earlier_principal ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = c.later_position_observation_id::bigint
+      AND fv.field_code = 'PRINCIPAL_AMOUNT'
+  ) later_principal ON true
+  WHERE c.maturity_changed IS TRUE
+    AND c.maturity_comparison_state = 'COMPARABLE'
+    AND earlier.instrument_resolution_state = 'MATCHED'
+    AND later.instrument_resolution_state = 'MATCHED'
+    AND earlier.continuity_state = 'MATCHED'
+    AND later.continuity_state = 'MATCHED'
+    AND earlier.instrument_id IS NOT DISTINCT FROM later.instrument_id
+  ORDER BY c.later_reported_date DESC,
+           c.earlier_reported_date DESC,
+           c.position_id,
+           c.later_position_observation_id
+$$;
+
+COMMENT ON FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) IS 'Historical outcomes for one legal entity under refinancing.outcome_history.v1. The only emitted event_type is MATURITY_CHANGED, copied from a comparable registry.position_period_comparison row. refinancing_outcome_state is UNKNOWN. event_date is null because a report date is not a transaction date. A missing later observation is not a row. Acquisition date is not an input. No probability, score, or amount is calculated.';
 
 CREATE FUNCTION registry.check_bdc_report_edition() RETURNS trigger
     LANGUAGE plpgsql
@@ -4544,9 +5500,13 @@ CREATE TABLE obs.position_observation_group (
     supersedes_id bigint,
     supersede_reason text,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    grouping_key text,
+    CONSTRAINT position_observation_group_key_check CHECK (((grouping_key IS NULL) OR (btrim(grouping_key) <> ''::text))),
     CONSTRAINT position_observation_group_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id)),
     CONSTRAINT position_observation_group_rationale_check CHECK ((btrim(rationale) <> ''::text))
 );
+
+COMMENT ON COLUMN obs.position_observation_group.grouping_key IS 'Deterministic identity of one fact group for one rule version. A second insert of the same key is rejected. The key does not replace the source observations.';
 
 ALTER TABLE obs.position_observation_group ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME obs.position_observation_group_id_seq
@@ -4562,8 +5522,14 @@ CREATE TABLE obs.position_observation_group_member (
     group_id bigint NOT NULL,
     position_observation_id bigint NOT NULL,
     run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    member_role obs.soi_fact_member_role NOT NULL,
+    evidence_id bigint NOT NULL
 );
+
+COMMENT ON COLUMN obs.position_observation_group_member.member_role IS 'Fact role of this source row inside the group: BALANCE, SPREAD, or PIK. The role does not merge the row into another observation.';
+
+COMMENT ON COLUMN obs.position_observation_group_member.evidence_id IS 'Evidence whose tabular row is the member observation source row.';
 
 ALTER TABLE obs.position_observation_group_member ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME obs.position_observation_group_member_id_seq
@@ -6674,23 +7640,24 @@ CREATE VIEW registry.position_read AS
           WHERE ((e.position_observation_id = p.id) AND (e.event_code = 'REGISTRANT_FIRST_OBSERVED_NAME'::text))) first_observed ON (true))
      LEFT JOIN LATERAL ( SELECT
                 CASE
-                    WHEN ((filing_link.linked_n = 1) AND (filing_link.multiple_n = 0)) THEN 'LINKED'::text
-                    WHEN (filing_link.multiple_n > 0) THEN 'MULTIPLE'::text
+                    WHEN ((filing_link.multiple_n > 0) OR (filing_link.linked_registrants > 1)) THEN 'MULTIPLE'::text
+                    WHEN (filing_link.linked_registrants = 1) THEN 'LINKED'::text
                     ELSE 'UNKNOWN'::text
                 END AS registrant_link_status,
                 CASE
-                    WHEN ((filing_link.linked_n = 1) AND (filing_link.multiple_n = 0)) THEN filing_link.registrant_id
+                    WHEN ((filing_link.multiple_n = 0) AND (filing_link.linked_registrants = 1)) THEN filing_link.registrant_id
                     ELSE NULL::bigint
                 END AS registrant_id,
                 CASE
-                    WHEN ((filing_link.linked_n = 1) AND (filing_link.multiple_n = 0)) THEN lpad((filing_link.cik)::text, 10, '0'::text)
+                    WHEN ((filing_link.multiple_n = 0) AND (filing_link.linked_registrants = 1)) THEN lpad((filing_link.cik)::text, 10, '0'::text)
                     ELSE NULL::text
                 END AS registrant_cik,
                 CASE
-                    WHEN ((filing_link.linked_n = 1) AND (filing_link.multiple_n = 0)) THEN filing_link.evidence_id
+                    WHEN ((filing_link.multiple_n = 0) AND (filing_link.linked_registrants = 1) AND (filing_link.linked_evidence_n = 1)) THEN filing_link.evidence_id
                     ELSE NULL::bigint
                 END AS registrant_evidence_id
-           FROM ( SELECT (count(*) FILTER (WHERE (filing_registrant.link_status = 'LINKED'::text)))::integer AS linked_n,
+           FROM ( SELECT (count(DISTINCT filing_registrant.registrant_id) FILTER (WHERE (filing_registrant.link_status = 'LINKED'::text)))::integer AS linked_registrants,
+                    (count(DISTINCT filing_registrant.evidence_id) FILTER (WHERE (filing_registrant.link_status = 'LINKED'::text)))::integer AS linked_evidence_n,
                     (count(*) FILTER (WHERE (filing_registrant.link_status = 'MULTIPLE'::text)))::integer AS multiple_n,
                     min(filing_registrant.registrant_id) FILTER (WHERE (filing_registrant.link_status = 'LINKED'::text)) AS registrant_id,
                     min(filing_registrant.cik) FILTER (WHERE (filing_registrant.link_status = 'LINKED'::text)) AS cik,
@@ -6718,7 +7685,7 @@ CREATE VIEW registry.position_read AS
   WHERE (superseded.supersedes_id = l2.id)))))) counts ON (true))
                              LEFT JOIN registry.registrant registrant ON ((registrant.id = h.registrant_id)))) filing_registrant) filing_link) reg ON (true));
 
-COMMENT ON VIEW registry.position_read IS 'One row per position observation. Observed field heads stay REPORTED only when exactly one current raw value is stored. A missing head is UNKNOWN and null, never zero. Resolution columns repeat the current decision, or UNRESOLVED when there is no single current decision. Maturity columns are registry.maturity_read. Acquisition date is the stored ACQUISITION_DATE, not an origination date. No row is created for a period that was not observed, and absence is not an exit.';
+COMMENT ON VIEW registry.position_read IS 'One row per position observation. Observed field heads stay REPORTED only when exactly one current raw value is stored. A missing head is UNKNOWN and null, never zero. Resolution columns repeat the current decision, or UNRESOLVED when there is no single current decision. Maturity columns are registry.maturity_read. Acquisition date is the stored ACQUISITION_DATE, not an origination date. No row is created for a period that was not observed, and absence is not an exit. Registrant CIK is present when every current filing link names one registrant. More than one registrant leaves the CIK null.';
 
 COMMENT ON COLUMN registry.position_read.economic_group_state IS 'Current group-membership state when the legal entity has exactly one current membership. UNRESOLVED when there is no membership or more than one. Name similarity does not create a membership.';
 
@@ -7931,6 +8898,8 @@ CREATE UNIQUE INDEX position_field_value_supersedes_once ON obs.position_field_v
 
 CREATE INDEX position_observation_filing_date_idx ON obs.position_observation USING btree (filing_id, reported_date, id);
 
+CREATE UNIQUE INDEX position_observation_group_rule_key ON obs.position_observation_group USING btree (rule_version_id, grouping_key) WHERE (grouping_key IS NOT NULL);
+
 CREATE UNIQUE INDEX position_observation_group_supersedes_once ON obs.position_observation_group USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
 CREATE INDEX soi_row_classification_subject_idx ON obs.soi_row_classification USING btree (soi_row_observation_id);
@@ -8133,6 +9102,8 @@ CREATE TRIGGER check_borrower_name_observation BEFORE INSERT ON obs.borrower_nam
 
 CREATE TRIGGER check_borrower_name_successor BEFORE INSERT ON obs.borrower_name_observation FOR EACH ROW EXECUTE FUNCTION obs.check_borrower_name_successor();
 
+CREATE TRIGGER check_fact_group_member_evidence BEFORE INSERT ON obs.position_observation_group_member FOR EACH ROW EXECUTE FUNCTION obs.check_fact_group_member_evidence();
+
 CREATE TRIGGER check_field_value_corroboration BEFORE INSERT ON obs.field_value_corroboration FOR EACH ROW EXECUTE FUNCTION obs.check_field_value_corroboration();
 
 CREATE TRIGGER check_group_member BEFORE INSERT ON obs.position_observation_group_member FOR EACH ROW EXECUTE FUNCTION obs.check_group_member();
@@ -8150,6 +9121,8 @@ CREATE TRIGGER check_position_field_value BEFORE INSERT ON obs.position_field_va
 CREATE TRIGGER check_position_observation BEFORE INSERT ON obs.position_observation FOR EACH ROW EXECUTE FUNCTION obs.check_position_observation();
 
 CREATE TRIGGER check_position_observation_source BEFORE INSERT ON obs.position_observation_source FOR EACH ROW EXECUTE FUNCTION obs.check_position_observation_source();
+
+CREATE CONSTRAINT TRIGGER check_soi_fact_group_shape AFTER INSERT ON obs.position_observation_group DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION obs.check_soi_fact_group_shape();
 
 CREATE TRIGGER check_soi_row_classification BEFORE INSERT ON obs.soi_row_classification FOR EACH ROW EXECUTE FUNCTION obs.check_soi_row_classification();
 
@@ -8677,6 +9650,9 @@ ALTER TABLE ONLY obs.position_observation
 
 ALTER TABLE ONLY obs.position_observation_group
     ADD CONSTRAINT position_observation_group_filing_id_fkey FOREIGN KEY (filing_id) REFERENCES registry.filing(id);
+
+ALTER TABLE ONLY obs.position_observation_group_member
+    ADD CONSTRAINT position_observation_group_member_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
 
 ALTER TABLE ONLY obs.position_observation_group_member
     ADD CONSTRAINT position_observation_group_member_group_id_fkey FOREIGN KEY (group_id) REFERENCES obs.position_observation_group(id);
@@ -9266,6 +10242,36 @@ GRANT USAGE ON SCHEMA validation TO bdc_reader;
 
 REVOKE ALL ON FUNCTION access.record_grant(p_user_id uuid, p_grant_kind access.grant_kind, p_action access.grant_action, p_source access.grant_source, p_reason text, p_actor_user_id uuid) FROM PUBLIC;
 
+REVOKE ALL ON FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.bdc_portfolio_holdings(p_cik text, p_reported_date date, p_limit integer, p_offset integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.bdc_portfolio_holdings(p_cik text, p_reported_date date, p_limit integer, p_offset integer) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.bdc_portfolio_period_changes(p_cik text, p_earlier date, p_later date) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.bdc_portfolio_period_changes(p_cik text, p_earlier date, p_later date) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.bdc_portfolio_period_identity(p_cik text, p_reported_date date) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.bdc_portfolio_period_identity(p_cik text, p_reported_date date) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.bdc_portfolio_period_summary(p_cik text, p_earlier date, p_later date) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.bdc_portfolio_period_summary(p_cik text, p_earlier date, p_later date) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.bdc_portfolio_scope(p_cik text, p_reported_date date) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.bdc_portfolio_scope(p_cik text, p_reported_date date) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.bdc_portfolio_summary(p_cik text, p_reported_date date) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.bdc_portfolio_summary(p_cik text, p_reported_date date) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.borrower_maturity_observations(p_legal_entity_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.borrower_maturity_observations(p_legal_entity_id uuid) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.borrower_maturity_summary(p_legal_entity_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.borrower_maturity_summary(p_legal_entity_id uuid) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.borrower_maturity_years(p_legal_entity_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.borrower_maturity_years(p_legal_entity_id uuid) TO bdc_reader;
+
 REVOKE ALL ON FUNCTION registry.borrower_position_comparisons(p_legal_entity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.borrower_position_comparisons(p_legal_entity_id uuid) TO bdc_reader;
 
@@ -9274,6 +10280,9 @@ GRANT ALL ON FUNCTION registry.borrower_position_observations(p_legal_entity_id 
 
 REVOKE ALL ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) TO bdc_reader;
 
 REVOKE ALL ON FUNCTION registry.market_date_registrant(p_date date) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.market_date_registrant(p_date date) TO bdc_reader;
