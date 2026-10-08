@@ -41,7 +41,8 @@ describe("authentication boundaries", () => {
 
   it("guards every admin page and admin filing loader with requireAdmin", () => {
     const adminPages = files.filter(({ file }) => file.startsWith("app/admin/") && file.endsWith("page.tsx"));
-    expect(adminPages.length).toBeGreaterThanOrEqual(3);
+    expect(adminPages.length).toBeGreaterThanOrEqual(4);
+    expect(adminPages.some(({ file }) => file === "app/admin/coverage/arcc/page.tsx")).toBe(true);
     for (const { file, text } of adminPages) {
       expect(text, file).toMatch(/requireAdmin\s*\(/);
       expect(imports(text), file).toContain("@/server/auth/access");
@@ -55,6 +56,10 @@ describe("authentication boundaries", () => {
     expect(loader?.text).toMatch(/admin\.filing_processing/);
     expect(loader?.text).not.toMatch(/\bFROM\s+(raw|registry|ops|obs)\./i);
     expect(loader?.text).not.toMatch(/grant_event|SERVICE_ROLE|bdc_reader/i);
+    const arccLoader = files.find(({ file }) => file === "server/load-arcc-sec-coverage.ts");
+    expect(arccLoader?.text).toMatch(/requireAdmin\s*\(/);
+    expect(arccLoader?.text).not.toMatch(/grant_event|SERVICE_ROLE|INSERT INTO/i);
+    expect(arccLoader?.text).not.toMatch(/SET ROLE admin_reader|SET ROLE bdc_reader/);
   });
 
   it("keeps the proxy matcher to the sign-in routes", () => {

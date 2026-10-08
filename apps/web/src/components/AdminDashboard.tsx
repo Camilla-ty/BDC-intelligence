@@ -21,9 +21,12 @@ export function AdminDashboard({
       <p className="mt-1 max-w-3xl text-sm text-muted">
         Read-only view of what was received from the SEC, how it was processed, and what was produced.
       </p>
-      <p className="mt-3">
+      <p className="mt-3 flex flex-wrap gap-4">
         <Link href="/admin/filings" className="text-sm font-semibold text-accent">
           Filing inventory
+        </Link>
+        <Link href="/admin/coverage/arcc" className="text-sm font-semibold text-accent">
+          ARCC SEC coverage
         </Link>
       </p>
       {error ? <p className="mt-6 text-sm text-foreground">{error}</p> : null}

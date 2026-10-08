@@ -12,8 +12,10 @@ build/
 *.tsbuildinfo
 next-env.d.ts
 
-# Testing
+# Testing (Istanbul/Vitest HTML reports). Do not ignore the Admin SEC coverage route.
 coverage/
+!apps/web/src/app/admin/coverage/
+!apps/web/src/app/admin/coverage/**
 
 # Local cache of downloaded source files (raw SEC data is never committed)
 .cache/
