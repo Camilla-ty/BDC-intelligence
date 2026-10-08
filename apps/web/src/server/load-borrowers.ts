@@ -6,14 +6,14 @@ import { assertPositionFields, type PositionObservationRow, type ResearchFieldRo
 import { assertListingFields, type ObservationRow } from "@/lib/borrowers";
 import { executeSql } from "@/server/sql-text";
 
-// Reads registry.borrower_observation_listing as bdc_reader. The SQL is unchanged.
+// Reads registry.borrower_observation_listing as bdc_reader.
+// The full listing stays for directory/search pages. Detail pages filter by legal_entity_id
+// so PostgreSQL can push the predicate into the view instead of shipping the universe.
 // DATABASE_URL selects the hosted client; otherwise the local container is used.
 
-const LISTING_SQL = `
-SET ROLE bdc_reader;
-SET statement_timeout = '30s';
-SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
-FROM (
+const ENTITY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const LISTING_SELECT = `
   SELECT legal_entity_id::text,
          alias_text,
          verification_state,
@@ -32,16 +32,39 @@ FROM (
          event_code,
          observation_evidence_level,
          name_validation_outcome
+`;
+
+const LISTING_SQL = `
+SET ROLE bdc_reader;
+SET statement_timeout = '30s';
+SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+${LISTING_SELECT}
   FROM registry.borrower_observation_listing
   ORDER BY alias_text, reported_date, accession_number
 ) t;
 RESET ROLE;
 `;
 
+function listingForEntitySql(legalEntityId: string): string {
+  return `
+SET ROLE bdc_reader;
+SET statement_timeout = '30s';
+SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+${LISTING_SELECT}
+  FROM registry.borrower_observation_listing
+  WHERE legal_entity_id = '${legalEntityId}'
+  ORDER BY alias_text, reported_date, accession_number
+) t;
+RESET ROLE;
+`;
+}
+
 export type ListingResult = { rows: ObservationRow[]; error: string | null };
 
-export async function loadBorrowerObservations(): Promise<ListingResult> {
-  const executed = await executeSql(LISTING_SQL);
+async function readListingRows(sql: string): Promise<ListingResult> {
+  const executed = await executeSql(sql);
   if (!executed.ok) {
     return { rows: [], error: "The borrower listing could not be read." };
   }
@@ -72,7 +95,16 @@ export async function loadBorrowerObservations(): Promise<ListingResult> {
   return { rows, error: null };
 }
 
-const ENTITY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export async function loadBorrowerObservations(): Promise<ListingResult> {
+  return readListingRows(LISTING_SQL);
+}
+
+/** Same listing columns as loadBorrowerObservations, restricted to one legal entity. */
+export async function loadBorrowerObservationsForEntity(legalEntityId: string): Promise<ListingResult> {
+  // Invalid ids are unobserved, not a read failure (matches filtering an empty group).
+  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: null };
+  return readListingRows(listingForEntitySql(legalEntityId));
+}
 
 const POSITION_SQL = (legalEntityId: string) => `
 SET ROLE bdc_reader;

@@ -1063,6 +1063,29 @@ describe("what changed", () => {
   });
 });
 
+describe("borrower detail listing scope", () => {
+  it("loads only the requested legal entity and does not request the full listing universe", () => {
+    const page = readFileSync(join(process.cwd(), "src/app/borrowers/[id]/page.tsx"), "utf8");
+    const loader = readFileSync(join(process.cwd(), "src/server/load-borrowers.ts"), "utf8");
+    const listPage = readFileSync(join(process.cwd(), "src/app/borrowers/page.tsx"), "utf8");
+    const sourcesPage = readFileSync(join(process.cwd(), "src/app/borrowers/[id]/sources/page.tsx"), "utf8");
+
+    expect(page).toMatch(/loadBorrowerObservationsForEntity\s*\(\s*id\s*\)/);
+    expect(page).not.toMatch(/loadBorrowerObservations\s*\(/);
+    expect(page).not.toMatch(/loadBorrowerObservations\s*,/);
+
+    expect(loader).toMatch(/export async function loadBorrowerObservationsForEntity/);
+    expect(loader).toMatch(/WHERE legal_entity_id = '\$\{legalEntityId\}'/);
+    expect(loader).toMatch(/FROM registry\.borrower_observation_listing/);
+
+    // Directory and sources keep the full listing until those pages are optimized separately.
+    expect(listPage).toMatch(/loadBorrowerObservations\s*\(/);
+    expect(listPage).not.toMatch(/loadBorrowerObservationsForEntity/);
+    expect(sourcesPage).toMatch(/loadBorrowerObservations\s*\(/);
+    expect(sourcesPage).not.toMatch(/loadBorrowerObservationsForEntity/);
+  });
+});
+
 function valuationRow(overrides: Partial<ValuationRow> = {}): ValuationRow {
   return {
     legal_entity_id: ID,

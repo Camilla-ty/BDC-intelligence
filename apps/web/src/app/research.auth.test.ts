@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     RedirectSignal,
     requireAuthenticatedUser: vi.fn(),
     loadBorrowerObservations: vi.fn(),
+    loadBorrowerObservationsForEntity: vi.fn(),
     loadPortfolioDirectory: vi.fn(),
     loadEmptyPeriods: vi.fn(),
     loadMarketDirectory: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/server/auth/access", () => ({
 }));
 vi.mock("@/server/load-borrowers", () => ({
   loadBorrowerObservations: mocks.loadBorrowerObservations,
+  loadBorrowerObservationsForEntity: mocks.loadBorrowerObservationsForEntity,
   loadBorrowerPositionObservations: vi.fn(),
   loadBorrowerPositionComparisons: vi.fn(),
   loadBorrowerPositionValuation: vi.fn(),
@@ -85,6 +87,7 @@ describe("research route authentication", () => {
 
     expect(mocks.requireAuthenticatedUser).toHaveBeenCalledTimes(5);
     expect(mocks.loadBorrowerObservations).not.toHaveBeenCalled();
+    expect(mocks.loadBorrowerObservationsForEntity).not.toHaveBeenCalled();
     expect(mocks.loadPortfolioDirectory).not.toHaveBeenCalled();
     expect(mocks.loadMarketDirectory).not.toHaveBeenCalled();
   });

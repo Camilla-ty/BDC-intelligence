@@ -8,7 +8,7 @@ import { valuationHistory } from "@/lib/borrower-valuation";
 import { borrowerDetail } from "@/lib/borrowers";
 import { UNOBSERVED_BORROWER } from "@/lib/states";
 import { requireAuthenticatedUser } from "@/server/auth/access";
-import { loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservations, loadBorrowerPositionComparisons, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadBorrowerRefinancingOutcomes, loadPositionResearchFields } from "@/server/load-borrowers";
+import { loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservationsForEntity, loadBorrowerPositionComparisons, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadBorrowerRefinancingOutcomes, loadPositionResearchFields } from "@/server/load-borrowers";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,7 @@ export default async function BorrowerPage({
 }) {
   await requireAuthenticatedUser();
   const { id } = await params;
-  const { rows, error } = await loadBorrowerObservations();
+  const { rows, error } = await loadBorrowerObservationsForEntity(id);
   if (error) return <p className="text-sm">{error}</p>;
   const borrower = borrowerDetail(rows, id);
   if (!borrower) return <MissingRecord message={UNOBSERVED_BORROWER} href="/borrowers" label="Borrowers" />;
