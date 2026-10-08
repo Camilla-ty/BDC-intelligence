@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { authCookieOptions, supabaseAuthConfig } from "@/server/auth/config";
 
-// Server-only by design (ADR 0013). Never import from a "use client" module.
+// Server-only by design (ADR 0015). Never import from a "use client" module.
 
 // One client per request: @supabase/ssr delivers cache headers only on a client's first cookie write.
 export async function createSupabaseServerClient(): Promise<SupabaseClient | null> {

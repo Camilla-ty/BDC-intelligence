@@ -38,9 +38,11 @@ holds legal entities, groups, and instruments (G-14), not application users.
 - **Server checks:** `getCurrentUser()` still calls `getUser()`. `getCurrentAccess()`,
   `requireAuthenticatedUser()`, `requireAdmin()`, and `requireProOrAdmin()` run only on
   the server. `getSession()` is not used. `proxy.ts` is not the security boundary.
-- **Out of scope:** payments, Stripe, subscription tables, profile UI, `/admin`, OAuth,
-  custom JWT role claims, row-level security, service-role keys. A later payment webhook
-  may append PRO events with source `SUBSCRIPTION`.
+- **Out of scope:** payments, Stripe, subscription tables, profile UI, `/admin`, custom JWT
+  role claims, row-level security, service-role keys. Authentication methods (email OTP and
+  Microsoft OAuth) are [ADR 0015](0015-supabase-auth-email-otp-and-microsoft-oauth.md); they
+  do not grant application roles. A later payment webhook may append PRO events with source
+  `SUBSCRIPTION`.
 
 ## Consequences
 

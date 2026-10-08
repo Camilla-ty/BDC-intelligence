@@ -24,8 +24,9 @@ authentication, and similar) are recorded in the phase in which they are decided
 | [0010](0010-observation-provenance-and-authority-model.md) | Observation, provenance, and authority model | Accepted |
 | [0011](0011-registry-ingestion.md) | Registry ingestion pipeline | Accepted |
 | [0012](0012-soi-ingestion.md) | SOI ingestion pipeline | Accepted |
-| [0013](0013-supabase-auth-email-otp.md) | Supabase Auth with email one-time codes | Accepted |
+| [0013](0013-supabase-auth-email-otp.md) | Supabase Auth with email one-time codes | Superseded by 0015 |
 | [0014](0014-application-authorization.md) | Application authorization ledger | Accepted |
+| [0015](0015-supabase-auth-email-otp-and-microsoft-oauth.md) | Supabase Auth with email OTP and Microsoft OAuth | Accepted |
 
 ## Template
 

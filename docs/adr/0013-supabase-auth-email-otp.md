@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [0015](0015-supabase-auth-email-otp-and-microsoft-oauth.md)
 
 ## Context
 
@@ -43,3 +43,5 @@ the existing SQL-text client and `bdc_reader`.
 - Application authorization is [ADR 0014](0014-application-authorization.md).
 - Making the auth cookies HttpOnly is an open engineering decision; it is possible because no
   browser client reads them, but it is not enabled here.
+- **Superseded:** Microsoft OAuth was added in [ADR 0015](0015-supabase-auth-email-otp-and-microsoft-oauth.md);
+  email OTP remains supported under that decision.

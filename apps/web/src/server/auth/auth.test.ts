@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => {
     auth: {
       signInWithOtp: vi.fn(),
       verifyOtp: vi.fn(),
+      signInWithOAuth: vi.fn(),
+      exchangeCodeForSession: vi.fn(),
       signOut: vi.fn(),
       getUser: vi.fn(),
       getClaims: vi.fn(),
@@ -34,10 +36,13 @@ import {
   CODE_SENT_MESSAGE,
   INVALID_CODE_MESSAGE,
   INVALID_EMAIL_MESSAGE,
+  OAUTH_FAILED_MESSAGE,
   SEND_FAILED_MESSAGE,
   VERIFY_FAILED_MESSAGE,
 } from "@/lib/auth-input";
-import { requestOtp, signOut, verifyOtp } from "@/server/auth/actions";
+import { GET as oauthCallback } from "@/app/auth/callback/route";
+import { requestOtp, signInWithMicrosoft, signOut, verifyOtp } from "@/server/auth/actions";
+import { applicationOrigin, oauthCallbackUrl } from "@/server/auth/config";
 import { getCurrentUser } from "@/server/auth/current-user";
 import { config as proxyConfig, proxy } from "@/proxy";
 import { NextRequest } from "next/server";
@@ -69,6 +74,7 @@ async function redirectPath(promise: Promise<unknown>): Promise<string> {
 beforeEach(() => {
   vi.stubEnv("SUPABASE_URL", "https://test-project.supabase.test");
   vi.stubEnv("SUPABASE_PUBLISHABLE_KEY", "TEST_PUBLISHABLE_KEY");
+  vi.stubEnv("SITE_URL", "https://app.example.test");
   mocks.createServerClient.mockImplementation(() => ({ auth: mocks.auth }));
 });
 
@@ -169,6 +175,125 @@ describe("verifyOtp", () => {
   });
 });
 
+describe("signInWithMicrosoft", () => {
+  it("starts Azure OAuth with the fixed callback URL and redirects to the provider", async () => {
+    mocks.auth.signInWithOAuth.mockResolvedValue({
+      data: { provider: "azure", url: "https://login.microsoftonline.test/oauth" },
+      error: null,
+    });
+    const path = await redirectPath(signInWithMicrosoft());
+    expect(path).toBe("https://login.microsoftonline.test/oauth");
+    expect(mocks.auth.signInWithOAuth).toHaveBeenCalledWith({
+      provider: "azure",
+      options: {
+        redirectTo: "https://app.example.test/auth/callback",
+        scopes: "openid email profile",
+        skipBrowserRedirect: true,
+      },
+    });
+  });
+
+  it("ignores any caller-supplied redirect target", async () => {
+    mocks.auth.signInWithOAuth.mockResolvedValue({
+      data: { provider: "azure", url: "https://login.microsoftonline.test/oauth" },
+      error: null,
+    });
+    const loose = signInWithMicrosoft as unknown as (...args: unknown[]) => Promise<unknown>;
+    expect(await redirectPath(loose("https://attacker.example.test/next"))).toBe("https://login.microsoftonline.test/oauth");
+    expect(mocks.auth.signInWithOAuth.mock.calls[0]?.[0].options.redirectTo).toBe("https://app.example.test/auth/callback");
+  });
+
+  it("hides provider error details", async () => {
+    mocks.auth.signInWithOAuth.mockResolvedValue({
+      data: { provider: "azure", url: null },
+      error: { message: "TEST AZURE PROVIDER INTERNAL DETAIL", status: 400 },
+    });
+    const result = await signInWithMicrosoft();
+    expect(result).toEqual({ ok: false, error: OAUTH_FAILED_MESSAGE });
+    expect(JSON.stringify(result)).not.toMatch(/TEST AZURE PROVIDER INTERNAL DETAIL|400/);
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("reports sign-in as unavailable when SITE_URL or Supabase is not configured", async () => {
+    vi.stubEnv("SITE_URL", "");
+    expect(await signInWithMicrosoft()).toEqual({ ok: false, error: AUTH_UNAVAILABLE_MESSAGE });
+    expect(mocks.auth.signInWithOAuth).not.toHaveBeenCalled();
+    vi.stubEnv("SITE_URL", "https://app.example.test");
+    vi.stubEnv("SUPABASE_PUBLISHABLE_KEY", "");
+    expect(await signInWithMicrosoft()).toEqual({ ok: false, error: AUTH_UNAVAILABLE_MESSAGE });
+    expect(mocks.auth.signInWithOAuth).not.toHaveBeenCalled();
+  });
+});
+
+describe("oauth callback", () => {
+  it("exchanges a valid code, sets session cookies, and redirects to /account", async () => {
+    mocks.auth.exchangeCodeForSession.mockImplementation(async () => {
+      lastClientOptions().cookies.setAll(
+        [{ name: "sb-test-auth-token", value: "TEST_OAUTH_SESSION", options: { path: "/", sameSite: "lax" } }],
+        {},
+      );
+      return { data: { session: { access_token: "TEST" }, user: { id: "TEST" } }, error: null };
+    });
+    const response = await oauthCallback(new NextRequest("https://app.example.test/auth/callback?code=TEST_AUTH_CODE"));
+    expect(mocks.auth.exchangeCodeForSession).toHaveBeenCalledWith("TEST_AUTH_CODE");
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://app.example.test/account");
+    expect(response.cookies.get("sb-test-auth-token")?.value).toBe("TEST_OAUTH_SESSION");
+    expect(response.headers.get("Cache-Control")).toMatch(/no-store/);
+  });
+
+  it("redirects to /login when the code is missing or invalid", async () => {
+    for (const url of [
+      "https://app.example.test/auth/callback",
+      "https://app.example.test/auth/callback?code=",
+      "https://app.example.test/auth/callback?code=bad%20code",
+      "https://app.example.test/auth/callback?error=access_denied&error_description=TEST_PROVIDER_DETAIL",
+    ]) {
+      const response = await oauthCallback(new NextRequest(url));
+      expect(response.headers.get("location")).toBe("https://app.example.test/login");
+      expect(response.headers.get("location")).not.toMatch(/TEST_PROVIDER_DETAIL|access_denied/);
+    }
+    expect(mocks.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  });
+
+  it("redirects to /login when the exchange fails and does not expose provider details", async () => {
+    mocks.auth.exchangeCodeForSession.mockResolvedValueOnce({
+      data: { session: null, user: null },
+      error: { message: "TEST EXCHANGE INTERNAL DETAIL", status: 400 },
+    });
+    const failed = await oauthCallback(new NextRequest("https://app.example.test/auth/callback?code=TEST_AUTH_CODE"));
+    expect(failed.headers.get("location")).toBe("https://app.example.test/login");
+    expect(JSON.stringify([...failed.headers.entries()])).not.toMatch(/TEST EXCHANGE INTERNAL DETAIL/);
+    mocks.auth.exchangeCodeForSession.mockRejectedValueOnce(new Error("TEST NETWORK FAILURE"));
+    const crashed = await oauthCallback(new NextRequest("https://app.example.test/auth/callback?code=TEST_AUTH_CODE"));
+    expect(crashed.headers.get("location")).toBe("https://app.example.test/login");
+  });
+
+  it("never accepts a user-controlled post-login redirect", async () => {
+    mocks.auth.exchangeCodeForSession.mockResolvedValue({ data: { session: { access_token: "TEST" } }, error: null });
+    const response = await oauthCallback(
+      new NextRequest("https://app.example.test/auth/callback?code=TEST_AUTH_CODE&next=https://attacker.example.test"),
+    );
+    expect(response.headers.get("location")).toBe("https://app.example.test/account");
+    expect(response.headers.get("location")).not.toMatch(/attacker/);
+  });
+});
+
+describe("applicationOrigin", () => {
+  it("accepts only a bare http(s) origin from SITE_URL", () => {
+    expect(applicationOrigin()).toBe("https://app.example.test");
+    expect(oauthCallbackUrl()).toBe("https://app.example.test/auth/callback");
+    vi.stubEnv("SITE_URL", "https://app.example.test/");
+    expect(applicationOrigin()).toBe("https://app.example.test");
+    vi.stubEnv("SITE_URL", "https://user:pass@app.example.test");
+    expect(applicationOrigin()).toBeNull();
+    vi.stubEnv("SITE_URL", "https://app.example.test/extra");
+    expect(applicationOrigin()).toBeNull();
+    vi.stubEnv("SITE_URL", "https://app.example.test?next=/evil");
+    expect(applicationOrigin()).toBeNull();
+  });
+});
+
 describe("signOut", () => {
   it("signs out and redirects to /login", async () => {
     mocks.auth.signOut.mockResolvedValue({ error: null });
@@ -204,8 +329,8 @@ describe("getCurrentUser", () => {
 });
 
 describe("proxy", () => {
-  it("runs only on the sign-in routes", () => {
-    expect(proxyConfig.matcher).toEqual(["/login", "/account"]);
+  it("runs only on the sign-in and OAuth callback routes", () => {
+    expect(proxyConfig.matcher).toEqual(["/login", "/account", "/auth/callback"]);
   });
 
   it("refreshes the session, forwards refreshed cookies, and marks the response uncacheable", async () => {

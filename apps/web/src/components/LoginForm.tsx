@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { requestOtp, verifyOtp } from "@/server/auth/actions";
+import { requestOtp, signInWithMicrosoft, verifyOtp } from "@/server/auth/actions";
 
 const fieldClass = "mt-1 w-full rounded-md border border-line bg-white px-3 py-2 text-sm";
 const buttonClass = "rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-50";
+const secondaryButtonClass =
+  "rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-navy disabled:opacity-50";
 
 export function LoginForm() {
   const [step, setStep] = useState<"email" | "code">("email");
@@ -45,26 +47,49 @@ export function LoginForm() {
     setError(null);
   }
 
+  function continueWithMicrosoft() {
+    setError(null);
+    startTransition(async () => {
+      const result = await signInWithMicrosoft();
+      if (result && !result.ok) setError(result.error);
+    });
+  }
+
   return (
     <div className="mt-6 max-w-sm">
       {step === "email" ? (
-        <form onSubmit={sendCode} aria-busy={pending}>
-          <label htmlFor="login-email" className="block text-xs uppercase tracking-wider text-muted">Email</label>
-          <input
-            id="login-email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
+        <>
+          <form onSubmit={sendCode} aria-busy={pending}>
+            <label htmlFor="login-email" className="block text-xs uppercase tracking-wider text-muted">Email</label>
+            <input
+              id="login-email"
+              name="email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              disabled={pending}
+              className={fieldClass}
+            />
+            <button type="submit" disabled={pending || email.trim() === ""} className={`mt-4 ${buttonClass}`}>
+              {pending ? "Sending…" : "Send code"}
+            </button>
+          </form>
+          <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted" role="separator">
+            <span className="h-px flex-1 bg-line" aria-hidden="true" />
+            <span>Or</span>
+            <span className="h-px flex-1 bg-line" aria-hidden="true" />
+          </div>
+          <button
+            type="button"
+            onClick={continueWithMicrosoft}
             disabled={pending}
-            className={fieldClass}
-          />
-          <button type="submit" disabled={pending || email.trim() === ""} className={`mt-4 ${buttonClass}`}>
-            {pending ? "Sending…" : "Send code"}
+            className={secondaryButtonClass}
+          >
+            {pending ? "Continuing…" : "Continue with Microsoft"}
           </button>
-        </form>
+        </>
       ) : (
         <form onSubmit={checkCode} aria-busy={pending}>
           {notice ? <p className="mb-4 text-sm" role="status">{notice}</p> : null}

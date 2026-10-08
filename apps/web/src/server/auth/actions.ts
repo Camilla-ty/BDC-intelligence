@@ -7,12 +7,14 @@ import {
   INVALID_CODE_MESSAGE,
   INVALID_EMAIL_MESSAGE,
   LOGIN_PATH,
+  OAUTH_FAILED_MESSAGE,
   SEND_FAILED_MESSAGE,
   SIGNED_IN_PATH,
   VERIFY_FAILED_MESSAGE,
   normalizeCode,
   normalizeEmail,
 } from "@/lib/auth-input";
+import { oauthCallbackUrl } from "@/server/auth/config";
 import { createSupabaseServerClient } from "@/server/auth/supabase";
 
 export type AuthActionResult = { ok: true; message: string } | { ok: false; error: string };
@@ -50,6 +52,30 @@ export async function verifyOtp(email: string, token: string): Promise<AuthActio
   }
   if (!verified) return { ok: false, error: VERIFY_FAILED_MESSAGE };
   redirect(SIGNED_IN_PATH);
+}
+
+// Fixed callback only (oauthCallbackUrl). No browser-supplied redirect target.
+export async function signInWithMicrosoft(): Promise<AuthActionResult> {
+  let url: string | null = null;
+  try {
+    const callbackUrl = oauthCallbackUrl();
+    if (callbackUrl == null) return { ok: false, error: AUTH_UNAVAILABLE_MESSAGE };
+    const supabase = await createSupabaseServerClient();
+    if (supabase == null) return { ok: false, error: AUTH_UNAVAILABLE_MESSAGE };
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "azure",
+      options: {
+        redirectTo: callbackUrl,
+        scopes: "openid email profile",
+        skipBrowserRedirect: true,
+      },
+    });
+    if (error || data.url == null || data.url === "") return { ok: false, error: OAUTH_FAILED_MESSAGE };
+    url = data.url;
+  } catch {
+    return { ok: false, error: OAUTH_FAILED_MESSAGE };
+  }
+  redirect(url);
 }
 
 export async function signOut(): Promise<void> {

@@ -68,17 +68,38 @@ describe("authentication boundaries", () => {
     expect(arccInventory?.text).not.toMatch(/INSERT INTO|grant_event|SERVICE_ROLE/i);
   });
 
-  it("keeps the proxy matcher to the sign-in routes", () => {
+  it("keeps the proxy matcher to the sign-in and OAuth callback routes", () => {
     const proxy = files.find(({ file }) => file === "proxy.ts");
-    expect(proxy?.text).toMatch(/matcher:\s*\["\/login",\s*"\/account"\]/);
+    expect(proxy?.text).toMatch(/matcher:\s*\["\/login",\s*"\/account",\s*"\/auth\/callback"\]/);
     expect(proxy?.text).not.toMatch(/borrowers|portfolios|maturity|market|review|admin/);
   });
 
-  it("redirects only to fixed paths after sign-in and sign-out", () => {
+  it("redirects only to fixed destinations after sign-in, OAuth start, and sign-out", () => {
     const actions = files.find(({ file }) => file === "server/auth/actions.ts");
     const targets = [...(actions?.text ?? "").matchAll(/redirect\(([^)]*)\)/g)].map((match) => match[1]);
-    expect(targets).toEqual(["SIGNED_IN_PATH", "LOGIN_PATH"]);
-    expect(actions?.text).not.toMatch(/searchParams|redirectTo|emailRedirectTo|returnTo/);
+    expect(targets).toEqual(["SIGNED_IN_PATH", "url", "LOGIN_PATH"]);
+    expect(actions?.text).not.toMatch(/searchParams|emailRedirectTo|returnTo/);
+    expect(actions?.text).toMatch(/redirectTo:\s*callbackUrl/);
+    expect(actions?.text).toMatch(/oauthCallbackUrl\s*\(/);
+    expect(actions?.text.match(/redirectTo:\s*\S+/g)).toEqual(["redirectTo: callbackUrl,"]);
+    const callback = files.find(({ file }) => file === "app/auth/callback/route.ts");
+    expect(callback?.text).toMatch(/exchangeCodeForSession/);
+    expect(callback?.text).toMatch(/SIGNED_IN_PATH/);
+    expect(callback?.text).toMatch(/LOGIN_PATH/);
+    expect(callback?.text).not.toMatch(/searchParams\.get\(\s*["']next["']|returnTo|redirectTo/);
+  });
+
+  it("keeps Microsoft OAuth server-only with Azure provider and no domain authorization", () => {
+    const actions = files.find(({ file }) => file === "server/auth/actions.ts");
+    expect(actions?.text).toMatch(/signInWithOAuth/);
+    expect(actions?.text).toMatch(/provider:\s*["']azure["']/);
+    const loginForm = files.find(({ file }) => file === "components/LoginForm.tsx");
+    expect(loginForm?.text).toMatch(/Continue with Microsoft/);
+    expect(loginForm?.text).toMatch(/signInWithMicrosoft/);
+    expect(loginForm?.text).not.toMatch(/createBrowserClient|createClient|supabase\.auth/);
+    const access = files.find(({ file }) => file === "server/auth/access.ts");
+    expect(access?.text).toMatch(/access\.current_access/);
+    expect(access?.text).not.toMatch(/microsoft|azure|\.onmicrosoft\.|email\s*===|endsWith\s*\(/i);
   });
 
   it("never reads getSession for an access decision", () => {

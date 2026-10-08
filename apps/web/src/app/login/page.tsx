@@ -11,7 +11,7 @@ export default async function LoginPage() {
     <section>
       <h1 className="text-xl font-extrabold">Sign in</h1>
       <p className="mt-2 max-w-prose text-sm text-muted">
-        Enter your email address. We send a one-time code; there is no password. A new address is registered by the same step.
+        Enter your email for a one-time code, or continue with Microsoft. There is no password. A new email address is registered by the same code step.
       </p>
       <LoginForm />
     </section>
