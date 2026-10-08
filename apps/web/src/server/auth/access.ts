@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound, redirect } from "next/navigation";
 import {
   effectiveRoleFromFlags,
@@ -59,14 +60,15 @@ function parseAccessRow(text: string): { isAdmin: boolean; isPro: boolean; effec
   return { isAdmin, isPro, effectiveRole: effectiveRoleFromFlags(isAdmin, isPro) };
 }
 
-export async function getCurrentAccess(): Promise<CurrentAccess | null> {
+// React.cache dedupes within one RSC request so Shell + requireAuthenticatedUser share one ledger read.
+export const getCurrentAccess = cache(async (): Promise<CurrentAccess | null> => {
   const user = await getCurrentUser();
   if (user == null) return null;
   if (normalizeUserId(user.id) == null) return { user, ...UNAVAILABLE_ACCESS };
   const executed = await executeSql(currentAccessSql(user.id));
   const flags = executed.ok ? parseAccessRow(executed.text) : UNAVAILABLE_ACCESS;
   return { user, ...flags };
-}
+});
 
 export async function requireAuthenticatedUser(): Promise<CurrentAccess> {
   const access = await getCurrentAccess();
