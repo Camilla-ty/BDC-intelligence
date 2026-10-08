@@ -23,7 +23,12 @@ const imports = (text: string) => [...text.matchAll(/from\s+["']([^"']+)["']/g)]
 describe("authentication boundaries", () => {
   it("adds no authentication to existing public pages", () => {
     const pages = files.filter(({ file }) => file.startsWith("app/") && file.endsWith("page.tsx"));
-    const publicPages = pages.filter(({ file }) => !file.startsWith("app/login/") && !file.startsWith("app/account/"));
+    const publicPages = pages.filter(
+      ({ file }) =>
+        !file.startsWith("app/login/") &&
+        !file.startsWith("app/account/") &&
+        !file.startsWith("app/admin/"),
+    );
     expect(publicPages.some(({ file }) => file.startsWith("app/borrowers/"))).toBe(true);
     expect(publicPages.some(({ file }) => file.startsWith("app/portfolios/"))).toBe(true);
     for (const { file, text } of publicPages) {
@@ -34,10 +39,28 @@ describe("authentication boundaries", () => {
     expect(layout?.text).not.toMatch(/@\/server\/auth|supabase/i);
   });
 
+  it("guards every admin page and admin filing loader with requireAdmin", () => {
+    const adminPages = files.filter(({ file }) => file.startsWith("app/admin/") && file.endsWith("page.tsx"));
+    expect(adminPages.length).toBeGreaterThanOrEqual(3);
+    for (const { file, text } of adminPages) {
+      expect(text, file).toMatch(/requireAdmin\s*\(/);
+      expect(imports(text), file).toContain("@/server/auth/access");
+    }
+    const loader = files.find(({ file }) => file === "server/load-admin-filings.ts");
+    expect(loader?.text).toMatch(/requireAdmin\s*\(/);
+    expect(loader?.text).toMatch(/SET ROLE admin_reader/);
+    expect(loader?.text).toMatch(/admin\.filing_inventory/);
+    expect(loader?.text).toMatch(/admin\.filing_document/);
+    expect(loader?.text).toMatch(/admin\.filing_artifact/);
+    expect(loader?.text).toMatch(/admin\.filing_processing/);
+    expect(loader?.text).not.toMatch(/\bFROM\s+(raw|registry|ops|obs)\./i);
+    expect(loader?.text).not.toMatch(/grant_event|SERVICE_ROLE|bdc_reader/i);
+  });
+
   it("keeps the proxy matcher to the sign-in routes", () => {
     const proxy = files.find(({ file }) => file === "proxy.ts");
     expect(proxy?.text).toMatch(/matcher:\s*\["\/login",\s*"\/account"\]/);
-    expect(proxy?.text).not.toMatch(/borrowers|portfolios|maturity|market|review/);
+    expect(proxy?.text).not.toMatch(/borrowers|portfolios|maturity|market|review|admin/);
   });
 
   it("redirects only to fixed paths after sign-in and sign-out", () => {

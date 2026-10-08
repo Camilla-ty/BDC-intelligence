@@ -9,6 +9,7 @@ const ITEMS = [
   { href: "/maturity", label: "Maturity" },
   { href: "/market", label: "Coverage" },
   { href: "/review/entities", label: "Review" },
+  { href: "/admin", label: "Admin" },
 ] as const;
 
 export function PrimaryNav() {
