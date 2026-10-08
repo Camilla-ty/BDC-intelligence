@@ -83,7 +83,7 @@ describe("ARCC SEC coverage UI", () => {
     expect(screen.getByText("Received in BDC Flow")).toBeTruthy();
     expect(screen.getByText("Missing from BDC Flow")).toBeTruthy();
     expect(screen.getByText("Coverage")).toBeTruthy();
-    expect(screen.getByText("50%")).toBeTruthy();
+    expect(screen.getByText("50.00%")).toBeTruthy();
     expect(screen.getByText("RECEIVED")).toBeTruthy();
     expect(screen.getByText("MISSING")).toBeTruthy();
     expect(screen.getByRole("link", { name: "View" })).toHaveAttribute("href", "/admin/filings/42");

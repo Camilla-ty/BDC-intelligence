@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { SecLink } from "@/components/SecLink";
 import { StateText } from "@/components/StateText";
-import type { SecCoverageReconciliation } from "@/lib/sec-coverage-reconcile";
+import {
+  formatCoveragePercent,
+  type SecCoverageReconciliation,
+} from "@/lib/sec-coverage-reconcile";
 import { viewSecFilingUrl, type SecSubmissionsCoverage } from "@/lib/sec-submissions";
 import { ARCC_CIK, ARCC_NAME, ARCC_TICKER } from "@/server/sec/config";
 
@@ -95,8 +98,8 @@ export function ArccSecCoverage({
             <div>
               <dt className="text-xs uppercase tracking-wider text-muted">Coverage</dt>
               <dd className="mt-1 font-semibold">
-                {summary?.coveragePercent != null ? (
-                  `${summary.coveragePercent}%`
+                {summary ? (
+                  formatCoveragePercent(summary.coveragePercent)
                 ) : (
                   <StateText text="Unavailable" />
                 )}

@@ -20,8 +20,8 @@ export type SecCoverageReconcileSummary = {
   secFilingsInCoverage: number;
   receivedInBdcFlow: number;
   missingFromBdcFlow: number;
-  /** Integer percent 0–100; null when there are no SEC filings to cover. */
-  coveragePercent: number | null;
+  /** Percent 0–100 with two decimal places; 0 when there are no SEC filings. */
+  coveragePercent: number;
 };
 
 export type SecCoverageReconciliation = {
@@ -36,15 +36,21 @@ export function filingDetailHref(filingId: number): string {
 }
 
 /**
- * Coverage = received / SEC filings in this coverage set, rounded to nearest integer percent.
+ * Coverage = received / SEC filings in this coverage set, rounded to two decimal places.
  * Not a health score — only the share of displayed SEC accessions found in BDC Flow.
+ * Zero SEC filings yields 0 (never NaN/Infinity).
  */
-export function coveragePercent(received: number, secFilingsInCoverage: number): number | null {
-  if (secFilingsInCoverage <= 0) return null;
+export function coveragePercent(received: number, secFilingsInCoverage: number): number {
+  if (secFilingsInCoverage <= 0) return 0;
   if (received < 0 || received > secFilingsInCoverage) {
     throw new Error("received count is outside the SEC coverage set");
   }
-  return Math.round((received / secFilingsInCoverage) * 100);
+  return Math.round((received / secFilingsInCoverage) * 10000) / 100;
+}
+
+/** Display form for coverage percent (always two decimal places). */
+export function formatCoveragePercent(value: number): string {
+  return `${value.toFixed(2)}%`;
 }
 
 /** Build an exact-accession lookup. Duplicate accessions keep the first filing_id. */

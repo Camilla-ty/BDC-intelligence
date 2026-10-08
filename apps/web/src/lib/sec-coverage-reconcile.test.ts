@@ -3,6 +3,7 @@ import type { SecFilingRow } from "@/lib/sec-submissions";
 import {
   coveragePercent,
   filingDetailHref,
+  formatCoveragePercent,
   indexBdcFlowByAccession,
   reconcileSecFilingsWithBdcFlow,
 } from "@/lib/sec-coverage-reconcile";
@@ -37,6 +38,7 @@ describe("sec-coverage-reconcile", () => {
       missingFromBdcFlow: 0,
       coveragePercent: 100,
     });
+    expect(formatCoveragePercent(result.summary.coveragePercent)).toBe("100.00%");
   });
 
   it("marks exact accession absence as MISSING and keeps SEC URLs", () => {
@@ -85,17 +87,22 @@ describe("sec-coverage-reconcile", () => {
       secFilingsInCoverage: 3,
       receivedInBdcFlow: 2,
       missingFromBdcFlow: 1,
-      coveragePercent: 67,
+      coveragePercent: 66.67,
     });
     expect(result.matchKeyNote).toMatch(/exact SEC accession number/);
     expect(result.matchKeyNote).toMatch(/not that ingestion failed/i);
   });
 
-  it("computes coverage percent without inventing a health score when empty", () => {
-    expect(coveragePercent(0, 0)).toBeNull();
+  it("computes coverage to two decimal places and keeps a safe zero for empty sets", () => {
+    expect(coveragePercent(1561, 1562)).toBe(99.94);
+    expect(formatCoveragePercent(coveragePercent(1561, 1562))).toBe("99.94%");
+    expect(coveragePercent(0, 0)).toBe(0);
+    expect(formatCoveragePercent(coveragePercent(0, 0))).toBe("0.00%");
+    expect(coveragePercent(1562, 1562)).toBe(100);
+    expect(formatCoveragePercent(coveragePercent(1562, 1562))).toBe("100.00%");
     expect(coveragePercent(0, 4)).toBe(0);
     expect(coveragePercent(1, 4)).toBe(25);
-    expect(coveragePercent(2, 3)).toBe(67);
+    expect(coveragePercent(2, 3)).toBe(66.67);
     expect(coveragePercent(3, 3)).toBe(100);
   });
 });
