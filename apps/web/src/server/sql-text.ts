@@ -1,13 +1,75 @@
 import { spawnSync } from "node:child_process";
-import { Client, type QueryResult } from "pg";
+import { Pool, type PoolClient, type QueryResult } from "pg";
 
-// ADR 0009: the one in-process client. It sends SQL text.
-// DATABASE_URL selects the hosted runtime. Local and CI keep Docker psql.
+// ADR 0009: one in-process PostgreSQL access path for hosted runtimes.
+// SQL text is still the interface. Local/CI keep Docker psql.
+// Hosted: a shared Pool reuses TCP connections across executeSql calls in the
+// same process (Next.js/Vercel isolate). Conservative max for serverless.
 
 const CONTAINER = process.env.BDC_DB_CONTAINER ?? "bdc-intelligence-pg";
 const DATABASE = process.env.BDC_DATABASE ?? "bdc_local";
 
+/** Small pool: serverless instances are short-lived; avoid many idle backends. */
+const HOSTED_POOL_MAX = 3;
+const HOSTED_IDLE_MS = 10_000;
+const HOSTED_CONNECT_MS = 30_000;
+
 export type SqlText = { ok: true; text: string } | { ok: false };
+
+type PoolFactory = (connectionString: string) => Pool;
+
+type GlobalPoolState = {
+  __bdcSqlPool?: Pool;
+  __bdcSqlPoolUrl?: string;
+  __bdcSqlPoolFactory?: PoolFactory;
+};
+
+function poolState(): GlobalPoolState {
+  return globalThis as typeof globalThis & GlobalPoolState;
+}
+
+function defaultPoolFactory(connectionString: string): Pool {
+  return new Pool({
+    connectionString,
+    ssl: hostedSsl(connectionString),
+    max: HOSTED_POOL_MAX,
+    idleTimeoutMillis: HOSTED_IDLE_MS,
+    connectionTimeoutMillis: HOSTED_CONNECT_MS,
+    // Let the isolate exit when idle (Vercel/serverless-friendly).
+    allowExitOnIdle: true,
+  });
+}
+
+/**
+ * One Pool per process (and per DATABASE_URL). Survives Next.js hot reload via globalThis.
+ * Does not call pool.end() during request handling.
+ */
+export function getHostedPool(connectionString: string): Pool {
+  const state = poolState();
+  const factory = state.__bdcSqlPoolFactory ?? defaultPoolFactory;
+  if (state.__bdcSqlPool && state.__bdcSqlPoolUrl === connectionString) {
+    return state.__bdcSqlPool;
+  }
+  // URL change is rare; drop the prior pool handle without awaiting end (test/dev only).
+  state.__bdcSqlPool = factory(connectionString);
+  state.__bdcSqlPoolUrl = connectionString;
+  return state.__bdcSqlPool;
+}
+
+/** Test-only: replace Pool construction and clear the cached pool handle. */
+export function setHostedPoolFactoryForTests(factory: PoolFactory | null): void {
+  const state = poolState();
+  state.__bdcSqlPoolFactory = factory ?? undefined;
+  state.__bdcSqlPool = undefined;
+  state.__bdcSqlPoolUrl = undefined;
+}
+
+/** Test-only: clear the cached pool without ending it (avoids touching live DBs). */
+export function resetHostedPoolCacheForTests(): void {
+  const state = poolState();
+  state.__bdcSqlPool = undefined;
+  state.__bdcSqlPoolUrl = undefined;
+}
 
 export async function executeSql(sql: string): Promise<SqlText> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -26,19 +88,31 @@ function executeDocker(sql: string): SqlText {
 }
 
 async function executeHosted(connectionString: string, sql: string): Promise<SqlText> {
-  const client = new Client({
-    connectionString,
-    ssl: hostedSsl(connectionString),
-    connectionTimeoutMillis: 30_000,
-  });
+  const pool = getHostedPool(connectionString);
+  let client: PoolClient;
   try {
-    await client.connect();
+    client = await pool.connect();
+  } catch {
+    return { ok: false };
+  }
+
+  let destroyOnRelease = false;
+  try {
     const result = await client.query({ text: sql, queryMode: "simple", rowMode: "array" });
     return { ok: true, text: scriptText(result) };
   } catch {
+    destroyOnRelease = true;
     return { ok: false };
   } finally {
-    await client.end().catch(() => undefined);
+    // Callers' scripts include RESET ROLE, but a mid-script failure can leave a
+    // session role set. Always clear before returning the connection to the pool.
+    try {
+      await client.query("RESET ROLE");
+      destroyOnRelease = false;
+    } catch {
+      destroyOnRelease = true;
+    }
+    client.release(destroyOnRelease);
   }
 }
 
