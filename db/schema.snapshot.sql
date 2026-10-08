@@ -2,6 +2,10 @@ CREATE SCHEMA access;
 
 COMMENT ON SCHEMA access IS 'Application authorization. Append-only ADMIN and PRO grants keyed by Supabase Auth user id. Not the identity layer.';
 
+CREATE SCHEMA admin;
+
+COMMENT ON SCHEMA admin IS 'Admin Filing read models. Views only. SELECT granted to admin_reader alone.';
+
 CREATE SCHEMA derived;
 
 COMMENT ON SCHEMA derived IS 'Values computed by versioned deterministic rules, with their exact inputs.';
@@ -3023,6 +3027,715 @@ ALTER TABLE access.grant_event ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY 
     CACHE 1
 );
 
+CREATE TABLE raw.artifact (
+    id bigint NOT NULL,
+    source_url text NOT NULL,
+    final_url text NOT NULL,
+    source_type_code text NOT NULL,
+    http_status integer NOT NULL,
+    content_type text,
+    last_modified text,
+    etag text,
+    byte_size bigint NOT NULL,
+    sha256 text NOT NULL,
+    retrieved_at timestamp with time zone NOT NULL,
+    storage_key text NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT artifact_byte_size_check CHECK ((byte_size >= 0)),
+    CONSTRAINT artifact_final_url_check CHECK ((final_url ~ '^https://(www|data|xbrl)\.sec\.gov/'::text)),
+    CONSTRAINT artifact_http_status_check CHECK (((http_status >= 100) AND (http_status <= 599))),
+    CONSTRAINT artifact_sha256_check CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT artifact_source_url_check CHECK ((source_url ~ '^https://(www|data|xbrl)\.sec\.gov/'::text)),
+    CONSTRAINT artifact_storage_key_check CHECK ((btrim(storage_key) <> ''::text))
+);
+
+COMMENT ON TABLE raw.artifact IS 'One downloaded byte stream. A SEC refresh of the same URL (new SHA-256) is a new artifact, never an overwrite.';
+
+COMMENT ON COLUMN raw.artifact.last_modified IS 'HTTP Last-Modified header exactly as received.';
+
+COMMENT ON COLUMN raw.artifact.storage_key IS 'Where the immutable bytes are kept (local cache path or object key). No storage vendor is chosen yet.';
+
+CREATE TABLE registry.filing (
+    id bigint NOT NULL,
+    accession_number text NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_id bigint NOT NULL,
+    CONSTRAINT filing_accession_number_check CHECK ((accession_number ~ '^[0-9]{10}-[0-9]{2}-[0-9]{6}$'::text))
+);
+
+COMMENT ON TABLE registry.filing IS 'An EDGAR filing, identified by accession number. The first ten digits identify the submitter, never the registrant.';
+
+CREATE TABLE registry.filing_document (
+    id bigint NOT NULL,
+    filing_id bigint NOT NULL,
+    document_name text NOT NULL,
+    document_url text NOT NULL,
+    named_by text NOT NULL,
+    rule_version_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_id bigint NOT NULL,
+    CONSTRAINT filing_document_document_name_check CHECK ((btrim(document_name) <> ''::text)),
+    CONSTRAINT filing_document_document_url_check CHECK ((document_url ~ '^https://www\.sec\.gov/Archives/edgar/data/'::text)),
+    CONSTRAINT filing_document_named_by_check CHECK ((named_by = ANY (ARRAY['FILING_INDEX_JSON'::text, 'SUBMISSIONS_PRIMARY_DOCUMENT'::text, 'SOI_INLINEURL'::text])))
+);
+
+CREATE TABLE registry.filing_document_artifact (
+    id bigint NOT NULL,
+    filing_document_id bigint NOT NULL,
+    artifact_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE VIEW admin.filing_artifact AS
+ SELECT d.filing_id,
+    f.accession_number,
+    d.id AS filing_document_id,
+    d.document_name,
+    d.document_url,
+    fda.id AS filing_document_artifact_id,
+    a.id AS artifact_id,
+    a.source_url,
+    a.final_url,
+    a.source_type_code,
+    a.http_status,
+    a.content_type,
+    a.last_modified,
+    a.etag,
+    a.byte_size,
+    a.sha256,
+    a.retrieved_at,
+    a.storage_key,
+    a.run_id AS artifact_run_id,
+    a.recorded_at AS artifact_recorded_at
+   FROM (((registry.filing_document d
+     JOIN registry.filing f ON ((f.id = d.filing_id)))
+     JOIN registry.filing_document_artifact fda ON ((fda.filing_document_id = d.id)))
+     JOIN raw.artifact a ON ((a.id = fda.artifact_id)));
+
+COMMENT ON VIEW admin.filing_artifact IS 'Artifacts linked through filing_document_artifact. Checksums and retrieval metadata are raw.artifact values.';
+
+CREATE TABLE evidence.evidence (
+    id bigint NOT NULL,
+    evidence_level ref.evidence_level NOT NULL,
+    artifact_id bigint NOT NULL,
+    locator_type ref.locator_type NOT NULL,
+    tabular_row_id bigint,
+    column_position integer,
+    column_label text,
+    json_path text,
+    ixbrl_fact_id text,
+    html_anchor text,
+    join_note text,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    artifact_member_id bigint,
+    html_row_ordinal integer,
+    html_row_end_ordinal integer,
+    html_slot_ordinal integer,
+    block_evidence_id bigint,
+    heading_evidence_id bigint,
+    CONSTRAINT evidence_column_position_check CHECK ((column_position >= 1)),
+    CONSTRAINT evidence_heading_link_locator CHECK (((heading_evidence_id IS NULL) OR (locator_type = 'HTML_TABLE_CELL'::ref.locator_type))),
+    CONSTRAINT evidence_html_row_end_ordinal_check CHECK (((html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= 1))),
+    CONSTRAINT evidence_html_row_ordinal_check CHECK (((html_row_ordinal IS NULL) OR (html_row_ordinal >= 1))),
+    CONSTRAINT evidence_html_row_span_check CHECK (((html_row_ordinal IS NULL) OR (html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= html_row_ordinal))),
+    CONSTRAINT evidence_html_slot_ordinal_check CHECK (((html_slot_ordinal IS NULL) OR (html_slot_ordinal >= 0))),
+    CONSTRAINT evidence_json_path_check CHECK ((json_path ~ '^\$'::text)),
+    CONSTRAINT evidence_l2_html_anchor_context_row CHECK (((evidence_level <> 'L2_ORIGINAL_FILING'::ref.evidence_level) OR (locator_type <> 'HTML_ANCHOR'::ref.locator_type) OR (html_anchor ~ '^ix-context-row:[A-Za-z0-9_-]+$'::text))),
+    CONSTRAINT evidence_level_locator CHECK (
+CASE evidence_level
+    WHEN 'L1_STRUCTURED_DATASET'::ref.evidence_level THEN ((locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type])) OR ((locator_type = 'DOCUMENT'::ref.locator_type) AND (artifact_member_id IS NOT NULL)))
+    WHEN 'L2_ORIGINAL_FILING'::ref.evidence_level THEN (locator_type = ANY (ARRAY['IXBRL_FACT'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type, 'DISCLOSURE_BLOCK'::ref.locator_type, 'HTML_TABLE_CELL'::ref.locator_type, 'HTML_COLUMN_HEADING'::ref.locator_type]))
+    WHEN 'REGISTRY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type, 'JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
+    WHEN 'DISCOVERY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
+    ELSE NULL::boolean
+END),
+    CONSTRAINT evidence_locator_fields CHECK (
+CASE locator_type
+    WHEN 'TSV_ROW'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (num_nonnulls(column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'TSV_CELL'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (column_position IS NOT NULL) AND (column_label IS NOT NULL) AND (num_nonnulls(json_path, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'JSON_PATH'::ref.locator_type THEN ((json_path IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'IXBRL_FACT'::ref.locator_type THEN ((ixbrl_fact_id IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (html_slot_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, html_anchor, artifact_member_id) = 0) AND ((block_evidence_id IS NULL) = (html_row_ordinal IS NULL)))
+    WHEN 'HTML_ANCHOR'::ref.locator_type THEN ((html_anchor IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
+    WHEN 'DOCUMENT'::ref.locator_type THEN (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0)
+    WHEN 'DISCLOSURE_BLOCK'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_row_end_ordinal IS NOT NULL) AND (html_row_end_ordinal >= html_row_ordinal) AND (html_slot_ordinal IS NULL) AND (block_evidence_id IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
+    WHEN 'HTML_TABLE_CELL'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND ((block_evidence_id IS NOT NULL) OR (heading_evidence_id IS NOT NULL)) AND (html_row_end_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
+    WHEN 'HTML_COLUMN_HEADING'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (block_evidence_id IS NULL) AND (heading_evidence_id IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
+    ELSE NULL::boolean
+END)
+);
+
+COMMENT ON TABLE evidence.evidence IS 'A location inside a source artifact. Retrieval time and checksum come from raw.artifact.';
+
+COMMENT ON COLUMN evidence.evidence.join_note IS 'Set when the fact depends on a join that SEC does not document (for example SOI to NUM).';
+
+COMMENT ON COLUMN evidence.evidence.artifact_member_id IS 'For DOCUMENT evidence about one archive member (for example a whole SUB table).';
+
+COMMENT ON COLUMN evidence.evidence.html_row_ordinal IS '1-based document order of a <tr>, using the schedule disclosure parser row scan. Null for locators that are not an HTML row.';
+
+COMMENT ON COLUMN evidence.evidence.html_row_end_ordinal IS 'Inclusive end row of a DISCLOSURE_BLOCK. Null for every other locator.';
+
+COMMENT ON COLUMN evidence.evidence.html_slot_ordinal IS 'Colspan-grid slot of an HTML_TABLE_CELL. Slot 0 is allowed. The database does not decide which slot is the Portfolio Company column.';
+
+COMMENT ON COLUMN evidence.evidence.block_evidence_id IS 'DISCLOSURE_BLOCK that contains this cell or fact. Null on the block itself and on evidence that is not inside a block.';
+
+COMMENT ON COLUMN evidence.evidence.heading_evidence_id IS 'HTML_COLUMN_HEADING aligned with this value cell. Null when the cell has no stored heading. The column does not store a field code.';
+
+CREATE TABLE ref.registry_field_mapping (
+    id bigint NOT NULL,
+    source_type_code text NOT NULL,
+    source_field text NOT NULL,
+    target_kind text NOT NULL,
+    target_code text,
+    mapping_status ref.mapping_status NOT NULL,
+    source_schema_reference text NOT NULL,
+    recorded_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT registry_field_mapping_check CHECK (((target_kind = ANY (ARRAY['REGISTRANT_ATTRIBUTE'::text, 'FILING_ATTRIBUTE'::text])) = (target_code IS NOT NULL))),
+    CONSTRAINT registry_field_mapping_mapping_status_check CHECK ((mapping_status = ANY (ARRAY['DOCUMENTED_AND_OBSERVED'::ref.mapping_status, 'OBSERVED_UNCONFIRMED'::ref.mapping_status]))),
+    CONSTRAINT registry_field_mapping_recorded_by_check CHECK ((btrim(recorded_by) <> ''::text)),
+    CONSTRAINT registry_field_mapping_source_field_check CHECK ((btrim(source_field) <> ''::text)),
+    CONSTRAINT registry_field_mapping_source_schema_reference_check CHECK ((btrim(source_schema_reference) <> ''::text)),
+    CONSTRAINT registry_field_mapping_target_kind_check CHECK ((target_kind = ANY (ARRAY['REGISTRANT'::text, 'REGISTRANT_ATTRIBUTE'::text, 'NAME_HISTORY'::text, 'FILING'::text, 'FILING_LINK'::text, 'FILING_ATTRIBUTE'::text, 'FILING_DOCUMENT'::text, 'RELEASE'::text, 'REPORT_EDITION'::text, 'PAGINATION'::text, 'RAW_ONLY'::text])))
+);
+
+COMMENT ON TABLE ref.registry_field_mapping IS 'Source field to registry target with its documentation status (docs/SOURCE_SCHEMAS.md section 7.2). source_field is the column label, the JSON path with indexes replaced by [*], or "link" for page anchors.';
+
+CREATE TABLE registry.filing_attribute_observation (
+    id bigint NOT NULL,
+    filing_id bigint NOT NULL,
+    attribute_code text NOT NULL,
+    raw_value text NOT NULL,
+    normalized_text text,
+    normalized_date date,
+    normalized_timestamp timestamp with time zone,
+    value_state ref.value_state NOT NULL,
+    rule_version_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    supersedes_id bigint,
+    supersede_reason text,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_id bigint NOT NULL,
+    CONSTRAINT filing_attribute_observation_check CHECK ((num_nonnulls(normalized_text, normalized_date, normalized_timestamp) <= 1)),
+    CONSTRAINT filing_attribute_observation_check1 CHECK (((value_state = 'REPORTED'::ref.value_state) OR (num_nonnulls(normalized_text, normalized_date, normalized_timestamp) = 0))),
+    CONSTRAINT filing_attribute_observation_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id)),
+    CONSTRAINT filing_attribute_observation_value_state_check CHECK ((value_state = ANY (ARRAY['REPORTED'::ref.value_state, 'UNKNOWN'::ref.value_state, 'NOT_APPLICABLE'::ref.value_state])))
+);
+
+COMMENT ON TABLE registry.filing_attribute_observation IS 'Form, dates, fiscal focus, prevrpt, and document names per source. Sources may disagree side by side.';
+
+CREATE VIEW registry.current_filing_attribute AS
+ SELECT o.id AS observation_id,
+    o.filing_id,
+    f.accession_number,
+    o.attribute_code,
+    o.raw_value,
+    o.value_state,
+    o.normalized_text,
+    o.normalized_date,
+    o.normalized_timestamp,
+    a.source_type_code,
+    raw.source_stream(a.id) AS source_stream,
+    e.evidence_level,
+    m.mapping_status AS documentation_status,
+    o.evidence_id,
+    o.rule_version_id,
+    o.run_id
+   FROM ((((registry.filing_attribute_observation o
+     JOIN registry.filing f ON ((f.id = o.filing_id)))
+     JOIN evidence.evidence e ON ((e.id = o.evidence_id)))
+     JOIN raw.artifact a ON ((a.id = e.artifact_id)))
+     LEFT JOIN ref.registry_field_mapping m ON (((m.source_type_code = a.source_type_code) AND (m.source_field = evidence.source_field(e.locator_type, e.column_label, e.json_path)) AND (m.target_kind = 'FILING_ATTRIBUTE'::text) AND (m.target_code = o.attribute_code))))
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM registry.filing_attribute_observation s
+          WHERE (s.supersedes_id = o.id))));
+
+COMMENT ON VIEW registry.current_filing_attribute IS 'Every current filing attribute value per source, side by side. Disagreements stay visible.';
+
+CREATE VIEW admin.filing_attribute AS
+ SELECT filing_id,
+    accession_number,
+    observation_id,
+    attribute_code,
+    raw_value,
+    value_state,
+    normalized_text,
+    normalized_date,
+    normalized_timestamp,
+    source_type_code,
+    source_stream,
+    evidence_level,
+    documentation_status,
+    evidence_id,
+    rule_version_id,
+    run_id
+   FROM registry.current_filing_attribute c;
+
+COMMENT ON VIEW admin.filing_attribute IS 'Current filing attributes per source. Multiple rows for the same attribute_code mean sources disagree.';
+
+CREATE VIEW admin.filing_document AS
+ SELECT d.filing_id,
+    f.accession_number,
+    d.id AS filing_document_id,
+    d.document_name,
+    d.document_url,
+    d.named_by,
+    d.rule_version_id,
+    d.run_id,
+    d.evidence_id,
+    d.recorded_at,
+    (EXISTS ( SELECT 1
+           FROM registry.filing_document_artifact fda
+          WHERE (fda.filing_document_id = d.id))) AS artifact_linked
+   FROM (registry.filing_document d
+     JOIN registry.filing f ON ((f.id = d.filing_id)));
+
+COMMENT ON VIEW admin.filing_document IS 'Named SEC filing documents with stored document_url locators only. No URL is constructed here.';
+
+CREATE TABLE obs.num_fact_observation (
+    id bigint NOT NULL,
+    tabular_row_id bigint NOT NULL,
+    filing_id bigint NOT NULL,
+    tag text NOT NULL,
+    tag_version text NOT NULL,
+    reported_date_raw text NOT NULL,
+    reported_date date,
+    qtrs_raw text NOT NULL,
+    qtrs integer,
+    duration_kind ref.duration_kind NOT NULL,
+    uom_raw text NOT NULL,
+    segments_raw text,
+    identifier_member_raw text,
+    value_raw text NOT NULL,
+    value_numeric numeric,
+    value_state ref.value_state NOT NULL,
+    rule_version_id bigint NOT NULL,
+    evidence_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT num_fact_observation_check CHECK (((value_state = 'REPORTED'::ref.value_state) = (value_numeric IS NOT NULL))),
+    CONSTRAINT num_fact_observation_check1 CHECK (((value_numeric IS DISTINCT FROM (0)::numeric) OR ops.text_is_numeric_zero(value_raw))),
+    CONSTRAINT num_fact_observation_check2 CHECK ((duration_kind =
+CASE
+    WHEN (qtrs IS NULL) THEN 'UNKNOWN'::ref.duration_kind
+    WHEN (qtrs = 0) THEN 'POINT_IN_TIME'::ref.duration_kind
+    ELSE 'DURATION'::ref.duration_kind
+END)),
+    CONSTRAINT num_fact_observation_identifier_member_raw_check CHECK ((identifier_member_raw <> ''::text)),
+    CONSTRAINT num_fact_observation_qtrs_check CHECK ((qtrs >= 0)),
+    CONSTRAINT num_fact_observation_tag_check CHECK ((tag <> ''::text)),
+    CONSTRAINT num_fact_observation_tag_version_check CHECK ((tag_version <> ''::text)),
+    CONSTRAINT num_fact_observation_value_state_check CHECK ((value_state = ANY (ARRAY['REPORTED'::ref.value_state, 'UNKNOWN'::ref.value_state])))
+);
+
+COMMENT ON COLUMN obs.num_fact_observation.identifier_member_raw IS 'Typed member of the investment identifier axis, parsed from segments by the rule version.';
+
+CREATE TABLE obs.position_observation (
+    id bigint NOT NULL,
+    origin_soi_row_observation_id bigint NOT NULL,
+    filing_id bigint NOT NULL,
+    reported_date date,
+    date_precision text NOT NULL,
+    duration_kind ref.duration_kind NOT NULL,
+    holding_descriptor_raw text NOT NULL,
+    rule_version_id bigint NOT NULL,
+    evidence_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT position_observation_date_precision_check CHECK ((date_precision = 'MONTH_END_ROUNDED'::text)),
+    CONSTRAINT position_observation_holding_descriptor_raw_check CHECK ((holding_descriptor_raw <> ''::text))
+);
+
+COMMENT ON TABLE obs.position_observation IS 'One identifier-bearing SOI row. The current classification of the origin is IDENTIFIER_ROW, and holding_descriptor_raw equals that row''s identifier cell. It is not an economically usable investment. Instrument and position links exist only as resolution decisions.';
+
+CREATE TABLE obs.soi_row_observation (
+    id bigint NOT NULL,
+    tabular_row_id bigint NOT NULL,
+    filing_id bigint NOT NULL,
+    reported_date_raw text NOT NULL,
+    reported_date date,
+    date_precision text NOT NULL,
+    qtrs_raw text NOT NULL,
+    qtrs integer,
+    duration_kind ref.duration_kind NOT NULL,
+    identifier_raw text,
+    rule_version_id bigint NOT NULL,
+    evidence_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT soi_row_observation_check CHECK ((duration_kind =
+CASE
+    WHEN (qtrs IS NULL) THEN 'UNKNOWN'::ref.duration_kind
+    WHEN (qtrs = 0) THEN 'POINT_IN_TIME'::ref.duration_kind
+    ELSE 'DURATION'::ref.duration_kind
+END)),
+    CONSTRAINT soi_row_observation_date_precision_check CHECK ((date_precision = 'MONTH_END_ROUNDED'::text)),
+    CONSTRAINT soi_row_observation_identifier_raw_check CHECK ((identifier_raw <> ''::text)),
+    CONSTRAINT soi_row_observation_qtrs_check CHECK ((qtrs >= 0))
+);
+
+COMMENT ON TABLE obs.soi_row_observation IS 'Exactly one per raw SOI row per rule version. Not unique on accession, identifier, date, or qtrs: SOI has no natural key.';
+
+COMMENT ON COLUMN obs.soi_row_observation.identifier_raw IS 'Investment identifier text exactly as disclosed; NULL when the cell is empty.';
+
+CREATE TABLE ops.artifact_processing (
+    id bigint NOT NULL,
+    artifact_id bigint NOT NULL,
+    rule_version_id bigint NOT NULL,
+    outcome text NOT NULL,
+    detail text NOT NULL,
+    counts jsonb NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT artifact_processing_detail_check CHECK ((btrim(detail) <> ''::text)),
+    CONSTRAINT artifact_processing_outcome_check CHECK ((outcome = ANY (ARRAY['LOADED'::text, 'SCHEMA_DRIFT'::text, 'NOT_IN_SCOPE'::text])))
+);
+
+COMMENT ON TABLE ops.artifact_processing IS 'One processing of one artifact by one loader version; reprocessing the same artifact with the same loader is a no-op.';
+
+CREATE TABLE ref.registrant_attribute (
+    code text NOT NULL,
+    description text NOT NULL,
+    CONSTRAINT registrant_attribute_code_check CHECK ((code ~ '^[A-Z][A-Z0-9_]*$'::text))
+);
+
+CREATE TABLE registry.filing_registrant_link (
+    id bigint NOT NULL,
+    filing_id bigint NOT NULL,
+    registrant_id bigint NOT NULL,
+    link_source ref.filing_link_source NOT NULL,
+    run_id bigint NOT NULL,
+    supersedes_id bigint,
+    supersede_reason text,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_id bigint NOT NULL,
+    CONSTRAINT filing_registrant_link_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id))
+);
+
+COMMENT ON TABLE registry.filing_registrant_link IS 'Filing to registrant, only from explicit filing metadata. Several links (co-registrants or disagreeing sources) may coexist; none is chosen silently.';
+
+CREATE TABLE registry.registrant (
+    id bigint NOT NULL,
+    cik bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_id bigint NOT NULL,
+    CONSTRAINT registrant_cik_check CHECK (((cik >= 1) AND (cik <= '9999999999'::bigint)))
+);
+
+COMMENT ON TABLE registry.registrant IS 'An SEC registrant (filing entity, typically a BDC). Never a borrower, legal entity, or economic group.';
+
+COMMENT ON COLUMN registry.registrant.cik IS 'Stored as a number; sources show it unpadded (data sets) or zero-padded to 10 digits (BDC Report, submissions URL).';
+
+CREATE VIEW registry.current_filing_registrant AS
+ WITH heads AS (
+         SELECT l.id,
+            l.filing_id,
+            l.registrant_id,
+            l.link_source,
+            l.run_id,
+            l.supersedes_id,
+            l.supersede_reason,
+            l.recorded_at,
+            l.evidence_id
+           FROM registry.filing_registrant_link l
+          WHERE (NOT (EXISTS ( SELECT 1
+                   FROM registry.filing_registrant_link s
+                  WHERE (s.supersedes_id = l.id))))
+        ), per_filing AS (
+         SELECT heads.filing_id,
+            count(DISTINCT heads.registrant_id) AS registrant_count
+           FROM heads
+          GROUP BY heads.filing_id
+        )
+ SELECT f.id AS filing_id,
+    f.accession_number,
+    h.registrant_id,
+    r.cik,
+    h.link_source,
+    h.evidence_id,
+        CASE
+            WHEN (h.id IS NULL) THEN 'UNKNOWN'::text
+            WHEN (p.registrant_count > 1) THEN 'MULTIPLE'::text
+            ELSE 'LINKED'::text
+        END AS registrant_link_status
+   FROM (((registry.filing f
+     LEFT JOIN heads h ON ((h.filing_id = f.id)))
+     LEFT JOIN per_filing p ON ((p.filing_id = f.id)))
+     LEFT JOIN registry.registrant r ON ((r.id = h.registrant_id)));
+
+COMMENT ON VIEW registry.current_filing_registrant IS 'Registrant per filing from explicit metadata only. UNKNOWN when no link exists; MULTIPLE when links name more than one registrant.';
+
+CREATE TABLE registry.registrant_attribute_observation (
+    id bigint NOT NULL,
+    registrant_id bigint NOT NULL,
+    attribute_code text NOT NULL,
+    raw_value text NOT NULL,
+    normalized_value text,
+    source_as_of date,
+    rule_version_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    supersedes_id bigint,
+    supersede_reason text,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    evidence_id bigint NOT NULL,
+    CONSTRAINT registrant_attribute_observation_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id))
+);
+
+COMMENT ON TABLE registry.registrant_attribute_observation IS 'Names, file numbers, tickers change over time and differ by source; each value is an observation.';
+
+CREATE VIEW registry.current_registrant_attribute AS
+ SELECT o.id AS observation_id,
+    o.registrant_id,
+    r.cik,
+    o.attribute_code,
+    o.raw_value,
+    o.normalized_value,
+    o.source_as_of,
+    a.source_type_code,
+    raw.source_stream(a.id) AS source_stream,
+    e.evidence_level,
+    m.mapping_status AS documentation_status,
+    o.evidence_id,
+    o.rule_version_id,
+    o.run_id
+   FROM ((((registry.registrant_attribute_observation o
+     JOIN registry.registrant r ON ((r.id = o.registrant_id)))
+     JOIN evidence.evidence e ON ((e.id = o.evidence_id)))
+     JOIN raw.artifact a ON ((a.id = e.artifact_id)))
+     LEFT JOIN ref.registry_field_mapping m ON (((m.source_type_code = a.source_type_code) AND (m.source_field = evidence.source_field(e.locator_type, e.column_label, e.json_path)) AND (m.target_kind = 'REGISTRANT_ATTRIBUTE'::text) AND (m.target_code = o.attribute_code))))
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM registry.registrant_attribute_observation s
+          WHERE (s.supersedes_id = o.id))));
+
+COMMENT ON VIEW registry.current_registrant_attribute IS 'Every current registrant attribute value per source, with its documentation status. Sources are never merged.';
+
+CREATE VIEW registry.registrant_attribute_status AS
+ SELECT r.id AS registrant_id,
+    r.cik,
+    ra.code AS attribute_code,
+    count(c.observation_id) AS current_value_count,
+    count(DISTINCT c.raw_value) AS distinct_raw_value_count,
+        CASE
+            WHEN (count(c.observation_id) = 0) THEN 'UNKNOWN'::text
+            WHEN (count(DISTINCT c.raw_value) > 1) THEN 'MULTIPLE_VALUES'::text
+            ELSE 'REPORTED'::text
+        END AS attribute_state
+   FROM ((registry.registrant r
+     CROSS JOIN ref.registrant_attribute ra)
+     LEFT JOIN registry.current_registrant_attribute c ON (((c.registrant_id = r.id) AND (c.attribute_code = ra.code))))
+  GROUP BY r.id, r.cik, ra.code;
+
+CREATE VIEW admin.filing_inventory AS
+ SELECT id AS filing_id,
+    accession_number,
+    run_id AS filing_run_id,
+    recorded_at AS filing_recorded_at,
+    ( SELECT
+                CASE
+                    WHEN (count(*) FILTER (WHERE (fr.registrant_id IS NOT NULL)) = 0) THEN 'UNKNOWN'::text
+                    WHEN (count(DISTINCT fr.registrant_id) > 1) THEN 'MULTIPLE'::text
+                    ELSE 'LINKED'::text
+                END AS "case"
+           FROM registry.current_filing_registrant fr
+          WHERE (fr.filing_id = f.id)) AS registrant_link_status,
+    ( SELECT array_agg(DISTINCT fr.registrant_id ORDER BY fr.registrant_id) AS array_agg
+           FROM registry.current_filing_registrant fr
+          WHERE ((fr.filing_id = f.id) AND (fr.registrant_id IS NOT NULL))) AS registrant_ids,
+    ( SELECT array_agg(DISTINCT fr.cik ORDER BY fr.cik) AS array_agg
+           FROM registry.current_filing_registrant fr
+          WHERE ((fr.filing_id = f.id) AND (fr.cik IS NOT NULL))) AS registrant_ciks,
+    ( SELECT
+                CASE
+                    WHEN (count(DISTINCT fr.registrant_id) FILTER (WHERE (fr.registrant_id IS NOT NULL)) = 0) THEN 'UNKNOWN'::text
+                    WHEN (count(DISTINCT fr.registrant_id) FILTER (WHERE (fr.registrant_id IS NOT NULL)) > 1) THEN 'MULTIPLE_REGISTRANTS'::text
+                    ELSE min(ns.attribute_state)
+                END AS min
+           FROM (registry.current_filing_registrant fr
+             LEFT JOIN registry.registrant_attribute_status ns ON (((ns.registrant_id = fr.registrant_id) AND (ns.attribute_code = 'NAME'::text))))
+          WHERE (fr.filing_id = f.id)) AS registrant_name_state,
+    ( SELECT
+                CASE
+                    WHEN ((count(DISTINCT fr.registrant_id) FILTER (WHERE (fr.registrant_id IS NOT NULL)) = 1) AND (min(ns.attribute_state) = 'REPORTED'::text) AND (count(DISTINCT cra.raw_value) = 1)) THEN min(cra.raw_value)
+                    ELSE NULL::text
+                END AS "case"
+           FROM ((registry.current_filing_registrant fr
+             LEFT JOIN registry.registrant_attribute_status ns ON (((ns.registrant_id = fr.registrant_id) AND (ns.attribute_code = 'NAME'::text))))
+             LEFT JOIN registry.current_registrant_attribute cra ON (((cra.registrant_id = fr.registrant_id) AND (cra.attribute_code = 'NAME'::text))))
+          WHERE ((fr.filing_id = f.id) AND (fr.registrant_id IS NOT NULL))) AS registrant_name_raw,
+    ( SELECT array_agg(DISTINCT c.normalized_text ORDER BY c.normalized_text) AS array_agg
+           FROM registry.current_filing_attribute c
+          WHERE ((c.filing_id = f.id) AND (c.attribute_code = 'FORM'::text) AND (c.normalized_text IS NOT NULL))) AS forms,
+    ( SELECT array_agg(DISTINCT c.raw_value ORDER BY c.raw_value) AS array_agg
+           FROM registry.current_filing_attribute c
+          WHERE ((c.filing_id = f.id) AND (c.attribute_code = 'FORM'::text))) AS form_raw_values,
+    ( SELECT array_agg(DISTINCT c.normalized_date ORDER BY c.normalized_date) AS array_agg
+           FROM registry.current_filing_attribute c
+          WHERE ((c.filing_id = f.id) AND (c.attribute_code = 'FILED_DATE'::text) AND (c.normalized_date IS NOT NULL))) AS filed_dates,
+    ( SELECT array_agg(DISTINCT c.raw_value ORDER BY c.raw_value) AS array_agg
+           FROM registry.current_filing_attribute c
+          WHERE ((c.filing_id = f.id) AND (c.attribute_code = 'FILED_DATE'::text))) AS filed_date_raw_values,
+    ( SELECT array_agg(DISTINCT c.normalized_date ORDER BY c.normalized_date) AS array_agg
+           FROM registry.current_filing_attribute c
+          WHERE ((c.filing_id = f.id) AND (c.attribute_code = 'PERIOD'::text) AND (c.normalized_date IS NOT NULL))) AS report_periods,
+    ( SELECT array_agg(DISTINCT c.raw_value ORDER BY c.raw_value) AS array_agg
+           FROM registry.current_filing_attribute c
+          WHERE ((c.filing_id = f.id) AND (c.attribute_code = 'PERIOD'::text))) AS report_period_raw_values,
+    ( SELECT count(*) AS count
+           FROM registry.filing_document d
+          WHERE (d.filing_id = f.id)) AS document_count,
+    ( SELECT count(DISTINCT fda.artifact_id) AS count
+           FROM (registry.filing_document d
+             JOIN registry.filing_document_artifact fda ON ((fda.filing_document_id = d.id)))
+          WHERE (d.filing_id = f.id)) AS artifact_count,
+    (EXISTS ( SELECT 1
+           FROM registry.filing_document d
+          WHERE (d.filing_id = f.id))) AS documents_available,
+    (EXISTS ( SELECT 1
+           FROM (registry.filing_document d
+             JOIN registry.filing_document_artifact fda ON ((fda.filing_document_id = d.id)))
+          WHERE (d.filing_id = f.id))) AS artifacts_available,
+    ( SELECT array_agg(DISTINCT p.outcome ORDER BY p.outcome) AS array_agg
+           FROM ((registry.filing_document d
+             JOIN registry.filing_document_artifact fda ON ((fda.filing_document_id = d.id)))
+             JOIN ops.artifact_processing p ON ((p.artifact_id = fda.artifact_id)))
+          WHERE (d.filing_id = f.id)) AS processing_outcomes,
+    ( SELECT count(*) AS count
+           FROM ( SELECT DISTINCT p.id
+                   FROM ((registry.filing_document d
+                     JOIN registry.filing_document_artifact fda ON ((fda.filing_document_id = d.id)))
+                     JOIN ops.artifact_processing p ON ((p.artifact_id = fda.artifact_id)))
+                  WHERE (d.filing_id = f.id)) proc) AS processing_row_count,
+    ( SELECT count(*) AS count
+           FROM obs.soi_row_observation o
+          WHERE (o.filing_id = f.id)) AS soi_row_observation_count,
+    ( SELECT count(*) AS count
+           FROM obs.position_observation o
+          WHERE (o.filing_id = f.id)) AS position_observation_count,
+    ( SELECT count(*) AS count
+           FROM obs.num_fact_observation o
+          WHERE (o.filing_id = f.id)) AS num_fact_observation_count
+   FROM registry.filing f;
+
+COMMENT ON VIEW admin.filing_inventory IS 'One row per SEC filing. Attribute arrays preserve source disagreement. processing_outcomes lists distinct linked outcomes; NULL means none linked, not a fabricated status. Projection exceptions are omitted: they are not filing-keyed.';
+
+CREATE TABLE ops.run (
+    id bigint NOT NULL,
+    run_kind text NOT NULL,
+    code_version text NOT NULL,
+    input_sha256 text,
+    parameters jsonb NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT run_code_version_check CHECK ((btrim(code_version) <> ''::text)),
+    CONSTRAINT run_input_sha256_check CHECK ((input_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT run_run_kind_check CHECK ((run_kind ~ '^[A-Z][A-Z0-9_]*$'::text))
+);
+
+COMMENT ON TABLE ops.run IS 'One execution of any job. A run with no ops.run_outcome row is STARTED.';
+
+COMMENT ON COLUMN ops.run.parameters IS 'Non-secret parameters only. Never store the SEC User-Agent value.';
+
+CREATE TABLE ops.run_outcome (
+    id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    status ops.run_status NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    counts jsonb NOT NULL,
+    error_summary text,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT run_outcome_check CHECK (((status = 'SUCCEEDED'::ops.run_status) OR (error_summary IS NOT NULL))),
+    CONSTRAINT run_outcome_status_check CHECK ((status <> 'STARTED'::ops.run_status))
+);
+
+CREATE VIEW ops.current_run_status AS
+ SELECT r.id AS run_id,
+    r.run_kind,
+    r.started_at,
+    COALESCE(o.status, 'STARTED'::ops.run_status) AS status,
+    o.finished_at
+   FROM (ops.run r
+     LEFT JOIN ops.run_outcome o ON ((o.run_id = r.id)));
+
+CREATE TABLE ops.rule_version (
+    id bigint NOT NULL,
+    rule_code text NOT NULL,
+    rule_kind ops.rule_kind NOT NULL,
+    version text NOT NULL,
+    definition_sha256 text NOT NULL,
+    spec_reference text NOT NULL,
+    description text NOT NULL,
+    unknown_input_policy ops.unknown_input_policy,
+    created_by text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT rule_version_check CHECK (((rule_kind = 'DERIVATION'::ops.rule_kind) = (unknown_input_policy IS NOT NULL))),
+    CONSTRAINT rule_version_created_by_check CHECK ((btrim(created_by) <> ''::text)),
+    CONSTRAINT rule_version_definition_sha256_check CHECK ((definition_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT rule_version_description_check CHECK ((btrim(description) <> ''::text)),
+    CONSTRAINT rule_version_rule_code_check CHECK ((rule_code ~ '^[a-z][a-z0-9_.]*$'::text)),
+    CONSTRAINT rule_version_spec_reference_check CHECK ((btrim(spec_reference) <> ''::text)),
+    CONSTRAINT rule_version_version_check CHECK ((version ~ '^[0-9A-Za-z][0-9A-Za-z._-]*$'::text))
+);
+
+COMMENT ON TABLE ops.rule_version IS 'Immutable definition of a parser, normalization, classification, validation, resolution, or derivation rule.';
+
+COMMENT ON COLUMN ops.rule_version.unknown_input_policy IS 'Derivation rules only: how Unknown inputs are handled. Unknown never becomes zero.';
+
+CREATE VIEW admin.filing_processing AS
+ SELECT DISTINCT link.filing_id,
+    f.accession_number,
+    p.id AS artifact_processing_id,
+    p.artifact_id,
+    p.rule_version_id,
+    rv.rule_code,
+    rv.version AS rule_version,
+    rv.rule_kind,
+    p.outcome,
+    p.detail,
+    p.counts,
+    p.run_id,
+    rs.run_kind,
+    rs.status AS run_status,
+    rs.started_at AS run_started_at,
+    rs.finished_at AS run_finished_at,
+    p.recorded_at AS processing_recorded_at
+   FROM ((((( SELECT DISTINCT d.filing_id,
+            fda.artifact_id
+           FROM (registry.filing_document d
+             JOIN registry.filing_document_artifact fda ON ((fda.filing_document_id = d.id)))) link
+     JOIN registry.filing f ON ((f.id = link.filing_id)))
+     JOIN ops.artifact_processing p ON ((p.artifact_id = link.artifact_id)))
+     JOIN ops.rule_version rv ON ((rv.id = p.rule_version_id)))
+     LEFT JOIN ops.current_run_status rs ON ((rs.run_id = p.run_id)));
+
+COMMENT ON VIEW admin.filing_processing IS 'artifact_processing rows for artifacts linked to the filing. Multiple outcomes stay as multiple rows; none are collapsed into a health status.';
+
+CREATE VIEW admin.filing_registrant AS
+ SELECT fr.filing_id,
+    fr.accession_number,
+    fr.registrant_id,
+    fr.cik,
+    fr.link_source,
+    fr.registrant_link_status,
+    fr.evidence_id,
+    ns.attribute_state AS name_state,
+        CASE
+            WHEN ((ns.attribute_state = 'REPORTED'::text) AND (( SELECT count(DISTINCT cra.raw_value) AS count
+               FROM registry.current_registrant_attribute cra
+              WHERE ((cra.registrant_id = fr.registrant_id) AND (cra.attribute_code = 'NAME'::text))) = 1)) THEN ( SELECT min(cra.raw_value) AS min
+               FROM registry.current_registrant_attribute cra
+              WHERE ((cra.registrant_id = fr.registrant_id) AND (cra.attribute_code = 'NAME'::text)))
+            ELSE NULL::text
+        END AS name_raw
+   FROM (registry.current_filing_registrant fr
+     LEFT JOIN registry.registrant_attribute_status ns ON (((ns.registrant_id = fr.registrant_id) AND (ns.attribute_code = 'NAME'::text))));
+
+COMMENT ON VIEW admin.filing_registrant IS 'Current filing–registrant links. UNKNOWN/MULTIPLE link status and name_state stay visible; name_raw is set only for a single REPORTED name.';
+
 CREATE TABLE derived.derived_value (
     id bigint NOT NULL,
     metric_rule_version_id bigint NOT NULL,
@@ -3110,73 +3823,6 @@ CREATE VIEW derived.observation_event_listing AS
    FROM derived.observation_event;
 
 COMMENT ON VIEW derived.observation_event_listing IS 'Observation events with their evidence link. No amount and no instrument identity.';
-
-CREATE TABLE evidence.evidence (
-    id bigint NOT NULL,
-    evidence_level ref.evidence_level NOT NULL,
-    artifact_id bigint NOT NULL,
-    locator_type ref.locator_type NOT NULL,
-    tabular_row_id bigint,
-    column_position integer,
-    column_label text,
-    json_path text,
-    ixbrl_fact_id text,
-    html_anchor text,
-    join_note text,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    artifact_member_id bigint,
-    html_row_ordinal integer,
-    html_row_end_ordinal integer,
-    html_slot_ordinal integer,
-    block_evidence_id bigint,
-    heading_evidence_id bigint,
-    CONSTRAINT evidence_column_position_check CHECK ((column_position >= 1)),
-    CONSTRAINT evidence_heading_link_locator CHECK (((heading_evidence_id IS NULL) OR (locator_type = 'HTML_TABLE_CELL'::ref.locator_type))),
-    CONSTRAINT evidence_html_row_end_ordinal_check CHECK (((html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= 1))),
-    CONSTRAINT evidence_html_row_ordinal_check CHECK (((html_row_ordinal IS NULL) OR (html_row_ordinal >= 1))),
-    CONSTRAINT evidence_html_row_span_check CHECK (((html_row_ordinal IS NULL) OR (html_row_end_ordinal IS NULL) OR (html_row_end_ordinal >= html_row_ordinal))),
-    CONSTRAINT evidence_html_slot_ordinal_check CHECK (((html_slot_ordinal IS NULL) OR (html_slot_ordinal >= 0))),
-    CONSTRAINT evidence_json_path_check CHECK ((json_path ~ '^\$'::text)),
-    CONSTRAINT evidence_l2_html_anchor_context_row CHECK (((evidence_level <> 'L2_ORIGINAL_FILING'::ref.evidence_level) OR (locator_type <> 'HTML_ANCHOR'::ref.locator_type) OR (html_anchor ~ '^ix-context-row:[A-Za-z0-9_-]+$'::text))),
-    CONSTRAINT evidence_level_locator CHECK (
-CASE evidence_level
-    WHEN 'L1_STRUCTURED_DATASET'::ref.evidence_level THEN ((locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type])) OR ((locator_type = 'DOCUMENT'::ref.locator_type) AND (artifact_member_id IS NOT NULL)))
-    WHEN 'L2_ORIGINAL_FILING'::ref.evidence_level THEN (locator_type = ANY (ARRAY['IXBRL_FACT'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type, 'DISCLOSURE_BLOCK'::ref.locator_type, 'HTML_TABLE_CELL'::ref.locator_type, 'HTML_COLUMN_HEADING'::ref.locator_type]))
-    WHEN 'REGISTRY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['TSV_ROW'::ref.locator_type, 'TSV_CELL'::ref.locator_type, 'JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
-    WHEN 'DISCOVERY'::ref.evidence_level THEN (locator_type = ANY (ARRAY['JSON_PATH'::ref.locator_type, 'HTML_ANCHOR'::ref.locator_type, 'DOCUMENT'::ref.locator_type]))
-    ELSE NULL::boolean
-END),
-    CONSTRAINT evidence_locator_fields CHECK (
-CASE locator_type
-    WHEN 'TSV_ROW'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (num_nonnulls(column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
-    WHEN 'TSV_CELL'::ref.locator_type THEN ((tabular_row_id IS NOT NULL) AND (column_position IS NOT NULL) AND (column_label IS NOT NULL) AND (num_nonnulls(json_path, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
-    WHEN 'JSON_PATH'::ref.locator_type THEN ((json_path IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, ixbrl_fact_id, html_anchor, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
-    WHEN 'IXBRL_FACT'::ref.locator_type THEN ((ixbrl_fact_id IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (html_slot_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, html_anchor, artifact_member_id) = 0) AND ((block_evidence_id IS NULL) = (html_row_ordinal IS NULL)))
-    WHEN 'HTML_ANCHOR'::ref.locator_type THEN ((html_anchor IS NOT NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, artifact_member_id, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0))
-    WHEN 'DOCUMENT'::ref.locator_type THEN (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, html_row_ordinal, html_row_end_ordinal, html_slot_ordinal, block_evidence_id) = 0)
-    WHEN 'DISCLOSURE_BLOCK'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_row_end_ordinal IS NOT NULL) AND (html_row_end_ordinal >= html_row_ordinal) AND (html_slot_ordinal IS NULL) AND (block_evidence_id IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
-    WHEN 'HTML_TABLE_CELL'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND ((block_evidence_id IS NOT NULL) OR (heading_evidence_id IS NOT NULL)) AND (html_row_end_ordinal IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
-    WHEN 'HTML_COLUMN_HEADING'::ref.locator_type THEN ((html_row_ordinal IS NOT NULL) AND (html_slot_ordinal IS NOT NULL) AND (html_row_end_ordinal IS NULL) AND (block_evidence_id IS NULL) AND (heading_evidence_id IS NULL) AND (num_nonnulls(tabular_row_id, column_position, column_label, json_path, ixbrl_fact_id, html_anchor, artifact_member_id) = 0))
-    ELSE NULL::boolean
-END)
-);
-
-COMMENT ON TABLE evidence.evidence IS 'A location inside a source artifact. Retrieval time and checksum come from raw.artifact.';
-
-COMMENT ON COLUMN evidence.evidence.join_note IS 'Set when the fact depends on a join that SEC does not document (for example SOI to NUM).';
-
-COMMENT ON COLUMN evidence.evidence.artifact_member_id IS 'For DOCUMENT evidence about one archive member (for example a whole SUB table).';
-
-COMMENT ON COLUMN evidence.evidence.html_row_ordinal IS '1-based document order of a <tr>, using the schedule disclosure parser row scan. Null for locators that are not an HTML row.';
-
-COMMENT ON COLUMN evidence.evidence.html_row_end_ordinal IS 'Inclusive end row of a DISCLOSURE_BLOCK. Null for every other locator.';
-
-COMMENT ON COLUMN evidence.evidence.html_slot_ordinal IS 'Colspan-grid slot of an HTML_TABLE_CELL. Slot 0 is allowed. The database does not decide which slot is the Portfolio Company column.';
-
-COMMENT ON COLUMN evidence.evidence.block_evidence_id IS 'DISCLOSURE_BLOCK that contains this cell or fact. Null on the block itself and on evidence that is not inside a block.';
-
-COMMENT ON COLUMN evidence.evidence.heading_evidence_id IS 'HTML_COLUMN_HEADING aligned with this value cell. Null when the cell has no stored heading. The column does not store a field code.';
 
 ALTER TABLE evidence.evidence ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME evidence.evidence_id_seq
@@ -3738,24 +4384,6 @@ ALTER TABLE obs.maturity_inspection ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
     CACHE 1
 );
 
-CREATE TABLE obs.position_observation (
-    id bigint NOT NULL,
-    origin_soi_row_observation_id bigint NOT NULL,
-    filing_id bigint NOT NULL,
-    reported_date date,
-    date_precision text NOT NULL,
-    duration_kind ref.duration_kind NOT NULL,
-    holding_descriptor_raw text NOT NULL,
-    rule_version_id bigint NOT NULL,
-    evidence_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT position_observation_date_precision_check CHECK ((date_precision = 'MONTH_END_ROUNDED'::text)),
-    CONSTRAINT position_observation_holding_descriptor_raw_check CHECK ((holding_descriptor_raw <> ''::text))
-);
-
-COMMENT ON TABLE obs.position_observation IS 'One identifier-bearing SOI row. The current classification of the origin is IDENTIFIER_ROW, and holding_descriptor_raw equals that row''s identifier cell. It is not an economically usable investment. Instrument and position links exist only as resolution decisions.';
-
 CREATE VIEW obs.maturity_provenance AS
  SELECT position_observation_id,
     provenance_state,
@@ -3855,44 +4483,6 @@ COMMENT ON COLUMN obs.maturity_provenance.maturity_precision IS 'MONTH when the 
 COMMENT ON COLUMN obs.maturity_provenance.maturity_year IS 'Four-digit year for maturity_precision MONTH. NULL for a calendar day; that year stays on maturity_date.';
 
 COMMENT ON COLUMN obs.maturity_provenance.maturity_month IS 'Month 1 through 12 for maturity_precision MONTH. NULL otherwise.';
-
-CREATE TABLE obs.num_fact_observation (
-    id bigint NOT NULL,
-    tabular_row_id bigint NOT NULL,
-    filing_id bigint NOT NULL,
-    tag text NOT NULL,
-    tag_version text NOT NULL,
-    reported_date_raw text NOT NULL,
-    reported_date date,
-    qtrs_raw text NOT NULL,
-    qtrs integer,
-    duration_kind ref.duration_kind NOT NULL,
-    uom_raw text NOT NULL,
-    segments_raw text,
-    identifier_member_raw text,
-    value_raw text NOT NULL,
-    value_numeric numeric,
-    value_state ref.value_state NOT NULL,
-    rule_version_id bigint NOT NULL,
-    evidence_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT num_fact_observation_check CHECK (((value_state = 'REPORTED'::ref.value_state) = (value_numeric IS NOT NULL))),
-    CONSTRAINT num_fact_observation_check1 CHECK (((value_numeric IS DISTINCT FROM (0)::numeric) OR ops.text_is_numeric_zero(value_raw))),
-    CONSTRAINT num_fact_observation_check2 CHECK ((duration_kind =
-CASE
-    WHEN (qtrs IS NULL) THEN 'UNKNOWN'::ref.duration_kind
-    WHEN (qtrs = 0) THEN 'POINT_IN_TIME'::ref.duration_kind
-    ELSE 'DURATION'::ref.duration_kind
-END)),
-    CONSTRAINT num_fact_observation_identifier_member_raw_check CHECK ((identifier_member_raw <> ''::text)),
-    CONSTRAINT num_fact_observation_qtrs_check CHECK ((qtrs >= 0)),
-    CONSTRAINT num_fact_observation_tag_check CHECK ((tag <> ''::text)),
-    CONSTRAINT num_fact_observation_tag_version_check CHECK ((tag_version <> ''::text)),
-    CONSTRAINT num_fact_observation_value_state_check CHECK ((value_state = ANY (ARRAY['REPORTED'::ref.value_state, 'UNKNOWN'::ref.value_state])))
-);
-
-COMMENT ON COLUMN obs.num_fact_observation.identifier_member_raw IS 'Typed member of the investment identifier axis, parsed from segments by the rule version.';
 
 ALTER TABLE obs.num_fact_observation ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME obs.num_fact_observation_id_seq
@@ -4010,47 +4600,6 @@ ALTER TABLE obs.position_observation_source ALTER COLUMN id ADD GENERATED ALWAYS
     NO MAXVALUE
     CACHE 1
 );
-
-CREATE TABLE obs.soi_row_observation (
-    id bigint NOT NULL,
-    tabular_row_id bigint NOT NULL,
-    filing_id bigint NOT NULL,
-    reported_date_raw text NOT NULL,
-    reported_date date,
-    date_precision text NOT NULL,
-    qtrs_raw text NOT NULL,
-    qtrs integer,
-    duration_kind ref.duration_kind NOT NULL,
-    identifier_raw text,
-    rule_version_id bigint NOT NULL,
-    evidence_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT soi_row_observation_check CHECK ((duration_kind =
-CASE
-    WHEN (qtrs IS NULL) THEN 'UNKNOWN'::ref.duration_kind
-    WHEN (qtrs = 0) THEN 'POINT_IN_TIME'::ref.duration_kind
-    ELSE 'DURATION'::ref.duration_kind
-END)),
-    CONSTRAINT soi_row_observation_date_precision_check CHECK ((date_precision = 'MONTH_END_ROUNDED'::text)),
-    CONSTRAINT soi_row_observation_identifier_raw_check CHECK ((identifier_raw <> ''::text)),
-    CONSTRAINT soi_row_observation_qtrs_check CHECK ((qtrs >= 0))
-);
-
-COMMENT ON TABLE obs.soi_row_observation IS 'Exactly one per raw SOI row per rule version. Not unique on accession, identifier, date, or qtrs: SOI has no natural key.';
-
-COMMENT ON COLUMN obs.soi_row_observation.identifier_raw IS 'Investment identifier text exactly as disclosed; NULL when the cell is empty.';
-
-CREATE TABLE registry.filing (
-    id bigint NOT NULL,
-    accession_number text NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    evidence_id bigint NOT NULL,
-    CONSTRAINT filing_accession_number_check CHECK ((accession_number ~ '^[0-9]{10}-[0-9]{2}-[0-9]{6}$'::text))
-);
-
-COMMENT ON TABLE registry.filing IS 'An EDGAR filing, identified by accession number. The first ten digits identify the submitter, never the registrant.';
 
 CREATE VIEW obs.soi_duplicate_key_groups AS
  SELECT o.filing_id,
@@ -4200,21 +4749,6 @@ ALTER TABLE obs.soi_row_observation ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
     CACHE 1
 );
 
-CREATE TABLE ops.artifact_processing (
-    id bigint NOT NULL,
-    artifact_id bigint NOT NULL,
-    rule_version_id bigint NOT NULL,
-    outcome text NOT NULL,
-    detail text NOT NULL,
-    counts jsonb NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT artifact_processing_detail_check CHECK ((btrim(detail) <> ''::text)),
-    CONSTRAINT artifact_processing_outcome_check CHECK ((outcome = ANY (ARRAY['LOADED'::text, 'SCHEMA_DRIFT'::text, 'NOT_IN_SCOPE'::text])))
-);
-
-COMMENT ON TABLE ops.artifact_processing IS 'One processing of one artifact by one loader version; reprocessing the same artifact with the same loader is a no-op.';
-
 ALTER TABLE ops.artifact_processing ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME ops.artifact_processing_id_seq
     START WITH 1
@@ -4257,44 +4791,6 @@ ALTER TABLE ops.coverage_assertion ALTER COLUMN id ADD GENERATED ALWAYS AS IDENT
     CACHE 1
 );
 
-CREATE TABLE ops.run (
-    id bigint NOT NULL,
-    run_kind text NOT NULL,
-    code_version text NOT NULL,
-    input_sha256 text,
-    parameters jsonb NOT NULL,
-    started_at timestamp with time zone NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT run_code_version_check CHECK ((btrim(code_version) <> ''::text)),
-    CONSTRAINT run_input_sha256_check CHECK ((input_sha256 ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT run_run_kind_check CHECK ((run_kind ~ '^[A-Z][A-Z0-9_]*$'::text))
-);
-
-COMMENT ON TABLE ops.run IS 'One execution of any job. A run with no ops.run_outcome row is STARTED.';
-
-COMMENT ON COLUMN ops.run.parameters IS 'Non-secret parameters only. Never store the SEC User-Agent value.';
-
-CREATE TABLE ops.run_outcome (
-    id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    status ops.run_status NOT NULL,
-    finished_at timestamp with time zone NOT NULL,
-    counts jsonb NOT NULL,
-    error_summary text,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT run_outcome_check CHECK (((status = 'SUCCEEDED'::ops.run_status) OR (error_summary IS NOT NULL))),
-    CONSTRAINT run_outcome_status_check CHECK ((status <> 'STARTED'::ops.run_status))
-);
-
-CREATE VIEW ops.current_run_status AS
- SELECT r.id AS run_id,
-    r.run_kind,
-    r.started_at,
-    COALESCE(o.status, 'STARTED'::ops.run_status) AS status,
-    o.finished_at
-   FROM (ops.run r
-     LEFT JOIN ops.run_outcome o ON ((o.run_id = r.id)));
-
 ALTER TABLE ops.projection_exception ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME ops.projection_exception_id_seq
     START WITH 1
@@ -4325,30 +4821,6 @@ ALTER TABLE ops.rule_activation ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY
     NO MAXVALUE
     CACHE 1
 );
-
-CREATE TABLE ops.rule_version (
-    id bigint NOT NULL,
-    rule_code text NOT NULL,
-    rule_kind ops.rule_kind NOT NULL,
-    version text NOT NULL,
-    definition_sha256 text NOT NULL,
-    spec_reference text NOT NULL,
-    description text NOT NULL,
-    unknown_input_policy ops.unknown_input_policy,
-    created_by text NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT rule_version_check CHECK (((rule_kind = 'DERIVATION'::ops.rule_kind) = (unknown_input_policy IS NOT NULL))),
-    CONSTRAINT rule_version_created_by_check CHECK ((btrim(created_by) <> ''::text)),
-    CONSTRAINT rule_version_definition_sha256_check CHECK ((definition_sha256 ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT rule_version_description_check CHECK ((btrim(description) <> ''::text)),
-    CONSTRAINT rule_version_rule_code_check CHECK ((rule_code ~ '^[a-z][a-z0-9_.]*$'::text)),
-    CONSTRAINT rule_version_spec_reference_check CHECK ((btrim(spec_reference) <> ''::text)),
-    CONSTRAINT rule_version_version_check CHECK ((version ~ '^[0-9A-Za-z][0-9A-Za-z._-]*$'::text))
-);
-
-COMMENT ON TABLE ops.rule_version IS 'Immutable definition of a parser, normalization, classification, validation, resolution, or derivation rule.';
-
-COMMENT ON COLUMN ops.rule_version.unknown_input_policy IS 'Derivation rules only: how Unknown inputs are handled. Unknown never becomes zero.';
 
 ALTER TABLE ops.rule_version ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME ops.rule_version_id_seq
@@ -4400,35 +4872,6 @@ CREATE TABLE ops.schema_migration (
     CONSTRAINT schema_migration_filename_check CHECK ((filename ~ '^[0-9]{4}_[a-z0-9_]+\.sql$'::text)),
     CONSTRAINT schema_migration_sha256_check CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
 );
-
-CREATE TABLE raw.artifact (
-    id bigint NOT NULL,
-    source_url text NOT NULL,
-    final_url text NOT NULL,
-    source_type_code text NOT NULL,
-    http_status integer NOT NULL,
-    content_type text,
-    last_modified text,
-    etag text,
-    byte_size bigint NOT NULL,
-    sha256 text NOT NULL,
-    retrieved_at timestamp with time zone NOT NULL,
-    storage_key text NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT artifact_byte_size_check CHECK ((byte_size >= 0)),
-    CONSTRAINT artifact_final_url_check CHECK ((final_url ~ '^https://(www|data|xbrl)\.sec\.gov/'::text)),
-    CONSTRAINT artifact_http_status_check CHECK (((http_status >= 100) AND (http_status <= 599))),
-    CONSTRAINT artifact_sha256_check CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT artifact_source_url_check CHECK ((source_url ~ '^https://(www|data|xbrl)\.sec\.gov/'::text)),
-    CONSTRAINT artifact_storage_key_check CHECK ((btrim(storage_key) <> ''::text))
-);
-
-COMMENT ON TABLE raw.artifact IS 'One downloaded byte stream. A SEC refresh of the same URL (new SHA-256) is a new artifact, never an overwrite.';
-
-COMMENT ON COLUMN raw.artifact.last_modified IS 'HTTP Last-Modified header exactly as received.';
-
-COMMENT ON COLUMN raw.artifact.storage_key IS 'Where the immutable bytes are kept (local cache path or object key). No storage vendor is chosen yet.';
 
 ALTER TABLE raw.artifact ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME raw.artifact_id_seq
@@ -4596,32 +5039,6 @@ CREATE TABLE ref.filing_attribute (
     CONSTRAINT filing_attribute_code_check CHECK ((code ~ '^[A-Z][A-Z0-9_]*$'::text))
 );
 
-CREATE TABLE ref.registrant_attribute (
-    code text NOT NULL,
-    description text NOT NULL,
-    CONSTRAINT registrant_attribute_code_check CHECK ((code ~ '^[A-Z][A-Z0-9_]*$'::text))
-);
-
-CREATE TABLE ref.registry_field_mapping (
-    id bigint NOT NULL,
-    source_type_code text NOT NULL,
-    source_field text NOT NULL,
-    target_kind text NOT NULL,
-    target_code text,
-    mapping_status ref.mapping_status NOT NULL,
-    source_schema_reference text NOT NULL,
-    recorded_by text NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT registry_field_mapping_check CHECK (((target_kind = ANY (ARRAY['REGISTRANT_ATTRIBUTE'::text, 'FILING_ATTRIBUTE'::text])) = (target_code IS NOT NULL))),
-    CONSTRAINT registry_field_mapping_mapping_status_check CHECK ((mapping_status = ANY (ARRAY['DOCUMENTED_AND_OBSERVED'::ref.mapping_status, 'OBSERVED_UNCONFIRMED'::ref.mapping_status]))),
-    CONSTRAINT registry_field_mapping_recorded_by_check CHECK ((btrim(recorded_by) <> ''::text)),
-    CONSTRAINT registry_field_mapping_source_field_check CHECK ((btrim(source_field) <> ''::text)),
-    CONSTRAINT registry_field_mapping_source_schema_reference_check CHECK ((btrim(source_schema_reference) <> ''::text)),
-    CONSTRAINT registry_field_mapping_target_kind_check CHECK ((target_kind = ANY (ARRAY['REGISTRANT'::text, 'REGISTRANT_ATTRIBUTE'::text, 'NAME_HISTORY'::text, 'FILING'::text, 'FILING_LINK'::text, 'FILING_ATTRIBUTE'::text, 'FILING_DOCUMENT'::text, 'RELEASE'::text, 'REPORT_EDITION'::text, 'PAGINATION'::text, 'RAW_ONLY'::text])))
-);
-
-COMMENT ON TABLE ref.registry_field_mapping IS 'Source field to registry target with its documentation status (docs/SOURCE_SCHEMAS.md section 7.2). source_field is the column label, the JSON path with indexes replaced by [*], or "link" for page anchors.';
-
 ALTER TABLE ref.registry_field_mapping ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME ref.registry_field_mapping_id_seq
     START WITH 1
@@ -4705,73 +5122,6 @@ CREATE VIEW registry.bdc_report_edition_status AS
 
 COMMENT ON VIEW registry.bdc_report_edition_status IS 'Each listed BDC Report CSV and whether its latest retrieval was LOADED, recorded as SCHEMA_DRIFT or NOT_IN_SCOPE, or not retrieved.';
 
-CREATE TABLE registry.filing_registrant_link (
-    id bigint NOT NULL,
-    filing_id bigint NOT NULL,
-    registrant_id bigint NOT NULL,
-    link_source ref.filing_link_source NOT NULL,
-    run_id bigint NOT NULL,
-    supersedes_id bigint,
-    supersede_reason text,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    evidence_id bigint NOT NULL,
-    CONSTRAINT filing_registrant_link_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id))
-);
-
-COMMENT ON TABLE registry.filing_registrant_link IS 'Filing to registrant, only from explicit filing metadata. Several links (co-registrants or disagreeing sources) may coexist; none is chosen silently.';
-
-CREATE TABLE registry.registrant (
-    id bigint NOT NULL,
-    cik bigint NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    evidence_id bigint NOT NULL,
-    CONSTRAINT registrant_cik_check CHECK (((cik >= 1) AND (cik <= '9999999999'::bigint)))
-);
-
-COMMENT ON TABLE registry.registrant IS 'An SEC registrant (filing entity, typically a BDC). Never a borrower, legal entity, or economic group.';
-
-COMMENT ON COLUMN registry.registrant.cik IS 'Stored as a number; sources show it unpadded (data sets) or zero-padded to 10 digits (BDC Report, submissions URL).';
-
-CREATE VIEW registry.current_filing_registrant AS
- WITH heads AS (
-         SELECT l.id,
-            l.filing_id,
-            l.registrant_id,
-            l.link_source,
-            l.run_id,
-            l.supersedes_id,
-            l.supersede_reason,
-            l.recorded_at,
-            l.evidence_id
-           FROM registry.filing_registrant_link l
-          WHERE (NOT (EXISTS ( SELECT 1
-                   FROM registry.filing_registrant_link s
-                  WHERE (s.supersedes_id = l.id))))
-        ), per_filing AS (
-         SELECT heads.filing_id,
-            count(DISTINCT heads.registrant_id) AS registrant_count
-           FROM heads
-          GROUP BY heads.filing_id
-        )
- SELECT f.id AS filing_id,
-    f.accession_number,
-    h.registrant_id,
-    r.cik,
-    h.link_source,
-    h.evidence_id,
-        CASE
-            WHEN (h.id IS NULL) THEN 'UNKNOWN'::text
-            WHEN (p.registrant_count > 1) THEN 'MULTIPLE'::text
-            ELSE 'LINKED'::text
-        END AS registrant_link_status
-   FROM (((registry.filing f
-     LEFT JOIN heads h ON ((h.filing_id = f.id)))
-     LEFT JOIN per_filing p ON ((p.filing_id = f.id)))
-     LEFT JOIN registry.registrant r ON ((r.id = h.registrant_id)));
-
-COMMENT ON VIEW registry.current_filing_registrant IS 'Registrant per filing from explicit metadata only. UNKNOWN when no link exists; MULTIPLE when links name more than one registrant.';
-
 CREATE TABLE registry.registrant_name_history_observation (
     id bigint NOT NULL,
     registrant_id bigint NOT NULL,
@@ -4806,21 +5156,6 @@ CREATE VIEW registry.current_registrant_name_history AS
   WHERE (NOT (EXISTS ( SELECT 1
            FROM registry.registrant_name_history_observation s
           WHERE (s.supersedes_id = h.id))));
-
-CREATE TABLE registry.filing_document (
-    id bigint NOT NULL,
-    filing_id bigint NOT NULL,
-    document_name text NOT NULL,
-    document_url text NOT NULL,
-    named_by text NOT NULL,
-    rule_version_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    evidence_id bigint NOT NULL,
-    CONSTRAINT filing_document_document_name_check CHECK ((btrim(document_name) <> ''::text)),
-    CONSTRAINT filing_document_document_url_check CHECK ((document_url ~ '^https://www\.sec\.gov/Archives/edgar/data/'::text)),
-    CONSTRAINT filing_document_named_by_check CHECK ((named_by = ANY (ARRAY['FILING_INDEX_JSON'::text, 'SUBMISSIONS_PRIMARY_DOCUMENT'::text, 'SOI_INLINEURL'::text])))
-);
 
 CREATE TABLE resolution.entity_resolution_decision (
     id bigint NOT NULL,
@@ -5017,57 +5352,6 @@ CREATE VIEW registry.borrower_observation_listing AS
 
 COMMENT ON VIEW registry.borrower_observation_listing IS 'Phase 10-min borrower observations. One row per MATCHED name observation. No cost, fair value, or invented instrument attributes. A missing date is absent, not zero.';
 
-CREATE TABLE registry.filing_attribute_observation (
-    id bigint NOT NULL,
-    filing_id bigint NOT NULL,
-    attribute_code text NOT NULL,
-    raw_value text NOT NULL,
-    normalized_text text,
-    normalized_date date,
-    normalized_timestamp timestamp with time zone,
-    value_state ref.value_state NOT NULL,
-    rule_version_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    supersedes_id bigint,
-    supersede_reason text,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    evidence_id bigint NOT NULL,
-    CONSTRAINT filing_attribute_observation_check CHECK ((num_nonnulls(normalized_text, normalized_date, normalized_timestamp) <= 1)),
-    CONSTRAINT filing_attribute_observation_check1 CHECK (((value_state = 'REPORTED'::ref.value_state) OR (num_nonnulls(normalized_text, normalized_date, normalized_timestamp) = 0))),
-    CONSTRAINT filing_attribute_observation_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id)),
-    CONSTRAINT filing_attribute_observation_value_state_check CHECK ((value_state = ANY (ARRAY['REPORTED'::ref.value_state, 'UNKNOWN'::ref.value_state, 'NOT_APPLICABLE'::ref.value_state])))
-);
-
-COMMENT ON TABLE registry.filing_attribute_observation IS 'Form, dates, fiscal focus, prevrpt, and document names per source. Sources may disagree side by side.';
-
-CREATE VIEW registry.current_filing_attribute AS
- SELECT o.id AS observation_id,
-    o.filing_id,
-    f.accession_number,
-    o.attribute_code,
-    o.raw_value,
-    o.value_state,
-    o.normalized_text,
-    o.normalized_date,
-    o.normalized_timestamp,
-    a.source_type_code,
-    raw.source_stream(a.id) AS source_stream,
-    e.evidence_level,
-    m.mapping_status AS documentation_status,
-    o.evidence_id,
-    o.rule_version_id,
-    o.run_id
-   FROM ((((registry.filing_attribute_observation o
-     JOIN registry.filing f ON ((f.id = o.filing_id)))
-     JOIN evidence.evidence e ON ((e.id = o.evidence_id)))
-     JOIN raw.artifact a ON ((a.id = e.artifact_id)))
-     LEFT JOIN ref.registry_field_mapping m ON (((m.source_type_code = a.source_type_code) AND (m.source_field = evidence.source_field(e.locator_type, e.column_label, e.json_path)) AND (m.target_kind = 'FILING_ATTRIBUTE'::text) AND (m.target_code = o.attribute_code))))
-  WHERE (NOT (EXISTS ( SELECT 1
-           FROM registry.filing_attribute_observation s
-          WHERE (s.supersedes_id = o.id))));
-
-COMMENT ON VIEW registry.current_filing_attribute IS 'Every current filing attribute value per source, side by side. Disagreements stay visible.';
-
 CREATE TABLE registry.filing_relationship_decision (
     id bigint NOT NULL,
     filing_id bigint NOT NULL,
@@ -5117,50 +5401,6 @@ CREATE VIEW registry.current_filing_relationship AS
   WHERE (NOT (EXISTS ( SELECT 1
            FROM registry.filing_relationship_decision s
           WHERE (s.supersedes_id = d.id))));
-
-CREATE TABLE registry.registrant_attribute_observation (
-    id bigint NOT NULL,
-    registrant_id bigint NOT NULL,
-    attribute_code text NOT NULL,
-    raw_value text NOT NULL,
-    normalized_value text,
-    source_as_of date,
-    rule_version_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    supersedes_id bigint,
-    supersede_reason text,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
-    evidence_id bigint NOT NULL,
-    CONSTRAINT registrant_attribute_observation_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id))
-);
-
-COMMENT ON TABLE registry.registrant_attribute_observation IS 'Names, file numbers, tickers change over time and differ by source; each value is an observation.';
-
-CREATE VIEW registry.current_registrant_attribute AS
- SELECT o.id AS observation_id,
-    o.registrant_id,
-    r.cik,
-    o.attribute_code,
-    o.raw_value,
-    o.normalized_value,
-    o.source_as_of,
-    a.source_type_code,
-    raw.source_stream(a.id) AS source_stream,
-    e.evidence_level,
-    m.mapping_status AS documentation_status,
-    o.evidence_id,
-    o.rule_version_id,
-    o.run_id
-   FROM ((((registry.registrant_attribute_observation o
-     JOIN registry.registrant r ON ((r.id = o.registrant_id)))
-     JOIN evidence.evidence e ON ((e.id = o.evidence_id)))
-     JOIN raw.artifact a ON ((a.id = e.artifact_id)))
-     LEFT JOIN ref.registry_field_mapping m ON (((m.source_type_code = a.source_type_code) AND (m.source_field = evidence.source_field(e.locator_type, e.column_label, e.json_path)) AND (m.target_kind = 'REGISTRANT_ATTRIBUTE'::text) AND (m.target_code = o.attribute_code))))
-  WHERE (NOT (EXISTS ( SELECT 1
-           FROM registry.registrant_attribute_observation s
-          WHERE (s.supersedes_id = o.id))));
-
-COMMENT ON VIEW registry.current_registrant_attribute IS 'Every current registrant attribute value per source, with its documentation status. Sources are never merged.';
 
 CREATE TABLE registry.dataset_release (
     id bigint NOT NULL,
@@ -5259,14 +5499,6 @@ ALTER TABLE registry.filing_attribute_observation ALTER COLUMN id ADD GENERATED 
     CACHE 1
 );
 
-CREATE TABLE registry.filing_document_artifact (
-    id bigint NOT NULL,
-    filing_document_id bigint NOT NULL,
-    artifact_id bigint NOT NULL,
-    run_id bigint NOT NULL,
-    recorded_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
 ALTER TABLE registry.filing_document_artifact ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME registry.filing_document_artifact_id_seq
     START WITH 1
@@ -5362,22 +5594,6 @@ CREATE VIEW registry.portfolio_filing_registrant AS
   GROUP BY filing_id;
 
 COMMENT ON VIEW registry.portfolio_filing_registrant IS 'Filing registrant for portfolio reads. LINKED only when every current linked row names one CIK.';
-
-CREATE VIEW registry.registrant_attribute_status AS
- SELECT r.id AS registrant_id,
-    r.cik,
-    ra.code AS attribute_code,
-    count(c.observation_id) AS current_value_count,
-    count(DISTINCT c.raw_value) AS distinct_raw_value_count,
-        CASE
-            WHEN (count(c.observation_id) = 0) THEN 'UNKNOWN'::text
-            WHEN (count(DISTINCT c.raw_value) > 1) THEN 'MULTIPLE_VALUES'::text
-            ELSE 'REPORTED'::text
-        END AS attribute_state
-   FROM ((registry.registrant r
-     CROSS JOIN ref.registrant_attribute ra)
-     LEFT JOIN registry.current_registrant_attribute c ON (((c.registrant_id = r.id) AND (c.attribute_code = ra.code))))
-  GROUP BY r.id, r.cik, ra.code;
 
 CREATE VIEW registry.market_registrant_coverage AS
  WITH positioned AS (
@@ -7707,6 +7923,8 @@ CREATE INDEX maturity_inspection_subject_idx ON obs.maturity_inspection USING bt
 
 CREATE UNIQUE INDEX maturity_inspection_supersedes_once ON obs.maturity_inspection USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
+CREATE INDEX num_fact_observation_filing_idx ON obs.num_fact_observation USING btree (filing_id);
+
 CREATE INDEX position_field_value_subject_idx ON obs.position_field_value USING btree (position_observation_id, field_code, source_column_label);
 
 CREATE UNIQUE INDEX position_field_value_supersedes_once ON obs.position_field_value USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
@@ -7718,6 +7936,8 @@ CREATE UNIQUE INDEX position_observation_group_supersedes_once ON obs.position_o
 CREATE INDEX soi_row_classification_subject_idx ON obs.soi_row_classification USING btree (soi_row_observation_id);
 
 CREATE UNIQUE INDEX soi_row_classification_supersedes_once ON obs.soi_row_classification USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
+
+CREATE INDEX soi_row_observation_filing_idx ON obs.soi_row_observation USING btree (filing_id);
 
 CREATE INDEX coverage_assertion_registrant_idx ON ops.coverage_assertion USING btree (registrant_id);
 
@@ -9009,6 +9229,8 @@ ALTER TABLE ONLY validation.validation_result
 
 GRANT USAGE ON SCHEMA access TO access_reader;
 
+GRANT USAGE ON SCHEMA admin TO admin_reader;
+
 GRANT USAGE ON SCHEMA derived TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA derived TO bdc_reader;
 
@@ -9115,6 +9337,69 @@ GRANT ALL ON FUNCTION review.set_candidate_status(p_candidate_id bigint, p_statu
 
 GRANT SELECT ON TABLE access.current_access TO access_reader;
 
+GRANT SELECT,INSERT ON TABLE raw.artifact TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE registry.filing TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE registry.filing_document TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE registry.filing_document_artifact TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE admin.filing_artifact TO admin_reader;
+
+GRANT SELECT,INSERT ON TABLE evidence.evidence TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE ref.registry_field_mapping TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE registry.filing_attribute_observation TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE registry.current_filing_attribute TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE registry.current_filing_attribute TO bdc_reader;
+
+GRANT SELECT ON TABLE admin.filing_attribute TO admin_reader;
+
+GRANT SELECT ON TABLE admin.filing_document TO admin_reader;
+
+GRANT SELECT,INSERT ON TABLE obs.num_fact_observation TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE obs.position_observation TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE obs.soi_row_observation TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE ops.artifact_processing TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE ref.registrant_attribute TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE registry.filing_registrant_link TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE registry.registrant TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE registry.current_filing_registrant TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE registry.current_filing_registrant TO bdc_reader;
+
+GRANT SELECT,INSERT ON TABLE registry.registrant_attribute_observation TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE registry.current_registrant_attribute TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE registry.current_registrant_attribute TO bdc_reader;
+
+GRANT SELECT ON TABLE registry.registrant_attribute_status TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE registry.registrant_attribute_status TO bdc_reader;
+
+GRANT SELECT ON TABLE admin.filing_inventory TO admin_reader;
+
+GRANT SELECT,INSERT ON TABLE ops.run TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE ops.run_outcome TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE ops.current_run_status TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE ops.current_run_status TO bdc_reader;
+
+GRANT SELECT,INSERT ON TABLE ops.rule_version TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE admin.filing_processing TO admin_reader;
+
+GRANT SELECT ON TABLE admin.filing_registrant TO admin_reader;
+
 GRANT SELECT,INSERT ON TABLE derived.derived_value TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE derived.derived_value_id_seq TO bdc_pipeline_writer;
@@ -9129,8 +9414,6 @@ GRANT USAGE ON SEQUENCE derived.observation_event_id_seq TO bdc_pipeline_writer;
 
 GRANT SELECT ON TABLE derived.observation_event_listing TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE derived.observation_event_listing TO bdc_reader;
-
-GRANT SELECT,INSERT ON TABLE evidence.evidence TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE evidence.evidence_id_seq TO bdc_pipeline_writer;
 
@@ -9206,12 +9489,8 @@ GRANT USAGE ON SEQUENCE obs.maturity_inspection_candidate_id_seq TO bdc_pipeline
 
 GRANT USAGE ON SEQUENCE obs.maturity_inspection_id_seq TO bdc_pipeline_writer;
 
-GRANT SELECT,INSERT ON TABLE obs.position_observation TO bdc_pipeline_writer;
-
 GRANT SELECT ON TABLE obs.maturity_provenance TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE obs.maturity_provenance TO bdc_reader;
-
-GRANT SELECT,INSERT ON TABLE obs.num_fact_observation TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE obs.num_fact_observation_id_seq TO bdc_pipeline_writer;
 
@@ -9238,10 +9517,6 @@ GRANT SELECT,INSERT ON TABLE obs.position_observation_source TO bdc_pipeline_wri
 
 GRANT USAGE ON SEQUENCE obs.position_observation_source_id_seq TO bdc_pipeline_writer;
 
-GRANT SELECT,INSERT ON TABLE obs.soi_row_observation TO bdc_pipeline_writer;
-
-GRANT SELECT,INSERT ON TABLE registry.filing TO bdc_pipeline_writer;
-
 GRANT SELECT ON TABLE obs.soi_duplicate_key_groups TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE obs.soi_duplicate_key_groups TO bdc_reader;
 
@@ -9260,8 +9535,6 @@ GRANT USAGE ON SEQUENCE obs.soi_row_classification_id_seq TO bdc_pipeline_writer
 
 GRANT USAGE ON SEQUENCE obs.soi_row_observation_id_seq TO bdc_pipeline_writer;
 
-GRANT SELECT,INSERT ON TABLE ops.artifact_processing TO bdc_pipeline_writer;
-
 GRANT USAGE ON SEQUENCE ops.artifact_processing_id_seq TO bdc_pipeline_writer;
 
 GRANT SELECT,INSERT ON TABLE ops.audit_event TO bdc_pipeline_writer;
@@ -9270,18 +9543,9 @@ GRANT USAGE ON SEQUENCE ops.audit_event_id_seq TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE ops.coverage_assertion_id_seq TO bdc_pipeline_writer;
 
-GRANT SELECT,INSERT ON TABLE ops.run TO bdc_pipeline_writer;
-
-GRANT SELECT,INSERT ON TABLE ops.run_outcome TO bdc_pipeline_writer;
-
-GRANT SELECT ON TABLE ops.current_run_status TO bdc_pipeline_writer;
-GRANT SELECT ON TABLE ops.current_run_status TO bdc_reader;
-
 GRANT USAGE ON SEQUENCE ops.projection_exception_id_seq TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE ops.rule_activation_id_seq TO bdc_pipeline_writer;
-
-GRANT SELECT,INSERT ON TABLE ops.rule_version TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE ops.rule_version_id_seq TO bdc_pipeline_writer;
 
@@ -9292,8 +9556,6 @@ GRANT USAGE ON SEQUENCE ops.run_outcome_id_seq TO bdc_pipeline_writer;
 GRANT SELECT,INSERT ON TABLE ops.run_rule_version TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE ops.run_rule_version_id_seq TO bdc_pipeline_writer;
-
-GRANT SELECT,INSERT ON TABLE raw.artifact TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE raw.artifact_id_seq TO bdc_pipeline_writer;
 
@@ -9326,10 +9588,6 @@ GRANT SELECT ON TABLE ref.dataset_table TO bdc_pipeline_writer;
 
 GRANT SELECT ON TABLE ref.filing_attribute TO bdc_pipeline_writer;
 
-GRANT SELECT ON TABLE ref.registrant_attribute TO bdc_pipeline_writer;
-
-GRANT SELECT ON TABLE ref.registry_field_mapping TO bdc_pipeline_writer;
-
 GRANT SELECT ON TABLE ref.source_type TO bdc_pipeline_writer;
 
 GRANT SELECT,INSERT ON TABLE registry.bdc_report_edition TO bdc_pipeline_writer;
@@ -9339,19 +9597,10 @@ GRANT USAGE ON SEQUENCE registry.bdc_report_edition_id_seq TO bdc_pipeline_write
 GRANT SELECT ON TABLE registry.bdc_report_edition_status TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.bdc_report_edition_status TO bdc_reader;
 
-GRANT SELECT,INSERT ON TABLE registry.filing_registrant_link TO bdc_pipeline_writer;
-
-GRANT SELECT,INSERT ON TABLE registry.registrant TO bdc_pipeline_writer;
-
-GRANT SELECT ON TABLE registry.current_filing_registrant TO bdc_pipeline_writer;
-GRANT SELECT ON TABLE registry.current_filing_registrant TO bdc_reader;
-
 GRANT SELECT,INSERT ON TABLE registry.registrant_name_history_observation TO bdc_pipeline_writer;
 
 GRANT SELECT ON TABLE registry.current_registrant_name_history TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.current_registrant_name_history TO bdc_reader;
-
-GRANT SELECT,INSERT ON TABLE registry.filing_document TO bdc_pipeline_writer;
 
 GRANT SELECT,INSERT ON TABLE resolution.entity_resolution_decision TO bdc_pipeline_writer;
 
@@ -9368,20 +9617,10 @@ GRANT SELECT,INSERT ON TABLE validation.validation_result TO bdc_pipeline_writer
 GRANT SELECT ON TABLE registry.borrower_observation_listing TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.borrower_observation_listing TO bdc_reader;
 
-GRANT SELECT,INSERT ON TABLE registry.filing_attribute_observation TO bdc_pipeline_writer;
-
-GRANT SELECT ON TABLE registry.current_filing_attribute TO bdc_pipeline_writer;
-GRANT SELECT ON TABLE registry.current_filing_attribute TO bdc_reader;
-
 GRANT SELECT,INSERT ON TABLE registry.filing_relationship_decision TO bdc_pipeline_writer;
 
 GRANT SELECT ON TABLE registry.current_filing_relationship TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.current_filing_relationship TO bdc_reader;
-
-GRANT SELECT,INSERT ON TABLE registry.registrant_attribute_observation TO bdc_pipeline_writer;
-
-GRANT SELECT ON TABLE registry.current_registrant_attribute TO bdc_pipeline_writer;
-GRANT SELECT ON TABLE registry.current_registrant_attribute TO bdc_reader;
 
 GRANT SELECT,INSERT ON TABLE registry.dataset_release TO bdc_pipeline_writer;
 
@@ -9399,8 +9638,6 @@ GRANT SELECT ON TABLE registry.dataset_release_status TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.dataset_release_status TO bdc_reader;
 
 GRANT USAGE ON SEQUENCE registry.filing_attribute_observation_id_seq TO bdc_pipeline_writer;
-
-GRANT SELECT,INSERT ON TABLE registry.filing_document_artifact TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE registry.filing_document_artifact_id_seq TO bdc_pipeline_writer;
 
@@ -9420,9 +9657,6 @@ GRANT USAGE ON SEQUENCE registry.filing_relationship_decision_id_seq TO bdc_pipe
 
 GRANT SELECT ON TABLE registry.portfolio_filing_registrant TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.portfolio_filing_registrant TO bdc_reader;
-
-GRANT SELECT ON TABLE registry.registrant_attribute_status TO bdc_pipeline_writer;
-GRANT SELECT ON TABLE registry.registrant_attribute_status TO bdc_reader;
 
 GRANT SELECT ON TABLE registry.market_registrant_coverage TO bdc_pipeline_writer;
 GRANT SELECT ON TABLE registry.market_registrant_coverage TO bdc_reader;

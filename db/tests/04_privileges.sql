@@ -44,9 +44,9 @@ SELECT pg_temp.check('writer has INSERT on every history table except ref, the l
 
 SELECT pg_temp.check('no application role has UPDATE, DELETE, or TRUNCATE on any layer table', NOT EXISTS (
   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  CROSS JOIN (VALUES ('bdc_pipeline_writer'), ('bdc_reader'), ('review_writer'), ('access_reader')) AS r (role)
+  CROSS JOIN (VALUES ('bdc_pipeline_writer'), ('bdc_reader'), ('review_writer'), ('access_reader'), ('admin_reader')) AS r (role)
   WHERE c.relkind IN ('r', 'v')
-    AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review', 'access')
+    AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review', 'access', 'admin')
     AND (has_table_privilege(r.role, c.oid, 'UPDATE') OR has_table_privilege(r.role, c.oid, 'DELETE')
          OR has_table_privilege(r.role, c.oid, 'TRUNCATE'))));
 
@@ -61,5 +61,23 @@ SELECT pg_temp.check('no web role exists yet', NOT EXISTS (SELECT 1 FROM pg_role
 SELECT pg_temp.check('access_reader exists and is not a login role',
   EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'access_reader' AND NOT rolcanlogin));
 
+SELECT pg_temp.check('admin_reader exists and is not a login role',
+  EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'admin_reader' AND NOT rolcanlogin));
+
 SELECT pg_temp.check('bdc_reader was not granted the access schema',
   NOT has_schema_privilege('bdc_reader', 'access', 'USAGE'));
+
+SELECT pg_temp.check('bdc_reader was not granted the admin schema',
+  NOT has_schema_privilege('bdc_reader', 'admin', 'USAGE'));
+
+SELECT pg_temp.check('admin_reader selects admin filing views only; other app roles do not',
+  has_table_privilege('admin_reader', 'admin.filing_inventory', 'SELECT')
+  AND has_table_privilege('admin_reader', 'admin.filing_document', 'SELECT')
+  AND has_table_privilege('admin_reader', 'admin.filing_artifact', 'SELECT')
+  AND has_table_privilege('admin_reader', 'admin.filing_processing', 'SELECT')
+  AND NOT has_table_privilege('bdc_reader', 'admin.filing_inventory', 'SELECT')
+  AND NOT has_table_privilege('access_reader', 'admin.filing_inventory', 'SELECT')
+  AND NOT has_table_privilege('bdc_pipeline_writer', 'admin.filing_inventory', 'SELECT')
+  AND NOT has_table_privilege('review_writer', 'admin.filing_inventory', 'SELECT')
+  AND NOT has_table_privilege('admin_reader', 'access.grant_event', 'SELECT')
+  AND NOT has_table_privilege('admin_reader', 'raw.artifact', 'SELECT'));
