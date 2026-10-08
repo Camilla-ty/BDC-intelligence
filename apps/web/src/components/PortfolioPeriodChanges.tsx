@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { SecLink } from "@/components/SecLink";
 import { StateText } from "@/components/StateText";
-import { CIK_NOTE } from "@/lib/portfolios";
+import {
+  EMPTY_PORTFOLIO_CREDIT,
+  PORTFOLIO_CREDIT_NOTE,
+  isLinkableLegalEntityId,
+  portfolioCreditEvidence,
+  portfolioCreditFactSummary,
+  type PortfolioCreditEvent,
+} from "@/lib/portfolio-credit-intelligence";
 import {
   AMBIGUOUS_PERIOD_NOTE,
   BOTH_PERIOD_NOTE,
@@ -16,6 +23,7 @@ import {
   type PeriodChangeView,
   type PeriodSummaryView,
 } from "@/lib/portfolio-changes";
+import { CIK_NOTE, secUrl } from "@/lib/portfolios";
 
 function ChangeTable({
   rows,
@@ -54,6 +62,31 @@ function ChangeTable({
   );
 }
 
+function instrumentLabel(event: PortfolioCreditEvent): string {
+  if (event.instrument_type_state === "REPORTED" && event.instrument_type_raw != null && event.instrument_type_raw.trim() !== "") {
+    return event.instrument_type_raw;
+  }
+  if (event.holding_descriptor_raw != null && event.holding_descriptor_raw.trim() !== "") {
+    return event.holding_descriptor_raw;
+  }
+  if (event.instrument_type_state === "MULTIPLE_VALUES") return "Multiple values";
+  return "Unknown";
+}
+
+function BorrowerLabel({ event }: { event: PortfolioCreditEvent }) {
+  const name = event.borrower_name_raw != null && event.borrower_name_raw.trim() !== ""
+    ? event.borrower_name_raw
+    : "Unknown";
+  if (isLinkableLegalEntityId(event.legal_entity_id)) {
+    return (
+      <Link href={`/borrowers/${event.legal_entity_id}`} className="text-accent">
+        {name}
+      </Link>
+    );
+  }
+  return <StateText text={name} />;
+}
+
 export function PortfolioPeriodChanges({
   cik,
   name,
@@ -61,6 +94,7 @@ export function PortfolioPeriodChanges({
   earlier,
   later,
   summary,
+  intelligence = [],
   confirmed,
   observed,
   absent,
@@ -71,6 +105,7 @@ export function PortfolioPeriodChanges({
   earlier: string | null;
   later: string | null;
   summary: PeriodSummaryView | null;
+  intelligence?: PortfolioCreditEvent[];
   confirmed: PeriodChangeView[];
   observed: PeriodChangeView[];
   absent: PeriodChangeView[];
@@ -132,6 +167,40 @@ export function PortfolioPeriodChanges({
             <div><dt className="text-muted">Positions no longer observed</dt><dd>{summary.noLonger}</dd></div>
             <div><dt className="text-muted">Ambiguous positions</dt><dd>{summary.ambiguous}</dd></div>
           </dl>
+
+          <h2 className="mt-6 text-sm font-semibold text-navy">Portfolio Credit Intelligence</h2>
+          <p className="mt-1 max-w-3xl text-sm text-muted">{PORTFOLIO_CREDIT_NOTE}</p>
+          {intelligence.length === 0 ? <p className="mt-2 text-sm">{EMPTY_PORTFOLIO_CREDIT}</p> : (
+            <ul className="mt-3 flex max-w-3xl flex-col gap-3 text-sm">
+              {intelligence.map((event) => {
+                const evidence = portfolioCreditEvidence(event);
+                return (
+                  <li key={event.key} className="border-t border-line pt-3">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      <span className="font-semibold text-navy">{event.report_date}</span>
+                      <span className="text-xs uppercase tracking-wider text-muted">{event.event_type}</span>
+                    </div>
+                    <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+                      <div>
+                        <dt className="text-xs uppercase tracking-wider text-muted">Borrower</dt>
+                        <dd><BorrowerLabel event={event} /></dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs uppercase tracking-wider text-muted">Instrument</dt>
+                        <dd><StateText text={instrumentLabel(event)} /></dd>
+                      </div>
+                    </dl>
+                    <p className="mt-2"><StateText text={portfolioCreditFactSummary(event)} /></p>
+                    <p className="mt-1">
+                      <SecLink href={secUrl(evidence.documentUrl)} missing={evidence.accessionNumber}>
+                        {evidence.accessionNumber}
+                      </SecLink>
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
 
           <h2 className="mt-6 text-sm font-semibold text-navy">Confirmed Position Changes</h2>
           {confirmed.length === 0 ? <p className="mt-2 text-sm">{EMPTY_CHANGED}</p> : (

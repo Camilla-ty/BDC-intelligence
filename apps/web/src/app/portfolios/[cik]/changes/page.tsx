@@ -1,5 +1,6 @@
 import { MissingRecord } from "@/components/MissingRecord";
 import { PortfolioPeriodChanges } from "@/components/PortfolioPeriodChanges";
+import { portfolioCreditIntelligence } from "@/lib/portfolio-credit-intelligence";
 import {
   absentPosition,
   confirmedChange,
@@ -40,6 +41,7 @@ export default async function PortfolioChangesPage({
   const loaded = comparable ? await loadPortfolioPeriodChanges(cik, earlier, later) : null;
   if (loaded?.error) return <p className="text-sm">{loaded.error}</p>;
   const rows = loaded?.rows ?? [];
+  const intelligence = portfolioCreditIntelligence(rows);
   return (
     <PortfolioPeriodChanges
       cik={cik}
@@ -48,6 +50,7 @@ export default async function PortfolioChangesPage({
       earlier={earlier}
       later={comparable ? later : null}
       summary={loaded?.summary ? periodSummary(loaded.summary) : null}
+      intelligence={intelligence}
       confirmed={rows.filter((row) => row.change_type === "EXISTING_POSITION_CHANGED").map(confirmedChange)}
       observed={rows.filter((row) => row.change_type === "NEW_POSITION_OBSERVED").map(newPosition)}
       absent={rows.filter((row) => row.change_type === "POSITION_NO_LONGER_OBSERVED").map(absentPosition)}

@@ -2,6 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PortfolioPeriodChanges } from "@/components/PortfolioPeriodChanges";
 import {
+  EMPTY_PORTFOLIO_CREDIT,
+  PORTFOLIO_CREDIT_NOTE,
+  portfolioCreditIntelligence,
+} from "@/lib/portfolio-credit-intelligence";
+import {
   AMBIGUOUS_PERIOD_NOTE,
   BOTH_PERIOD_NOTE,
   EMPTY_CHANGED,
@@ -162,6 +167,11 @@ describe("historical portfolio changes", () => {
     const absent = absentPosition(ABSENT_ROW);
     expect(absent.principal).toBe("STORED-LAST-PRINCIPAL · Currency Unknown");
     expect(absent.reportDate).toBe("2099-03-31");
+    const linked = {
+      ...CHANGED,
+      legal_entity_id: "11111111-1111-4111-8111-111111111111",
+      borrower_name_raw: "LINKED PERIOD ENTITY",
+    };
     render(
       <PortfolioPeriodChanges
         cik="0000000001"
@@ -170,6 +180,7 @@ describe("historical portfolio changes", () => {
         earlier="2099-03-31"
         later="2099-06-30"
         summary={periodSummary(SUMMARY)}
+        intelligence={portfolioCreditIntelligence([linked, NEW_ROW, ABSENT_ROW])}
         confirmed={[confirmed]}
         observed={[observed]}
         absent={[absent]}
@@ -178,24 +189,29 @@ describe("historical portfolio changes", () => {
     expect(screen.getAllByRole("link", { name: "2099-09-30" }).some((link) =>
       link.getAttribute("href") === "/portfolios/0000000001/changes?earlier=2099-03-31&later=2099-09-30",
     )).toBe(true);
+    expect(screen.getByRole("heading", { name: "Portfolio Credit Intelligence" })).toBeInTheDocument();
+    expect(screen.getByText(PORTFOLIO_CREDIT_NOTE)).toBeInTheDocument();
+    expect(screen.getByText("VALUATION_CHANGED")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "LINKED PERIOD ENTITY" })).toHaveAttribute(
+      "href",
+      "/borrowers/11111111-1111-4111-8111-111111111111",
+    );
     expect(screen.getByRole("heading", { name: "Confirmed Position Changes" })).toBeInTheDocument();
     expect(screen.getByText("stored change -7")).toBeInTheDocument();
     expect(screen.getAllByText("Insufficient data").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "New Positions Observed" })).toBeInTheDocument();
-    expect(screen.getByText(NEW_NOTE)).toBeInTheDocument();
+    expect(screen.getAllByText(NEW_NOTE).length).toBeGreaterThan(0);
     expect(screen.getAllByText((_, element) => element?.textContent === "STORED-NEW-PRINCIPAL · Currency Unknown").length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: "0000000000-00-000003" })).toHaveAttribute(
-      "href",
-      "https://www.sec.gov/Archives/edgar/data/1/0001/new.htm",
-    );
+    expect(screen.getAllByRole("link", { name: "0000000000-00-000003" }).every((link) =>
+      link.getAttribute("href") === "https://www.sec.gov/Archives/edgar/data/1/0001/new.htm",
+    )).toBe(true);
     expect(screen.getByRole("heading", { name: "Positions No Longer Observed" })).toBeInTheDocument();
-    expect(screen.getByText(EXIT_NOTE)).toBeInTheDocument();
+    expect(screen.getAllByText(EXIT_NOTE).length).toBeGreaterThan(0);
     expect(screen.getAllByText((_, element) => element?.textContent === "STORED-LAST-PRINCIPAL · Currency Unknown").length).toBeGreaterThan(0);
     expect(screen.getByText("12/19/2099")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "0000000000-00-000004" })).toHaveAttribute(
-      "href",
-      "https://www.sec.gov/Archives/edgar/data/1/0001/absent.htm",
-    );
+    expect(screen.getAllByRole("link", { name: "0000000000-00-000004" }).every((link) =>
+      link.getAttribute("href") === "https://www.sec.gov/Archives/edgar/data/1/0001/absent.htm",
+    )).toBe(true);
     expect(screen.getAllByText("1 stored").length).toBeGreaterThan(0);
     expect(screen.getByText(UNRESOLVED_PERIOD_NOTE)).toBeInTheDocument();
     expect(screen.getByText(BOTH_PERIOD_NOTE)).toBeInTheDocument();
@@ -223,11 +239,14 @@ describe("historical portfolio changes", () => {
           no_longer_count: "0",
           ambiguous_position_count: "0",
         })}
+        intelligence={[]}
         confirmed={[]}
         observed={[]}
         absent={[]}
       />,
     );
+    expect(screen.getByRole("heading", { name: "Portfolio Credit Intelligence" })).toBeInTheDocument();
+    expect(screen.getByText(EMPTY_PORTFOLIO_CREDIT)).toBeInTheDocument();
     expect(screen.getByText(EMPTY_CHANGED)).toBeInTheDocument();
     expect(screen.getByText(EMPTY_NEW)).toBeInTheDocument();
     expect(screen.getByText(EMPTY_EXIT)).toBeInTheDocument();
