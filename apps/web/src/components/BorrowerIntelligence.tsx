@@ -10,6 +10,12 @@ import {
   storedDifferences,
 } from "@/lib/borrower-activity";
 import {
+  CREDIT_TIMELINE_NOTE,
+  EMPTY_CREDIT_TIMELINE,
+  timelineFactSummary,
+  type CreditTimelineEvent,
+} from "@/lib/borrower-credit-timeline";
+import {
   COMPARISON_NOTE,
   EMPTY_COMPARISONS,
   type PositionComparison,
@@ -257,6 +263,7 @@ export function BorrowerIntelligence({
   researchError = null,
   comparisons = [],
   comparisonError = null,
+  timeline = [],
   valuation = null,
   valuationError = null,
   maturity = null,
@@ -270,6 +277,7 @@ export function BorrowerIntelligence({
   researchError?: string | null;
   comparisons?: PositionComparison[];
   comparisonError?: string | null;
+  timeline?: CreditTimelineEvent[];
   valuation?: ValuationHistory | null;
   valuationError?: string | null;
   maturity?: {
@@ -348,6 +356,42 @@ export function BorrowerIntelligence({
         {comparisonError ? <p className="mt-3 text-sm">{comparisonError}</p> : null}
         {!comparisonError && changes.length === 0 ? <p className="mt-3 text-sm">{EMPTY_WHAT_CHANGED}</p> : null}
         {!comparisonError && changes.length > 0 ? <WhatChangedList items={changes} /> : null}
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-navy">Credit Timeline</h2>
+        <p className="mt-1 text-sm">{CREDIT_TIMELINE_NOTE}</p>
+        {timeline.length === 0 ? <p className="mt-3 text-sm">{EMPTY_CREDIT_TIMELINE}</p> : (
+          <ul className="mt-3 flex flex-col gap-3 text-sm">
+            {timeline.map((event) => (
+              <li key={event.key} className="border-t border-line pt-3">
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  <span className="font-semibold text-navy">{event.report_date}</span>
+                  <span className="text-xs uppercase tracking-wider text-muted">{event.event_type}</span>
+                </div>
+                <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Position</dt>
+                    <dd className="break-all"><StateText text={event.position_id ?? "Unknown"} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Instrument</dt>
+                    <dd className="break-all"><StateText text={event.instrument_id ?? "Unknown"} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Registrant CIK</dt>
+                    <dd><StateText text={event.registrant_cik ?? "Unknown"} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Accession</dt>
+                    <dd className="break-all">{event.later_accession_number}</dd>
+                  </div>
+                </dl>
+                <p className="mt-2"><StateText text={timelineFactSummary(event)} /></p>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="mt-8">

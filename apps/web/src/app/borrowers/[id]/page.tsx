@@ -1,5 +1,6 @@
 import { BorrowerIntelligence } from "@/components/BorrowerIntelligence";
 import { MissingRecord } from "@/components/MissingRecord";
+import { creditTimeline } from "@/lib/borrower-credit-timeline";
 import { positionComparisons } from "@/lib/borrower-comparisons";
 import { historicalPositions } from "@/lib/borrower-positions";
 import { maturityChangeLines, maturityWall, maturityYears } from "@/lib/borrower-maturity";
@@ -37,6 +38,11 @@ export default async function BorrowerPage({
     ? { rows: [], error: null }
     : await loadPositionResearchFields(positions.rows.map((row) => row.position_observation_id));
   const comparisonRows = comparisons.error ? [] : positionComparisons(comparisons.rows, rows, id);
+  const timeline = creditTimeline({
+    observations: positions.error ? [] : positions.rows,
+    valuations: valuation.error ? [] : valuation.rows,
+    comparisons: comparisons.error ? [] : comparisons.rows,
+  });
   return (
     <BorrowerIntelligence
       borrower={borrower}
@@ -45,6 +51,7 @@ export default async function BorrowerPage({
       researchError={positions.error ? null : research.error}
       comparisons={comparisonRows}
       comparisonError={comparisons.error}
+      timeline={timeline}
       valuation={valuation.error ? null : valuationHistory(valuation.rows, rows, id)}
       valuationError={valuation.error}
       maturity={
