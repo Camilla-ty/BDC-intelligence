@@ -1,10 +1,23 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PortfolioDetail } from "@/components/PortfolioDetail";
+import { PortfolioHoldings } from "@/components/PortfolioHoldings";
 import { PortfolioLimits } from "@/components/PortfolioLimits";
 import { PortfolioLines } from "@/components/PortfolioLines";
 import { PortfolioList } from "@/components/PortfolioList";
 import { AppShell } from "@/components/AppShell";
+import {
+  CHANGE_NOTE,
+  EMPTY_CHANGES,
+  EMPTY_HOLDINGS,
+  moneyText,
+  portfolioChange,
+  portfolioHolding,
+  portfolioSummary,
+  type ChangeRow,
+  type HoldingRow,
+  type SummaryRow,
+} from "@/lib/portfolio-holdings";
 import {
   BLOCKED_NOTE,
   CURRENCY_NOTE,
@@ -124,9 +137,17 @@ describe("reported dates", () => {
         emptyPeriods={[]}
       />,
     );
+    expect(screen.getByRole("link", { name: "Historical changes" })).toHaveAttribute(
+      "href",
+      "/portfolios/0000000001/changes",
+    );
     expect(screen.getByRole("link", { name: "2099-03-31" })).toHaveAttribute(
       "href",
       "/portfolios/0000000001/lines?date=2099-03-31",
+    );
+    expect(screen.getAllByRole("link", { name: "Holdings" })[0]).toHaveAttribute(
+      "href",
+      "/portfolios/0000000001/holdings?date=2099-03-31",
     );
     expect(screen.queryByText("2099-09-30")).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Disclosed lines" })).toBeInTheDocument();
@@ -250,5 +271,154 @@ describe("portfolio states", () => {
     expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("href", "/market");
     expect(screen.getByRole("link", { name: "Account" })).toHaveAttribute("href", "/account");
     expect(screen.queryByRole("link", { name: "Review" })).not.toBeInTheDocument();
+  });
+});
+
+const HOLDING: HoldingRow = {
+  registrant_cik: "0000000001",
+  reported_date: "2099-12-31",
+  position_observation_id: "41",
+  position_id: null,
+  borrower_name_raw: null,
+  holding_descriptor_raw: "TEST BORROWER B | TEST LOAN 2",
+  instrument_id: null,
+  instrument_resolution_state: "UNRESOLVED",
+  continuity_state: "UNRESOLVED",
+  instrument_type_state: "UNKNOWN",
+  instrument_type_raw: null,
+  principal_state: "REPORTED",
+  principal_raw: "STORED-PRINCIPAL",
+  principal_currency_state: "UNKNOWN",
+  principal_currency_code: null,
+  cost_state: "UNKNOWN",
+  cost_raw: null,
+  cost_currency_state: null,
+  cost_currency_code: null,
+  fair_value_state: "REPORTED",
+  fair_value_raw: "STORED-FAIR-VALUE",
+  fair_value_currency_state: "FROM_FILING",
+  fair_value_currency_code: "AAA",
+  maturity_source: "FILING_DISPLAYED",
+  maturity_raw: "12/19/2099",
+  maturity_precision: null,
+  accession_number: "0000000000-00-000002",
+  observation_evidence_level: "L1_STRUCTURED_DATASET",
+  document_url: "https://www.sec.gov/Archives/edgar/data/1/0001/test.htm",
+  holdings_definition: "portfolio.holdings.v1",
+};
+
+const SUMMARY: SummaryRow = {
+  observation_count: "2",
+  resolved_position_count: "1",
+  unresolved_count: "1",
+  known_principal_count: "1",
+  known_fair_value_count: "1",
+  known_maturity_count: "1",
+  unknown_currency_count: "1",
+  principal_aggregation_state: "INSUFFICIENT_DATA",
+  principal_total: null,
+  principal_currency_code: null,
+  fair_value_aggregation_state: "COMPARABLE",
+  fair_value_total: "8",
+  fair_value_currency_code: "AAA",
+  holdings_definition: "portfolio.holdings.v1",
+};
+
+const CHANGE: ChangeRow = {
+  position_id: "77",
+  earlier_reported_date: "2099-06-30",
+  later_reported_date: "2099-12-31",
+  earlier_accession_number: "0000000000-00-000001",
+  later_accession_number: "0000000000-00-000002",
+  principal_comparison_state: "INSUFFICIENT_DATA",
+  earlier_principal_raw: null,
+  later_principal_raw: "STORED-PRINCIPAL",
+  principal_delta: null,
+  fair_value_comparison_state: "COMPARABLE",
+  earlier_fair_value_raw: "STORED-EARLIER-VALUE",
+  later_fair_value_raw: "STORED-LATER-VALUE",
+  fair_value_delta: "-7",
+  maturity_comparison_state: "COMPARABLE",
+  maturity_changed: true,
+  earlier_maturity_raw: "12/19/2099",
+  later_maturity_raw: "06/30/2100",
+  holdings_definition: "portfolio.holdings.v1",
+};
+
+describe("BDC portfolio holdings", () => {
+  it("shows the registrant, period, stored holding, and evidence link", () => {
+    const holding = portfolioHolding(HOLDING);
+    expect(holding.borrower).toBe("Unknown");
+    expect(holding.principal).toBe("STORED-PRINCIPAL · Currency Unknown");
+    expect(holding.fairValue).toBe("STORED-FAIR-VALUE · AAA");
+    expect(holding.maturity).toBe("12/19/2099");
+    expect(holding.resolution).toBe("Unresolved");
+    expect(moneyText("UNKNOWN", null, null, null)).toBe("Unknown");
+    render(
+      <PortfolioHoldings
+        cik="0000000001"
+        name="TEST REGISTRANT A"
+        reportedDate="2099-12-31"
+        summary={portfolioSummary(SUMMARY)}
+        holdings={[holding]}
+        changes={[portfolioChange(CHANGE)]}
+        page={1}
+        hasPrevious={false}
+        hasNext={false}
+        pastEnd={false}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "BDC Portfolio" })).toBeInTheDocument();
+    expect(screen.getByText("TEST REGISTRANT A")).toBeInTheDocument();
+    expect(screen.getAllByText("0000000001").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2099-12-31").length).toBeGreaterThan(0);
+    expect(screen.getByText("STORED-PRINCIPAL · Currency Unknown")).toBeInTheDocument();
+    expect(screen.getByText("STORED-FAIR-VALUE · AAA")).toBeInTheDocument();
+    expect(screen.getByText("12/19/2099")).toBeInTheDocument();
+    expect(screen.getByText(/Unresolved\./)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "0000000000-00-000002" })).toHaveAttribute(
+      "href",
+      "https://www.sec.gov/Archives/edgar/data/1/0001/test.htm",
+    );
+    expect(screen.getAllByText("1 stored").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Insufficient data").length).toBeGreaterThan(0);
+    expect(screen.getByText("8 · AAA")).toBeInTheDocument();
+    expect(screen.getByText("Maturity changed from 12/19/2099 to 06/30/2100.")).toBeInTheDocument();
+    expect(screen.getByText("STORED-EARLIER-VALUE to STORED-LATER-VALUE; stored change -7")).toBeInTheDocument();
+    expect(screen.getByText(CHANGE_NOTE)).toBeInTheDocument();
+    expect(screen.queryByText(/score|rank|probability/i)).not.toBeInTheDocument();
+  });
+
+  it("shows an empty portfolio without a zero total", () => {
+    render(
+      <PortfolioHoldings
+        cik="0000000001"
+        name="Unknown"
+        reportedDate="2099-03-31"
+        summary={portfolioSummary({
+          ...SUMMARY,
+          observation_count: "0",
+          resolved_position_count: "0",
+          unresolved_count: "0",
+          known_principal_count: "0",
+          known_fair_value_count: "0",
+          known_maturity_count: "0",
+          unknown_currency_count: "0",
+          fair_value_aggregation_state: "INSUFFICIENT_DATA",
+          fair_value_total: null,
+          fair_value_currency_code: null,
+        })}
+        holdings={[]}
+        changes={[]}
+        page={1}
+        hasPrevious={false}
+        hasNext={false}
+        pastEnd={false}
+      />,
+    );
+    expect(screen.getAllByText(EMPTY_HOLDINGS).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(EMPTY_CHANGES).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Insufficient data").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
   });
 });

@@ -26,6 +26,8 @@ export function PortfolioDetail({
         <Link href="/portfolios" className="text-accent">Portfolios</Link>
         {" · "}
         <Link href={`/maturity/${registrant.registrant_cik}`} className="text-accent">Maturity for this registrant</Link>
+        {" · "}
+        <Link href={`/portfolios/${registrant.registrant_cik}/changes`} className="text-accent">Historical changes</Link>
       </p>
       <h1 className="mt-2 text-lg font-semibold text-navy">{registrant.registrant_cik}</h1>
       <p className="mt-1 max-w-3xl text-sm text-muted">{CIK_NOTE}</p>
@@ -71,6 +73,13 @@ export function PortfolioDetail({
                       className="text-accent"
                     >
                       {date.reportedDate}
+                    </Link>
+                    {" · "}
+                    <Link
+                      href={`/portfolios/${registrant.registrant_cik}/holdings?date=${date.reportedDate}`}
+                      className="text-accent"
+                    >
+                      Holdings
                     </Link>
                   </td>
                   <td data-label="Disclosed lines" className="py-3 pr-4">{date.disclosedLines}</td>

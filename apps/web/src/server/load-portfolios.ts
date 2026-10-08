@@ -1,4 +1,18 @@
 import {
+  isPeriodChangeRow,
+  isPeriodSummaryRow,
+  type PeriodChangeRow,
+  type PeriodSummaryRow,
+} from "@/lib/portfolio-changes";
+import {
+  isChangeRow,
+  isHoldingRow,
+  isSummaryRow,
+  type ChangeRow,
+  type HoldingRow,
+  type SummaryRow,
+} from "@/lib/portfolio-holdings";
+import {
   assertPortfolioFields,
   type DateRow,
   type LineRow,
@@ -189,6 +203,88 @@ function isDate(item: unknown): item is DateRow {
   if (item == null || typeof item !== "object") return false;
   const row = item as DateRow;
   return typeof row.reported_date === "string" && typeof row.disclosed_line_count === "number";
+}
+
+export type HoldingsResult = {
+  summary: SummaryRow | null;
+  rows: HoldingRow[];
+  changes: ChangeRow[];
+  error: string | null;
+};
+
+export async function loadPortfolioHoldings(
+  cik: string,
+  reportedDate: string,
+  limit: number,
+  offset: number,
+): Promise<HoldingsResult> {
+  if (!CIK.test(cik) || !REPORTED_DATE.test(reportedDate) || !Number.isSafeInteger(limit) || !Number.isSafeInteger(offset) || limit < 0 || offset < 0) {
+    return { summary: null, rows: [], changes: [], error: "The portfolio listing could not be read." };
+  }
+  const { json, error } = await query(readerSql(`
+SELECT json_build_object(
+  'summary', (SELECT row_to_json(s) FROM registry.bdc_portfolio_summary('${cik}', '${reportedDate}') s),
+  'rows', (
+    SELECT coalesce(json_agg(row_to_json(h)), '[]'::json)
+    FROM registry.bdc_portfolio_holdings('${cik}', '${reportedDate}', ${limit}, ${offset}) h
+  ),
+  'changes', (
+    SELECT coalesce(json_agg(row_to_json(c)), '[]'::json)
+    FROM registry.bdc_portfolio_changes('${cik}', '${reportedDate}') c
+  )
+);`));
+  if (error || json == null || typeof json !== "object" || Array.isArray(json)) {
+    return { summary: null, rows: [], changes: [], error: "The portfolio listing could not be read." };
+  }
+  const payload = json as { summary?: unknown; rows?: unknown; changes?: unknown };
+  if (!isSummaryRow(payload.summary) || !Array.isArray(payload.rows) || !payload.rows.every(isHoldingRow) || !Array.isArray(payload.changes) || !payload.changes.every(isChangeRow)) {
+    return { summary: null, rows: [], changes: [], error: "The portfolio listing could not be read." };
+  }
+  return { summary: payload.summary, rows: payload.rows, changes: payload.changes, error: null };
+}
+
+export async function loadPortfolioHoldingPage(
+  cik: string,
+  reportedDate: string,
+  limit: number,
+  offset: number,
+): Promise<{ rows: HoldingRow[]; error: string | null }> {
+  if (!CIK.test(cik) || !REPORTED_DATE.test(reportedDate) || !Number.isSafeInteger(limit) || !Number.isSafeInteger(offset) || limit < 0 || offset < 0) {
+    return { rows: [], error: "The portfolio listing could not be read." };
+  }
+  const { json, error } = await query(readerSql(`
+SELECT coalesce(json_agg(row_to_json(h)), '[]'::json)
+FROM registry.bdc_portfolio_holdings('${cik}', '${reportedDate}', ${limit}, ${offset}) h;`));
+  if (error || !Array.isArray(json) || !json.every(isHoldingRow)) {
+    return { rows: [], error: "The portfolio listing could not be read." };
+  }
+  return { rows: json, error: null };
+}
+
+export async function loadPortfolioPeriodChanges(
+  cik: string,
+  earlier: string,
+  later: string,
+): Promise<{ summary: PeriodSummaryRow | null; rows: PeriodChangeRow[]; error: string | null }> {
+  if (!CIK.test(cik) || !REPORTED_DATE.test(earlier) || !REPORTED_DATE.test(later) || earlier >= later) {
+    return { summary: null, rows: [], error: "The portfolio listing could not be read." };
+  }
+  const { json, error } = await query(readerSql(`
+SELECT json_build_object(
+  'summary', (SELECT row_to_json(s) FROM registry.bdc_portfolio_period_summary('${cik}', '${earlier}', '${later}') s),
+  'rows', (
+    SELECT coalesce(json_agg(row_to_json(c)), '[]'::json)
+    FROM registry.bdc_portfolio_period_changes('${cik}', '${earlier}', '${later}') c
+  )
+);`));
+  if (error || json == null || typeof json !== "object" || Array.isArray(json)) {
+    return { summary: null, rows: [], error: "The portfolio listing could not be read." };
+  }
+  const payload = json as { summary?: unknown; rows?: unknown };
+  if (!isPeriodSummaryRow(payload.summary) || !Array.isArray(payload.rows) || !payload.rows.every(isPeriodChangeRow)) {
+    return { summary: null, rows: [], error: "The portfolio listing could not be read." };
+  }
+  return { summary: payload.summary, rows: payload.rows, error: null };
 }
 
 function isLine(item: unknown): item is LineRow {

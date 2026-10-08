@@ -425,3 +425,59 @@ that contains the word refinanced do not become another event type.
 Principal values are the stored raw text and currency code. A missing
 principal stays unknown. Currency is not converted. No amount is estimated.
 The definition label is `refinancing.outcome_history.v1`.
+
+## 17. BDC portfolio holdings
+
+`registry.bdc_portfolio_scope(text, date)` is the position-observation
+population for one registrant CIK and one reported date. The CIK filter is
+`registry.portfolio_detail_filing`: a filing is included only when every
+current registrant link names that one CIK. Another reported date is absent.
+
+`registry.bdc_portfolio_holdings(text, date, integer, integer)` returns one
+page of holdings from that scope. Facts are copied from
+`registry.position_read`. Instrument type is the stored research field when
+exactly one reported value exists; otherwise the state is `UNKNOWN` or
+`MULTIPLE_VALUES`. A missing amount stays unknown. Currency is not converted.
+The definition label is `portfolio.holdings.v1`.
+
+`registry.bdc_portfolio_summary(text, date)` counts observations, resolved
+positions (`MATCHED` instrument and continuity), unresolved rows, known
+principal, known fair value, known maturity, and unknown or ambiguous
+currency. Principal and fair value are totaled only when every holding on
+that date has a reported number and the same known currency. A missing
+amount is not zero. Unknown currency is not a total. Counts are stored rows,
+not a score.
+
+`registry.bdc_portfolio_changes(text, date)` lists confirmed
+`registry.position_period_comparison` rows whose later observation is in that
+CIK and reported date. Deltas are copied. A missing later observation is not
+a row and is not a repayment or a refinancing.
+
+## 18. BDC portfolio period changes
+
+`registry.bdc_portfolio_period_identity(text, date)` returns position identity
+for one CIK and reported date from `registry.bdc_portfolio_scope` and
+`registry.position_read`.
+
+`registry.bdc_portfolio_period_changes(text, date, date)` compares two
+reporting periods of one CIK under `portfolio.period_changes.v1`. Only
+positions with `MATCHED` instrument resolution, `MATCHED` continuity, and a
+non-null `position_id` participate. Change types are:
+
+- `EXISTING_POSITION_CHANGED` — a stored `registry.position_period_comparison`
+  joins the two dates and at least one of fair value, principal, cost, or
+  maturity changed.
+- `NEW_POSITION_OBSERVED` — a resolved position present only in the later
+  period. It is not an origination.
+- `POSITION_NO_LONGER_OBSERVED` — a resolved position present only in the
+  earlier period. It is not a repayment or a refinancing.
+
+An unresolved instrument is absent from change rows. A borrower name is not
+an instrument. A position with more than one matched observation on a
+selected date is ambiguous and is not treated as new or absent.
+
+`registry.bdc_portfolio_period_summary(text, date, date)` counts earlier and
+later observations, unresolved rows, resolved positions observed in both
+periods, confirmed changes, new observations, no-longer-observed positions,
+and ambiguous positions. Counts are stored rows or stored positions, not a
+score.

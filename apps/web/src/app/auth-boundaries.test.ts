@@ -30,7 +30,9 @@ describe("authentication boundaries", () => {
         file.startsWith("app/maturity/") ||
         file.startsWith("app/market/"),
     );
-    expect(researchPages.length).toBeGreaterThanOrEqual(12);
+    expect(researchPages.length).toBeGreaterThanOrEqual(14);
+    expect(researchPages.some(({ file }) => file === "app/portfolios/[cik]/holdings/page.tsx")).toBe(true);
+    expect(researchPages.some(({ file }) => file === "app/portfolios/[cik]/changes/page.tsx")).toBe(true);
     for (const { file, text } of researchPages) {
       expect(text, file).toMatch(/requireAuthenticatedUser\s*\(/);
       expect(imports(text), file).toContain("@/server/auth/access");
