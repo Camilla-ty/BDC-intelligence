@@ -1,5 +1,6 @@
 import { MarketCoverage } from "@/components/MarketCoverage";
 import { listDateCoverage, listRegistrantCoverage, listReleaseCoverage } from "@/lib/market";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadMarketDirectory } from "@/server/load-market";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ export default async function MarketPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { q } = await searchParams;
   const query = typeof q === "string" ? q : "";
   const directory = await loadMarketDirectory();

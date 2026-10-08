@@ -1,5 +1,6 @@
 import { MarketRelease } from "@/components/MarketRelease";
 import { coverageLabel, listReleaseDates } from "@/lib/market";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadMarketRelease } from "@/server/load-market";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ export default async function MarketReleasePage({
 }: {
   params: Promise<{ label: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { label } = await params;
   const detail = await loadMarketRelease(label);
   if (detail.error) return <p className="text-sm">{detail.error}</p>;

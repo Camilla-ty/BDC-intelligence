@@ -2,6 +2,7 @@ import { MissingRecord } from "@/components/MissingRecord";
 import { PortfolioLines } from "@/components/PortfolioLines";
 import { pageWindow, portfolioLine } from "@/lib/portfolios";
 import { UNOBSERVED_DATE } from "@/lib/states";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadEmptyPeriods, loadPortfolioLines } from "@/server/load-portfolios";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ export default async function PortfolioLinesPage({
   params: Promise<{ cik: string }>;
   searchParams: Promise<{ date?: string; page?: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { cik } = await params;
   const query = await searchParams;
   const reportedDate = typeof query.date === "string" ? query.date : "";

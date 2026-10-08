@@ -4,7 +4,7 @@ import { PortfolioDetail } from "@/components/PortfolioDetail";
 import { PortfolioLimits } from "@/components/PortfolioLimits";
 import { PortfolioLines } from "@/components/PortfolioLines";
 import { PortfolioList } from "@/components/PortfolioList";
-import { Shell } from "@/components/Shell";
+import { AppShell } from "@/components/AppShell";
 import {
   BLOCKED_NOTE,
   CURRENCY_NOTE,
@@ -242,11 +242,13 @@ describe("portfolio states", () => {
   });
 
   it("names the portfolio section without replacing borrowers", () => {
-    render(<Shell><PortfolioLimits emptyPeriods={[]} /></Shell>);
+    render(<AppShell signedIn isAdmin={false}><PortfolioLimits emptyPeriods={[]} /></AppShell>);
     expect(screen.getByText("BDC portfolios")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Borrowers" })).toHaveAttribute("href", "/borrowers");
     expect(screen.getByRole("link", { name: "Portfolios" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Maturity" })).toHaveAttribute("href", "/maturity");
     expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("href", "/market");
+    expect(screen.getByRole("link", { name: "Account" })).toHaveAttribute("href", "/account");
+    expect(screen.queryByRole("link", { name: "Review" })).not.toBeInTheDocument();
   });
 });

@@ -34,7 +34,7 @@ import {
 } from "@/lib/borrower-positions";
 import { BorrowerList } from "@/components/BorrowerList";
 import { BorrowerSources } from "@/components/BorrowerSources";
-import { Shell } from "@/components/Shell";
+import { AppShell } from "@/components/AppShell";
 import {
   COUNT_NOTE,
   EDGAR_DOCUMENT_PREFIX,
@@ -1204,13 +1204,16 @@ function withinSectionLink(section: Element | null, name: string): HTMLElement {
 }
 
 describe("navigation", () => {
-  it("offers Borrowers, Portfolios, Maturity, and Coverage, and keeps the borrower heading", () => {
-    render(<Shell><p>Body</p></Shell>);
+  it("offers Borrowers, Portfolios, Maturity, Coverage, and Account, and keeps the borrower heading", () => {
+    render(<AppShell signedIn isAdmin={false}><p>Body</p></AppShell>);
     expect(screen.getByRole("link", { name: "Borrowers" })).toHaveAttribute("href", "/borrowers");
     expect(screen.getByRole("link", { name: "Borrowers" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Portfolios" })).toHaveAttribute("href", "/portfolios");
     expect(screen.getByRole("link", { name: "Maturity" })).toHaveAttribute("href", "/maturity");
     expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("href", "/market");
+    expect(screen.getByRole("link", { name: "Account" })).toHaveAttribute("href", "/account");
+    expect(screen.queryByRole("link", { name: "Review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
     expect(screen.getByText("Find Borrowers")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /refinancing|screener/i })).not.toBeInTheDocument();
   });

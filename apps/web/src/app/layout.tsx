@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Evidence-first BDC credit intelligence.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full">

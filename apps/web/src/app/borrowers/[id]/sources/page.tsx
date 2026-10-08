@@ -2,6 +2,7 @@ import { BorrowerSources } from "@/components/BorrowerSources";
 import { MissingRecord } from "@/components/MissingRecord";
 import { borrowerDetail, sourceRows } from "@/lib/borrowers";
 import { UNOBSERVED_BORROWER } from "@/lib/states";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadBorrowerObservations } from "@/server/load-borrowers";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export default async function SourcesPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { id } = await params;
   const { rows, error } = await loadBorrowerObservations();
   if (error) return <p className="text-sm">{error}</p>;

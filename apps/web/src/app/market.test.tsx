@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MarketCoverage } from "@/components/MarketCoverage";
 import { MarketDate } from "@/components/MarketDate";
 import { MarketRelease } from "@/components/MarketRelease";
-import { Shell } from "@/components/Shell";
+import { AppShell } from "@/components/AppShell";
 import {
   BLOCKED_NOTE,
   CELL_NOTE,
@@ -134,11 +134,13 @@ describe("market coverage inventory", () => {
   });
 
   it("names the coverage section and rejects an amount field", () => {
-    render(<Shell><p>Body</p></Shell>);
+    render(<AppShell signedIn isAdmin={false}><p>Body</p></AppShell>);
     expect(screen.getByText("Market coverage")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Borrowers" })).toHaveAttribute("href", "/borrowers");
     expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("href", "/market");
     expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Account" })).toHaveAttribute("href", "/account");
+    expect(screen.queryByRole("link", { name: "Review" })).not.toBeInTheDocument();
     expect(() => listDateRegistrants([dateRow({ fair_value_raw: "1" } as Partial<DateRegistrantRow>)], "2099-12-31"))
       .toThrow(/not displayable/);
   });

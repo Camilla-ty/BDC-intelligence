@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MaturityDetail } from "@/components/MaturityDetail";
 import { MaturityLines } from "@/components/MaturityLines";
 import { MaturityList } from "@/components/MaturityList";
-import { Shell } from "@/components/Shell";
+import { AppShell } from "@/components/AppShell";
 import {
   BOUNDARY_NOTE,
   UNKNOWN_MATURITY_NOTE,
@@ -189,11 +189,13 @@ describe("maturity wall", () => {
   });
 
   it("names the maturity section from the maturity path", () => {
-    render(<Shell><p>Body</p></Shell>);
+    render(<AppShell signedIn isAdmin={false}><p>Body</p></AppShell>);
     expect(screen.getByText("Maturity wall")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Portfolios" })).toHaveAttribute("href", "/portfolios");
     expect(screen.getByRole("link", { name: "Maturity" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("href", "/market");
+    expect(screen.getByRole("link", { name: "Account" })).toHaveAttribute("href", "/account");
+    expect(screen.queryByRole("link", { name: "Review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /refinancing/i })).not.toBeInTheDocument();
   });
 

@@ -2,6 +2,7 @@ import { MissingRecord } from "@/components/MissingRecord";
 import { PortfolioDetail } from "@/components/PortfolioDetail";
 import { reportedDates } from "@/lib/portfolios";
 import { UNOBSERVED_REGISTRANT } from "@/lib/states";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadPortfolioDetail } from "@/server/load-portfolios";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export default async function PortfolioPage({
 }: {
   params: Promise<{ cik: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { cik } = await params;
   if (!/^[0-9]{10}$/.test(cik)) return <MissingRecord message={UNOBSERVED_REGISTRANT} href="/portfolios" label="Portfolios" />;
   const detail = await loadPortfolioDetail(cik);

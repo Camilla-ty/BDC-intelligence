@@ -5,6 +5,7 @@ import { historicalPositions } from "@/lib/borrower-positions";
 import { valuationHistory } from "@/lib/borrower-valuation";
 import { borrowerDetail } from "@/lib/borrowers";
 import { UNOBSERVED_BORROWER } from "@/lib/states";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadBorrowerObservations, loadBorrowerPositionComparisons, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadPositionResearchFields } from "@/server/load-borrowers";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ export default async function BorrowerPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { id } = await params;
   const { rows, error } = await loadBorrowerObservations();
   if (error) return <p className="text-sm">{error}</p>;

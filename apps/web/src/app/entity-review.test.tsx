@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { EntityReview } from "@/components/EntityReview";
-import { Shell } from "@/components/Shell";
+import { AppShell } from "@/components/AppShell";
 import {
   REVIEW_WRITES_ENABLED,
   assembleReview,
@@ -398,9 +398,9 @@ describe("entity review candidate", () => {
 
   it("offers the review queue without marking the candidate resolved", () => {
     const seeded = entityReviewCandidate("geo-parent-corporation")!;
-    render(<Shell><EntityReview model={assembleReview(seeded, emptyPayload())} /></Shell>);
-    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/review/entities");
-    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("aria-current", "page");
+    render(<AppShell signedIn isAdmin={false}><EntityReview model={assembleReview(seeded, emptyPayload())} /></AppShell>);
+    expect(screen.queryByRole("link", { name: "Review" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review queue" })).toHaveAttribute("href", "/review/entities");
     expect(screen.getByText("Entity resolution review", { selector: "p" })).toBeInTheDocument();
     expect(screen.getByText("OPEN · Researcher review required")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Same company" })[0]).toBeDisabled();

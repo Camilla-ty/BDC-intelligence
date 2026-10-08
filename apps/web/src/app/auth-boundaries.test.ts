@@ -21,22 +21,39 @@ const directive = (text: string, name: string) => new RegExp(`^\\s*["']${name}["
 const imports = (text: string) => [...text.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "");
 
 describe("authentication boundaries", () => {
-  it("adds no authentication to existing public pages", () => {
+  it("requires authentication on research routes and keeps login and OAuth callback public", () => {
     const pages = files.filter(({ file }) => file.startsWith("app/") && file.endsWith("page.tsx"));
-    const publicPages = pages.filter(
+    const researchPages = pages.filter(
       ({ file }) =>
-        !file.startsWith("app/login/") &&
-        !file.startsWith("app/account/") &&
-        !file.startsWith("app/admin/"),
+        file.startsWith("app/borrowers/") ||
+        file.startsWith("app/portfolios/") ||
+        file.startsWith("app/maturity/") ||
+        file.startsWith("app/market/"),
     );
-    expect(publicPages.some(({ file }) => file.startsWith("app/borrowers/"))).toBe(true);
-    expect(publicPages.some(({ file }) => file.startsWith("app/portfolios/"))).toBe(true);
-    for (const { file, text } of publicPages) {
-      expect(imports(text).filter((spec) => spec.startsWith("@/server/auth")), file).toEqual([]);
-      expect(text, file).not.toMatch(/getCurrentUser|supabase/i);
+    expect(researchPages.length).toBeGreaterThanOrEqual(12);
+    for (const { file, text } of researchPages) {
+      expect(text, file).toMatch(/requireAuthenticatedUser\s*\(/);
+      expect(imports(text), file).toContain("@/server/auth/access");
     }
-    const layout = files.find(({ file }) => file === "app/layout.tsx");
-    expect(layout?.text).not.toMatch(/@\/server\/auth|supabase/i);
+    const login = files.find(({ file }) => file === "app/login/page.tsx");
+    expect(login?.text).not.toMatch(/requireAuthenticatedUser|requireAdmin/);
+    const callback = files.find(({ file }) => file === "app/auth/callback/route.ts");
+    expect(callback?.text).toMatch(/exchangeCodeForSession/);
+    expect(callback?.text).not.toMatch(/requireAuthenticatedUser|requireAdmin/);
+    const account = files.find(({ file }) => file === "app/account/page.tsx");
+    expect(account?.text).toMatch(/getCurrentUser/);
+    expect(account?.text).not.toMatch(/requireAdmin|requireProOrAdmin/);
+  });
+
+  it("keeps PrimaryNav role visibility server-driven and Review out of navigation", () => {
+    const nav = files.find(({ file }) => file === "components/PrimaryNav.tsx");
+    expect(nav?.text).not.toMatch(/\/review\/entities|Review/);
+    expect(nav?.text).toMatch(/signedIn/);
+    expect(nav?.text).toMatch(/isAdmin/);
+    expect(nav?.text).not.toMatch(/email|onmicrosoft|user_metadata/i);
+    const shell = files.find(({ file }) => file === "components/Shell.tsx");
+    expect(shell?.text).toMatch(/getCurrentAccess/);
+    expect(shell?.text).toMatch(/isAdmin/);
   });
 
   it("guards every admin page and admin filing loader with requireAdmin", () => {

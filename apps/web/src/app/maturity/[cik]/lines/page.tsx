@@ -3,6 +3,7 @@ import { MissingRecord } from "@/components/MissingRecord";
 import { maturityLine } from "@/lib/maturity";
 import { pageWindow } from "@/lib/portfolios";
 import { UNOBSERVED_DATE, UNOBSERVED_YEAR } from "@/lib/states";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadEmptyPeriods } from "@/server/load-portfolios";
 import { loadMaturityLines } from "@/server/load-maturity";
 
@@ -22,6 +23,7 @@ export default async function MaturityLinesPage({
   params: Promise<{ cik: string }>;
   searchParams: Promise<{ date?: string; year?: string; page?: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { cik } = await params;
   const query = await searchParams;
   const reportedDate = typeof query.date === "string" ? query.date : "";

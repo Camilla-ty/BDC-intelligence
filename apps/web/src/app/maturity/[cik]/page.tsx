@@ -2,6 +2,7 @@ import { MaturityDetail } from "@/components/MaturityDetail";
 import { MissingRecord } from "@/components/MissingRecord";
 import { maturityDates, maturityYears } from "@/lib/maturity";
 import { UNOBSERVED_REGISTRANT } from "@/lib/states";
+import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadMaturityDetail } from "@/server/load-maturity";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export default async function MaturityRegistrantPage({
 }: {
   params: Promise<{ cik: string }>;
 }) {
+  await requireAuthenticatedUser();
   const { cik } = await params;
   if (!/^[0-9]{10}$/.test(cik)) return <MissingRecord message={UNOBSERVED_REGISTRANT} href="/maturity" label="Maturity" />;
   const detail = await loadMaturityDetail(cik);
