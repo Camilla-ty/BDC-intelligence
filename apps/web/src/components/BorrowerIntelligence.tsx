@@ -28,6 +28,28 @@ import {
   type StoredField,
 } from "@/lib/borrower-positions";
 import {
+  EMPTY_MATURITY,
+  EMPTY_MATURITY_CHANGE,
+  MATURITY_CHANGE_NOTE,
+  MATURITY_WALL_NOTE,
+  OMITTED_UNRESOLVED_MATURITY,
+  REFINANCING_OUTCOME_NOTE,
+  YEAR_NOTE,
+  storedCount,
+  storedMaturityText,
+  type MaturityChangeLine,
+  type MaturitySummaryRow,
+  type MaturityWallPoint,
+  type MaturityYearDisplay,
+} from "@/lib/borrower-maturity";
+import {
+  EMPTY_REFINANCING,
+  MATURITY_CHANGED_NOTE,
+  OUTCOME_STATE_NOTE,
+  REFINANCING_NOTE,
+  type RefinancingDisplay,
+} from "@/lib/borrower-refinancing";
+import {
   EMPTY_WHAT_CHANGED,
   WHAT_CHANGED_NOTE,
   whatChanged,
@@ -237,6 +259,10 @@ export function BorrowerIntelligence({
   comparisonError = null,
   valuation = null,
   valuationError = null,
+  maturity = null,
+  maturityError = null,
+  refinancing = null,
+  refinancingError = null,
 }: {
   borrower: BorrowerDetail;
   positions?: HistoricalPosition[];
@@ -246,6 +272,15 @@ export function BorrowerIntelligence({
   comparisonError?: string | null;
   valuation?: ValuationHistory | null;
   valuationError?: string | null;
+  maturity?: {
+    wall: { points: MaturityWallPoint[]; omittedUnresolved: boolean; definition: string };
+    summary: MaturitySummaryRow | null;
+    years: MaturityYearDisplay[];
+    changes: MaturityChangeLine[];
+  } | null;
+  maturityError?: string | null;
+  refinancing?: RefinancingDisplay[] | null;
+  refinancingError?: string | null;
 }) {
   const groups = positionGroups(positions);
   const activity = observedActivity(positions, comparisons);
@@ -485,6 +520,199 @@ export function BorrowerIntelligence({
           </div>
         ) : null}
         <p className="mt-3 text-sm">{CROSS_BDC_UNAVAILABLE}</p>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-navy">Maturity Wall</h2>
+        <p className="mt-1 text-sm">{MATURITY_WALL_NOTE}</p>
+        {maturityError ? <p className="mt-3 text-sm">{maturityError}</p> : null}
+        {!maturityError && maturity?.summary ? (
+          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Earliest calendar maturity</dt>
+              <dd><StateText text={storedMaturityText(maturity.summary.earliest_calendar_maturity)} /></dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Earliest month maturity</dt>
+              <dd><StateText text={storedMaturityText(maturity.summary.earliest_month_maturity)} /></dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Resolved observations</dt>
+              <dd>{storedCount(maturity.summary.resolved_observation_count)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Known maturity</dt>
+              <dd>{storedCount(maturity.summary.known_maturity_count)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Unknown maturity</dt>
+              <dd>{storedCount(maturity.summary.unknown_maturity_count)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wider text-muted">Unresolved instrument or position</dt>
+              <dd>{storedCount(maturity.summary.unresolved_count)}</dd>
+            </div>
+          </dl>
+        ) : null}
+        {!maturityError && (!maturity || maturity.wall.points.length === 0) ? <p className="mt-3 text-sm">{EMPTY_MATURITY}</p> : null}
+        {!maturityError && maturity?.wall.omittedUnresolved ? <p className="mt-3 text-sm">{OMITTED_UNRESOLVED_MATURITY}</p> : null}
+        {!maturityError && maturity && maturity.wall.points.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="record-table mt-3 w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs uppercase tracking-wider text-muted">
+                  <th scope="col" className="sticky left-0 bg-background py-2 pr-4 font-semibold">Maturity</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">BDC</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Instrument</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Type</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Principal</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Fair value</th>
+                  <th scope="col" className="py-2 pr-4 font-semibold">Report date</th>
+                  <th scope="col" className="py-2 font-semibold">Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {maturity.wall.points.map((point) => (
+                  <tr key={point.id} className="border-b border-line">
+                    <td data-label="Maturity" className="sticky left-0 bg-background py-2 pr-4">
+                      <StateText text={point.maturity} />
+                      <div className="text-muted">{point.precision}</div>
+                    </td>
+                    <td data-label="BDC" className="py-2 pr-4"><StateText text={bdcName(borrower, point.registrantCik)} /></td>
+                    <td data-label="Instrument" className="py-2 pr-4">
+                      <StateText text={point.instrumentState} />
+                      <span className="text-muted"> · Position continuity </span>
+                      <StateText text={point.continuityState} />
+                    </td>
+                    <td data-label="Type" className="py-2 pr-4"><StateText text={point.instrument} /></td>
+                    <td data-label="Principal" className="py-2 pr-4"><ObservedValue value={point.principal} currency={point.principalCurrency} /></td>
+                    <td data-label="Fair value" className="py-2 pr-4"><ObservedValue value={point.fairValue} currency={point.fairValueCurrency} /></td>
+                    <td data-label="Report date" className="py-2 pr-4">{point.reportedDate}</td>
+                    <td data-label="Evidence" className="py-2">
+                      <StateText text={point.evidenceLabel} />
+                      {point.maturitySource ? <div className="text-muted">{point.maturitySource}</div> : null}
+                      <div>
+                        <SecLink href={point.documentUrl} missing={point.accessionNumber}>{point.accessionNumber}</SecLink>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        {!maturityError && maturity && maturity.years.length > 0 ? (
+          <div className="mt-4">
+            <h3 className="text-sm font-semibold text-navy">Maturity years</h3>
+            <p className="mt-1 text-sm">{YEAR_NOTE}</p>
+            <div className="overflow-x-auto">
+              <table className="record-table mt-3 w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-line text-left text-xs uppercase tracking-wider text-muted">
+                    <th scope="col" className="py-2 pr-4 font-semibold">Year</th>
+                    <th scope="col" className="py-2 pr-4 font-semibold">Precision</th>
+                    <th scope="col" className="py-2 pr-4 font-semibold">Observations</th>
+                    <th scope="col" className="py-2 pr-4 font-semibold">Principal total</th>
+                    <th scope="col" className="py-2 font-semibold">Fair value total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {maturity.years.map((year) => (
+                    <tr key={year.key} className="border-b border-line">
+                      <td className="py-2 pr-4">{year.year}</td>
+                      <td className="py-2 pr-4">{year.precision}</td>
+                      <td className="py-2 pr-4">{year.count}</td>
+                      <td className="py-2 pr-4"><StateText text={year.principal} /></td>
+                      <td className="py-2"><StateText text={year.fairValue} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+        <h3 className="mt-4 text-sm font-semibold text-navy">Maturity changes</h3>
+        <p className="mt-1 text-sm">{MATURITY_CHANGE_NOTE}</p>
+        {!maturityError && !comparisonError && maturity && maturity.changes.length > 0 ? (
+          <ul className="mt-2 list-disc pl-5 text-sm">
+            {maturity.changes.map((change) => <li key={change.key}>{change.text}</li>)}
+          </ul>
+        ) : null}
+        {!maturityError && !comparisonError && (!maturity || maturity.changes.length === 0) ? <p className="mt-2 text-sm">{EMPTY_MATURITY_CHANGE}</p> : null}
+        <p className="mt-3 text-sm">{REFINANCING_OUTCOME_NOTE}</p>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-navy">Refinancing Intelligence</h2>
+        <p className="mt-1 text-sm">{REFINANCING_NOTE}</p>
+        <p className="mt-1 text-sm">{OUTCOME_STATE_NOTE}</p>
+        {refinancingError ? <p className="mt-3 text-sm">{refinancingError}</p> : null}
+        {!refinancingError && (!refinancing || refinancing.length === 0) ? <p className="mt-3 text-sm">{EMPTY_REFINANCING}</p> : null}
+        {!refinancingError && refinancing && refinancing.length > 0 ? (
+          <div className="mt-3 space-y-4">
+            {refinancing.map((item) => (
+              <article key={item.key} className="text-sm">
+                <p>{item.statement}</p>
+                <p className="mt-1 text-muted">{MATURITY_CHANGED_NOTE}</p>
+                <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Refinancing outcome</dt>
+                    <dd><StateText text={item.outcomeState} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Transaction date</dt>
+                    <dd><StateText text={item.transactionDate} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Report dates</dt>
+                    <dd>{item.reportDates}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">BDC</dt>
+                    <dd><StateText text={bdcName(borrower, item.registrantCik)} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Instrument</dt>
+                    <dd>
+                      <StateText text={item.instrument} />
+                      <span className="text-muted"> · </span>
+                      <StateText text={item.instrumentState} />
+                      <span className="text-muted"> · Position continuity </span>
+                      <StateText text={item.continuityState} />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Previous maturity</dt>
+                    <dd><StateText text={item.earlierMaturity} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Subsequent maturity</dt>
+                    <dd><StateText text={item.laterMaturity} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Previous principal</dt>
+                    <dd><ObservedValue value={item.earlierPrincipal} currency={item.earlierPrincipalCurrency} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wider text-muted">Subsequent principal</dt>
+                    <dd><ObservedValue value={item.laterPrincipal} currency={item.laterPrincipalCurrency} /></dd>
+                  </div>
+                </dl>
+                <p className="mt-2">
+                  <StateText text={item.evidenceLabel} />
+                  <span className="text-muted"> · </span>
+                  <SecLink href={item.earlierUrl} missing={item.earlierAccession}>{item.earlierAccession}</SecLink>
+                  {item.laterAccession !== item.earlierAccession ? (
+                    <>
+                      <span className="text-muted"> · </span>
+                      <SecLink href={item.laterUrl} missing={item.laterAccession}>{item.laterAccession}</SecLink>
+                    </>
+                  ) : null}
+                </p>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="mt-8">

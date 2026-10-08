@@ -1,4 +1,6 @@
 import { assertComparisonFields, type PositionComparisonRow } from "@/lib/borrower-comparisons";
+import { assertMaturityFields, type MaturityObservationRow, type MaturitySummaryRow, type MaturityYearRow } from "@/lib/borrower-maturity";
+import { assertRefinancingFields, type RefinancingOutcomeRow } from "@/lib/borrower-refinancing";
 import { assertValuationFields, type ValuationRow } from "@/lib/borrower-valuation";
 import { assertPositionFields, type PositionObservationRow, type ResearchFieldRow } from "@/lib/borrower-positions";
 import { assertListingFields, type ObservationRow } from "@/lib/borrowers";
@@ -612,4 +614,252 @@ export async function loadBorrowerPositionValuation(legalEntityId: string): Prom
     });
   }
   return { rows, error: null };
+}
+
+function readerJson(legalEntityId: string, source: string): string {
+  return `
+SET ROLE bdc_reader;
+SET statement_timeout = '30s';
+SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+  SELECT *
+  FROM ${source}('${legalEntityId}')
+) t;
+RESET ROLE;
+`;
+}
+
+const MATURITY_TEXT = [
+  "legal_entity_id",
+  "position_observation_id",
+  "reported_date",
+  "accession_number",
+  "entity_resolution_state",
+  "instrument_resolution_state",
+  "continuity_state",
+  "instrument_type_state",
+  "maturity_source",
+  "maturity_precision_class",
+  "maturity_observation_state",
+  "principal_state",
+  "fair_value_state",
+  "refinancing_outcome_state",
+  "maturity_definition",
+] as const;
+
+const MATURITY_NULLABLE = [
+  "position_id",
+  "instrument_id",
+  "borrower_name_raw",
+  "registrant_cik",
+  "registrant_link_status",
+  "instrument_type_raw",
+  "maturity_raw",
+  "maturity_date",
+  "maturity_precision",
+  "maturity_year",
+  "maturity_month",
+  "maturity_bucket_year",
+  "maturity_evidence_id",
+  "maturity_document_url",
+  "observation_evidence_level",
+  "principal_raw",
+  "principal_numeric",
+  "principal_currency_state",
+  "principal_currency_code",
+  "fair_value_raw",
+  "fair_value_numeric",
+  "fair_value_currency_state",
+  "fair_value_currency_code",
+] as const;
+
+export type MaturityObservationResult = { rows: MaturityObservationRow[]; error: string | null };
+
+export async function loadBorrowerMaturityObservations(legalEntityId: string): Promise<MaturityObservationResult> {
+  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: "The maturity wall could not be read." };
+  const parsed = await readJsonRows(readerJson(legalEntityId, "registry.borrower_maturity_observations"));
+  if (!parsed.ok) return { rows: [], error: "The maturity wall could not be read." };
+  const rows: MaturityObservationRow[] = [];
+  for (const item of parsed.rows) {
+    try {
+      assertMaturityFields(item);
+    } catch {
+      return { rows: [], error: "The maturity wall could not be read." };
+    }
+    const record = item as Record<string, unknown>;
+    const text = readText(record, MATURITY_TEXT);
+    const optional = readNullable(record, MATURITY_NULLABLE);
+    if (!text || !optional || typeof record.maturity_filing_verified !== "boolean") {
+      return { rows: [], error: "The maturity wall could not be read." };
+    }
+    rows.push({
+      ...text,
+      ...optional,
+      maturity_filing_verified: record.maturity_filing_verified,
+    } as MaturityObservationRow);
+  }
+  return { rows, error: null };
+}
+
+const SUMMARY_TEXT = [
+  "resolved_observation_count",
+  "known_maturity_count",
+  "unknown_maturity_count",
+  "unresolved_count",
+  "refinancing_outcome_state",
+  "maturity_definition",
+] as const;
+
+const SUMMARY_NULLABLE = ["earliest_calendar_maturity", "earliest_month_maturity"] as const;
+
+export type MaturitySummaryResult = { row: MaturitySummaryRow | null; error: string | null };
+
+export async function loadBorrowerMaturitySummary(legalEntityId: string): Promise<MaturitySummaryResult> {
+  if (!ENTITY_ID.test(legalEntityId)) return { row: null, error: "The maturity summary could not be read." };
+  const parsed = await readJsonRows(readerJson(legalEntityId, "registry.borrower_maturity_summary"));
+  if (!parsed.ok || parsed.rows.length !== 1) return { row: null, error: "The maturity summary could not be read." };
+  const record = parsed.rows[0] as Record<string, unknown>;
+  try {
+    assertMaturityFields(record);
+  } catch {
+    return { row: null, error: "The maturity summary could not be read." };
+  }
+  const text = readText(record, SUMMARY_TEXT);
+  const optional = readNullable(record, SUMMARY_NULLABLE);
+  if (!text || !optional) return { row: null, error: "The maturity summary could not be read." };
+  return { row: { ...text, ...optional } as MaturitySummaryRow, error: null };
+}
+
+const YEAR_TEXT = [
+  "maturity_year",
+  "maturity_precision_class",
+  "observation_count",
+  "principal_aggregation_state",
+  "fair_value_aggregation_state",
+  "maturity_definition",
+] as const;
+
+const YEAR_NULLABLE = [
+  "principal_total",
+  "principal_currency_code",
+  "fair_value_total",
+  "fair_value_currency_code",
+] as const;
+
+export type MaturityYearResult = { rows: MaturityYearRow[]; error: string | null };
+
+export async function loadBorrowerMaturityYears(legalEntityId: string): Promise<MaturityYearResult> {
+  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: "The maturity years could not be read." };
+  const parsed = await readJsonRows(readerJson(legalEntityId, "registry.borrower_maturity_years"));
+  if (!parsed.ok) return { rows: [], error: "The maturity years could not be read." };
+  const rows: MaturityYearRow[] = [];
+  for (const item of parsed.rows) {
+    const record = item as Record<string, unknown>;
+    try {
+      assertMaturityFields(record);
+    } catch {
+      return { rows: [], error: "The maturity years could not be read." };
+    }
+    const text = readText(record, YEAR_TEXT);
+    const optional = readNullable(record, YEAR_NULLABLE);
+    if (!text || !optional) return { rows: [], error: "The maturity years could not be read." };
+    rows.push({ ...text, ...optional } as MaturityYearRow);
+  }
+  return { rows, error: null };
+}
+
+const OUTCOME_TEXT = [
+  "legal_entity_id",
+  "position_id",
+  "instrument_resolution_state",
+  "continuity_state",
+  "instrument_type_state",
+  "earlier_position_observation_id",
+  "later_position_observation_id",
+  "earlier_reported_date",
+  "later_reported_date",
+  "event_type",
+  "refinancing_outcome_state",
+  "earlier_principal_state",
+  "later_principal_state",
+  "earlier_accession_number",
+  "later_accession_number",
+  "outcome_definition",
+] as const;
+
+const OUTCOME_NULLABLE = [
+  "instrument_id",
+  "instrument_type_raw",
+  "event_date",
+  "earlier_maturity_raw",
+  "later_maturity_raw",
+  "earlier_maturity_precision",
+  "later_maturity_precision",
+  "earlier_principal_raw",
+  "earlier_principal_currency_state",
+  "earlier_principal_currency_code",
+  "later_principal_raw",
+  "later_principal_currency_state",
+  "later_principal_currency_code",
+  "earlier_observation_evidence_id",
+  "later_observation_evidence_id",
+  "earlier_observation_evidence_level",
+  "later_observation_evidence_level",
+  "registrant_cik",
+  "registrant_link_status",
+] as const;
+
+export type RefinancingOutcomeResult = { rows: RefinancingOutcomeRow[]; error: string | null };
+
+export async function loadBorrowerRefinancingOutcomes(legalEntityId: string): Promise<RefinancingOutcomeResult> {
+  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: "The refinancing outcomes could not be read." };
+  const parsed = await readJsonRows(readerJson(legalEntityId, "registry.borrower_refinancing_outcomes"));
+  if (!parsed.ok) return { rows: [], error: "The refinancing outcomes could not be read." };
+  const rows: RefinancingOutcomeRow[] = [];
+  for (const item of parsed.rows) {
+    try {
+      assertRefinancingFields(item);
+    } catch {
+      return { rows: [], error: "The refinancing outcomes could not be read." };
+    }
+    const record = item as Record<string, unknown>;
+    const text = readText(record, OUTCOME_TEXT);
+    const optional = readNullable(record, OUTCOME_NULLABLE);
+    if (!text || !optional) return { rows: [], error: "The refinancing outcomes could not be read." };
+    rows.push({ ...text, ...optional } as RefinancingOutcomeRow);
+  }
+  return { rows, error: null };
+}
+
+async function readJsonRows(sql: string): Promise<{ ok: true; rows: unknown[] } | { ok: false }> {
+  const executed = await executeSql(sql);
+  if (!executed.ok) return { ok: false };
+  try {
+    const parsed = JSON.parse(executed.text === "" ? "[]" : executed.text);
+    if (!Array.isArray(parsed)) return { ok: false };
+    if (parsed.some((item) => item == null || typeof item !== "object")) return { ok: false };
+    return { ok: true, rows: parsed };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function readText(record: Record<string, unknown>, keys: readonly string[]): Record<string, string> | null {
+  const text: Record<string, string> = {};
+  for (const key of keys) {
+    const value = requiredText(record, key);
+    if (value == null) return null;
+    text[key] = value;
+  }
+  return text;
+}
+
+function readNullable(record: Record<string, unknown>, keys: readonly string[]): Record<string, string | null> | null {
+  const optional: Record<string, string | null> = {};
+  for (const key of keys) {
+    const value = textOrNull(record[key]);
+    if (value === undefined) return null;
+    optional[key] = value;
+  }
+  return optional;
 }

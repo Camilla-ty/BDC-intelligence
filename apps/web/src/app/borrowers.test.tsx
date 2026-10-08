@@ -16,6 +16,24 @@ import {
 import { observedActivity, storedDifferences } from "@/lib/borrower-activity";
 import { EMPTY_WHAT_CHANGED, WHAT_CHANGED_NOTE, whatChanged } from "@/lib/borrower-what-changed";
 import {
+  EMPTY_REFINANCING,
+  MATURITY_CHANGED_NOTE,
+  OUTCOME_STATE_NOTE,
+  refinancingOutcomes,
+  type RefinancingOutcomeRow,
+} from "@/lib/borrower-refinancing";
+import {
+  EMPTY_MATURITY,
+  EMPTY_MATURITY_CHANGE,
+  MATURITY_CHANGE_NOTE,
+  REFINANCING_OUTCOME_NOTE,
+  maturityChangeLines,
+  maturityWall,
+  maturityYears,
+  type MaturityObservationRow,
+  type MaturityYearRow,
+} from "@/lib/borrower-maturity";
+import {
   CROSS_BDC_UNAVAILABLE,
   EMPTY_DERIVED,
   EMPTY_VALUATION,
@@ -1193,6 +1211,274 @@ describe("historical valuation", () => {
     const section = screen.getByRole("heading", { name: "Valuation & Pricing" }).closest("section");
     expect(section).toHaveTextContent(EMPTY_VALUATION);
     expect(section).toHaveTextContent(CROSS_BDC_UNAVAILABLE);
+    expect(section).not.toHaveTextContent("could not be read");
+  });
+});
+
+function maturityObservation(overrides: Partial<MaturityObservationRow> = {}): MaturityObservationRow {
+  return {
+    legal_entity_id: ID,
+    position_observation_id: "9300000001",
+    position_id: "00000000-0000-4000-8000-0000000000f1",
+    instrument_id: "00000000-0000-4000-8000-0000000000f2",
+    borrower_name_raw: "TEST BORROWER A",
+    reported_date: "2099-03-31",
+    accession_number: "0000000000-99-000001",
+    registrant_cik: "0000000001",
+    registrant_link_status: "LINKED",
+    entity_resolution_state: "MATCHED",
+    instrument_resolution_state: "MATCHED",
+    continuity_state: "MATCHED",
+    instrument_type_state: "REPORTED",
+    instrument_type_raw: "TEST FIRST LIEN",
+    maturity_source: "REPORTED_STRUCTURED",
+    maturity_raw: "STORED-DAY",
+    maturity_date: "2099-06-15",
+    maturity_precision: null,
+    maturity_year: null,
+    maturity_month: null,
+    maturity_precision_class: "DAY",
+    maturity_bucket_year: "2099",
+    maturity_observation_state: "OBSERVED",
+    maturity_evidence_id: "801",
+    maturity_filing_verified: false,
+    maturity_document_url: null,
+    observation_evidence_level: "L1_STRUCTURED_DATASET",
+    principal_state: "REPORTED",
+    principal_raw: "100",
+    principal_numeric: "100",
+    principal_currency_state: "UNKNOWN",
+    principal_currency_code: null,
+    fair_value_state: "UNKNOWN",
+    fair_value_raw: null,
+    fair_value_numeric: null,
+    fair_value_currency_state: null,
+    fair_value_currency_code: null,
+    refinancing_outcome_state: "UNKNOWN",
+    maturity_definition: "maturity.position_history.v1",
+    ...overrides,
+  };
+}
+
+function maturityYear(overrides: Partial<MaturityYearRow> = {}): MaturityYearRow {
+  return {
+    maturity_year: "2099",
+    maturity_precision_class: "DAY",
+    observation_count: "2",
+    principal_aggregation_state: "INSUFFICIENT_DATA",
+    principal_total: null,
+    principal_currency_code: null,
+    fair_value_aggregation_state: "INSUFFICIENT_DATA",
+    fair_value_total: null,
+    fair_value_currency_code: null,
+    maturity_definition: "maturity.position_history.v1",
+    ...overrides,
+  };
+}
+
+describe("maturity wall", () => {
+  const listings = [
+    row({
+      accession_number: "0000000000-99-000001",
+      document_url: `${EDGAR_DOCUMENT_PREFIX}0000000000/000000000099000001/test-filing.htm`,
+    }),
+  ];
+
+  it("preserves stored maturity order, precision, and an unresolved exclusion", () => {
+    const wall = maturityWall([
+      maturityObservation(),
+      maturityObservation({
+        position_observation_id: "9300000002",
+        maturity_source: "REPORTED_MONTH",
+        maturity_raw: "12/2099",
+        maturity_date: null,
+        maturity_precision: "MONTH",
+        maturity_year: "2099",
+        maturity_month: "12",
+        maturity_precision_class: "MONTH",
+        principal_state: "UNKNOWN",
+        principal_raw: null,
+        principal_numeric: null,
+      }),
+      maturityObservation({
+        position_observation_id: "9300000003",
+        maturity_source: "UNKNOWN",
+        maturity_raw: null,
+        maturity_date: null,
+        maturity_precision_class: "NONE",
+        maturity_bucket_year: null,
+        maturity_observation_state: "UNKNOWN",
+        principal_state: "UNKNOWN",
+        principal_raw: null,
+      }),
+      maturityObservation({
+        position_observation_id: "9300000009",
+        instrument_resolution_state: "UNRESOLVED",
+        continuity_state: "UNRESOLVED",
+        maturity_raw: "SHOULD-NOT-SHOW",
+        principal_raw: "999",
+      }),
+    ], listings, ID);
+    expect(wall.points.map((point) => point.maturity)).toEqual(["STORED-DAY", "12/2099", "Unknown"]);
+    expect(wall.points.map((point) => point.precision)).toEqual(["Calendar day", "Month", "Unknown"]);
+    expect(wall.points.map((point) => point.principal)).toEqual(["100", "Unknown", "Unknown"]);
+    expect(wall.points[0].fairValue).toBe("Unknown");
+    expect(wall.points[0].principalCurrency).toBe("Currency Unknown");
+    expect(wall.omittedUnresolved).toBe(true);
+    expect(JSON.stringify(wall.points)).not.toMatch(/SHOULD-NOT-SHOW|999/);
+    const years = maturityYears([
+      maturityYear({ principal_aggregation_state: "COMPARABLE", principal_total: "STORED-TOTAL", principal_currency_code: "AAA" }),
+    ]);
+    expect(years[0].principal).toBe("STORED-TOTAL AAA");
+    expect(years[0].fairValue).toBe("Insufficient data");
+    const changes = maturityChangeLines(positionComparisons([comparison()], listings, ID));
+    expect(changes.map((line) => line.text)).toEqual(["Maturity changed from 12/2099 to 06/2100."]);
+    expect(changes.map((line) => line.text).join(" ")).not.toMatch(/refinanc|origination|score/i);
+    const detail = borrowerDetail(listings, ID);
+    render(<BorrowerIntelligence borrower={detail!} maturity={{
+      wall,
+      summary: {
+        resolved_observation_count: "3",
+        known_maturity_count: "2",
+        unknown_maturity_count: "1",
+        unresolved_count: "1",
+        earliest_calendar_maturity: "STORED-DAY",
+        earliest_month_maturity: "12/2099",
+        refinancing_outcome_state: "UNKNOWN",
+        maturity_definition: "maturity.position_history.v1",
+      },
+      years,
+      changes,
+    }} />);
+    const section = screen.getByRole("heading", { name: "Maturity Wall" }).closest("section");
+    expect(section).toHaveTextContent("STORED-DAY");
+    expect(section).toHaveTextContent("12/2099");
+    expect(section).toHaveTextContent("Calendar day");
+    expect(section).toHaveTextContent("Month");
+    expect(section).toHaveTextContent("Currency Unknown");
+    expect(section).toHaveTextContent("STORED-TOTAL AAA");
+    expect(section).toHaveTextContent("Insufficient data");
+    expect(section).toHaveTextContent("Maturity changed from 12/2099 to 06/2100.");
+    expect(section).toHaveTextContent(MATURITY_CHANGE_NOTE);
+    expect(section).toHaveTextContent(REFINANCING_OUTCOME_NOTE);
+    expect(section).toHaveTextContent("2 stored");
+    expect(section).not.toHaveTextContent("2099-06-15");
+    expect(section).not.toHaveTextContent("SHOULD-NOT-SHOW");
+    expect(section).not.toHaveTextContent(/score|origination date is/i);
+    const source = withinSectionLink(section, "0000000000-99-000001");
+    expect(source).toHaveAttribute("href", listings[0].document_url);
+  });
+
+  it("keeps an empty maturity wall explicit", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} />);
+    const section = screen.getByRole("heading", { name: "Maturity Wall" }).closest("section");
+    expect(section).toHaveTextContent(EMPTY_MATURITY);
+    expect(section).toHaveTextContent(EMPTY_MATURITY_CHANGE);
+    expect(section).toHaveTextContent(REFINANCING_OUTCOME_NOTE);
+    expect(section).not.toHaveTextContent("could not be read");
+  });
+});
+
+function outcomeRow(overrides: Partial<RefinancingOutcomeRow> = {}): RefinancingOutcomeRow {
+  return {
+    legal_entity_id: ID,
+    position_id: "00000000-0000-4000-8000-0000000000e1",
+    instrument_id: "00000000-0000-4000-8000-0000000000e2",
+    instrument_resolution_state: "MATCHED",
+    continuity_state: "MATCHED",
+    instrument_type_state: "REPORTED",
+    instrument_type_raw: "TEST FIRST LIEN",
+    earlier_position_observation_id: "9300000011",
+    later_position_observation_id: "9300000012",
+    earlier_reported_date: "2099-03-31",
+    later_reported_date: "2099-09-30",
+    event_date: null,
+    event_type: "MATURITY_CHANGED",
+    refinancing_outcome_state: "UNKNOWN",
+    earlier_maturity_raw: "STORED-EARLIER",
+    later_maturity_raw: "STORED-LATER",
+    earlier_maturity_precision: "MONTH",
+    later_maturity_precision: "MONTH",
+    earlier_principal_state: "UNKNOWN",
+    earlier_principal_raw: null,
+    earlier_principal_currency_state: null,
+    earlier_principal_currency_code: null,
+    later_principal_state: "REPORTED",
+    later_principal_raw: "STORED-PRINCIPAL",
+    later_principal_currency_state: "UNKNOWN",
+    later_principal_currency_code: null,
+    earlier_accession_number: "0000000000-99-000001",
+    later_accession_number: "0000000000-99-000002",
+    earlier_observation_evidence_id: "901",
+    later_observation_evidence_id: "902",
+    earlier_observation_evidence_level: "L1_STRUCTURED_DATASET",
+    later_observation_evidence_level: "L2_ORIGINAL_FILING",
+    registrant_cik: "0000000001",
+    registrant_link_status: "LINKED",
+    outcome_definition: "refinancing.outcome_history.v1",
+    ...overrides,
+  };
+}
+
+describe("refinancing intelligence", () => {
+  const listings = [
+    row({
+      accession_number: "0000000000-99-000001",
+      document_url: `${EDGAR_DOCUMENT_PREFIX}0000000000/000000000099000001/test-filing.htm`,
+    }),
+    row({
+      accession_number: "0000000000-99-000002",
+      document_url: `${EDGAR_DOCUMENT_PREFIX}0000000000/000000000099000002/test-filing.htm`,
+    }),
+  ];
+
+  it("shows a stored maturity change with Unknown refinancing outcome", () => {
+    const outcomes = refinancingOutcomes([outcomeRow()], listings, ID);
+    expect(outcomes.map((item) => item.statement)).toEqual(["Maturity changed from STORED-EARLIER to STORED-LATER."]);
+    expect(outcomes[0].outcomeState).toBe("Unknown");
+    expect(outcomes[0].transactionDate).toBe("Unknown");
+    expect(outcomes[0].reportDates).toBe("2099-03-31 to 2099-09-30");
+    expect(outcomes[0].earlierPrincipal).toBe("Unknown");
+    expect(outcomes[0].laterPrincipal).toBe("STORED-PRINCIPAL");
+    expect(outcomes[0].laterPrincipalCurrency).toBe("Currency Unknown");
+    expect(outcomes.map((item) => item.statement).join(" ")).not.toMatch(/Refinancing is stored|probability|score/i);
+    const detail = borrowerDetail(listings, ID);
+    render(<BorrowerIntelligence borrower={detail!} refinancing={outcomes} />);
+    const section = screen.getByRole("heading", { name: "Refinancing Intelligence" }).closest("section");
+    expect(section).toHaveTextContent("Maturity changed from STORED-EARLIER to STORED-LATER.");
+    expect(section).toHaveTextContent(MATURITY_CHANGED_NOTE);
+    expect(section).toHaveTextContent(OUTCOME_STATE_NOTE);
+    expect(section).toHaveTextContent("Refinancing outcome");
+    expect(section).toHaveTextContent("Unknown");
+    expect(section).toHaveTextContent("Transaction date");
+    expect(section).toHaveTextContent("Report dates");
+    expect(section).toHaveTextContent("2099-03-31 to 2099-09-30");
+    expect(section).toHaveTextContent("STORED-PRINCIPAL");
+    expect(section).toHaveTextContent("Currency Unknown");
+    expect(section).not.toHaveTextContent(/^0$/);
+    const source = withinSectionLink(section, "0000000000-99-000002");
+    expect(source).toHaveAttribute("href", listings[1].document_url);
+  });
+
+  it("does not invent event types the read model does not emit", () => {
+    const outcomes = refinancingOutcomes([
+      outcomeRow({ event_type: "REFINANCING_EXPLICIT", later_position_observation_id: "9300000021" }),
+      outcomeRow({ event_type: "REPAYMENT_EXPLICIT", later_position_observation_id: "9300000022" }),
+      outcomeRow({ event_type: "POSITION_EXITED", later_position_observation_id: "9300000023" }),
+      outcomeRow(),
+    ], listings, ID);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0].statement).toBe("Maturity changed from STORED-EARLIER to STORED-LATER.");
+    expect(outcomes[0].outcomeState).toBe("Unknown");
+  });
+
+  it("keeps an empty refinancing section explicit", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} />);
+    const section = screen.getByRole("heading", { name: "Refinancing Intelligence" }).closest("section");
+    expect(section).toHaveTextContent(EMPTY_REFINANCING);
+    expect(section).toHaveTextContent(OUTCOME_STATE_NOTE);
     expect(section).not.toHaveTextContent("could not be read");
   });
 });

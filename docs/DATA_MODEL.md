@@ -366,3 +366,62 @@ read does not perform that comparison.
 
 The definition label is `valuation.position_history.v1`. These figures are not
 a score, a rank, or a credit event. Acquisition date is not an origination date.
+
+## 15. Maturity wall
+
+`registry.borrower_maturity_observations(uuid)` is one row per matched
+position observation of one legal entity. It starts from
+`registry.matched_entity_position` and reads maturity from
+`registry.position_read`, which reads `registry.maturity_read`. It does not
+recompute a maturity and it does not turn a month into a calendar day.
+
+`OBSERVED` means the instrument and the position continuity are `MATCHED` and
+the stored maturity is either a calendar day (`REPORTED_STRUCTURED` or
+`FILING_DISPLAYED`) or a month (`REPORTED_MONTH` or `FILING_MONTH`). A
+resolved position with no such maturity is `UNKNOWN`. An unresolved instrument
+is `UNRESOLVED_INSTRUMENT`. A matched instrument whose continuity is not
+`MATCHED` is `UNRESOLVED_POSITION`. Those rows are not maturity-year buckets.
+
+`registry.borrower_maturity_summary(uuid)` counts resolved observations, known
+maturities, unknown maturities, and unresolved rows. The earliest calendar
+maturity is the stored raw text of the earliest calendar day. The earliest
+month maturity is the stored raw text of the earliest month. The two are not
+compared with each other.
+
+`registry.borrower_maturity_years(uuid)` groups observed maturities by the
+stored year and the precision class. A calendar year comes from
+`maturity_date`. A month-precision year comes from `maturity_year`. Principal
+is summed only when every observation in the bucket has a reported principal
+number and the same currency code, and none of those currency states is
+`UNKNOWN` or `AMBIGUOUS`. The same rule applies independently to fair value.
+A missing amount is not zero. Unknown currency is not a total. Fair value is
+not used as principal.
+
+`refinancing_outcome_state` is `UNKNOWN`. A maturity change stored on
+`registry.position_period_comparison` stays a maturity comparison. It is not
+a refinancing. A period with no observation is not a refinancing or an exit.
+An acquisition date is not an origination date. Maturity approaching is not
+calculated. No probability, score, or rank is calculated. The definition label
+is `maturity.position_history.v1`.
+
+## 16. Historical refinancing outcomes
+
+`registry.borrower_refinancing_outcomes(uuid)` reads
+`registry.borrower_position_comparisons` for one legal entity. It emits a row
+only when that comparison already stores `maturity_changed` and
+`maturity_comparison_state = 'COMPARABLE'`, and both observations are
+`MATCHED` to the same instrument and the same position. The event type is
+`MATURITY_CHANGED`. `refinancing_outcome_state` is `UNKNOWN`. `event_date` is
+null. The earlier and later `reported_date` values stay report dates.
+
+No documented SOI field, filing relationship, or observation event states that
+a debt was refinanced, replaced, repaid, or paid off.
+`derived.observation_event` still allows only `REGISTRANT_FIRST_OBSERVED_NAME`.
+Filing `AMENDS` decisions stay `UNRESOLVED` with method `NO_AMENDMENT_MATCHING`.
+The function does not search raw text. A maturity change, a missing later
+observation, a new instrument, an acquisition date, and an instrument type
+that contains the word refinanced do not become another event type.
+
+Principal values are the stored raw text and currency code. A missing
+principal stays unknown. Currency is not converted. No amount is estimated.
+The definition label is `refinancing.outcome_history.v1`.
