@@ -319,8 +319,9 @@ SELECT pg_temp.check('currency codes come from the current field view', (
   SELECT position('obs.current_position_field_value' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) > 0
      AND position('obs.position_field_value' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) = 0));
 
-SELECT pg_temp.check('the valuation read reuses the comparison and does not subtract fair value', (
-  SELECT position('position_period_comparison' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) > 0
+SELECT pg_temp.check('the valuation read reuses the entity-scoped comparison and does not subtract fair value', (
+  SELECT position('borrower_valuation_period_comparison' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) > 0
+     AND position('position_period_comparison' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) = 0
      AND position('matched_entity_position' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) > 0
      AND position('OFFSET 0' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) > 0
      AND position('fair_value_delta /' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) > 0

@@ -323,18 +323,25 @@ RESET ROLE;
   return { rows, error: null };
 }
 
-const COMPARISON_SQL = (legalEntityId: string) => `
+// One DB round-trip: MATERIALIZED comparisons feed both JSON arrays (migration 0055).
+// json_build_object keeps a single cell for executeSql's first-column contract.
+const COMPARISONS_AND_REFINANCING_SQL = (legalEntityId: string) => `
 SET ROLE bdc_reader;
 SET statement_timeout = '30s';
-SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
-FROM (
-  SELECT *
-  FROM registry.borrower_position_comparisons('${legalEntityId}')
-) t;
+SELECT json_build_object(
+  'comparisons', comparisons,
+  'refinancing', refinancing
+)
+FROM registry.borrower_comparisons_and_refinancing('${legalEntityId}');
 RESET ROLE;
 `;
 
 export type ComparisonResult = { rows: PositionComparisonRow[]; error: string | null };
+export type RefinancingOutcomeResult = { rows: RefinancingOutcomeRow[]; error: string | null };
+export type ComparisonsAndRefinancingResult = {
+  comparisons: ComparisonResult;
+  refinancing: RefinancingOutcomeResult;
+};
 
 const COMPARISON_TEXT = [
   "legal_entity_id",
@@ -402,41 +409,32 @@ const COMPARISON_NULLABLE = [
   "interest_rate_floor_delta",
 ] as const;
 
-export async function loadBorrowerPositionComparisons(legalEntityId: string): Promise<ComparisonResult> {
-  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: "The position comparisons could not be read." };
-  const executed = await executeSql(COMPARISON_SQL(legalEntityId));
-  if (!executed.ok) return { rows: [], error: "The position comparisons could not be read." };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(executed.text === "" ? "[]" : executed.text);
-  } catch {
-    return { rows: [], error: "The position comparisons could not be read." };
-  }
-  if (!Array.isArray(parsed)) return { rows: [], error: "The position comparisons could not be read." };
+function parseComparisonRows(parsed: unknown[]): ComparisonResult {
+  const error = "The position comparisons could not be read.";
   const rows: PositionComparisonRow[] = [];
   for (const item of parsed) {
-    if (item == null || typeof item !== "object") return { rows: [], error: "The position comparisons could not be read." };
+    if (item == null || typeof item !== "object") return { rows: [], error };
     try {
       assertComparisonFields(item);
     } catch {
-      return { rows: [], error: "The position comparisons could not be read." };
+      return { rows: [], error };
     }
     const record = item as Record<string, unknown>;
     const text: Record<string, string> = {};
     for (const key of COMPARISON_TEXT) {
       const value = requiredText(record, key);
-      if (value == null) return { rows: [], error: "The position comparisons could not be read." };
+      if (value == null) return { rows: [], error };
       text[key] = value;
     }
     const optional: Record<string, string | null> = {};
     for (const key of COMPARISON_NULLABLE) {
       const value = textOrNull(record[key]);
-      if (value === undefined) return { rows: [], error: "The position comparisons could not be read." };
+      if (value === undefined) return { rows: [], error };
       optional[key] = value;
     }
     const maturityChanged = record.maturity_changed;
     if (maturityChanged != null && typeof maturityChanged !== "boolean") {
-      return { rows: [], error: "The position comparisons could not be read." };
+      return { rows: [], error };
     }
     rows.push({
       legal_entity_id: text.legal_entity_id,
@@ -503,6 +501,36 @@ export async function loadBorrowerPositionComparisons(legalEntityId: string): Pr
     });
   }
   return { rows, error: null };
+}
+
+export async function loadBorrowerComparisonsAndRefinancing(
+  legalEntityId: string,
+): Promise<ComparisonsAndRefinancingResult> {
+  const failBoth = (): ComparisonsAndRefinancingResult => ({
+    comparisons: { rows: [], error: "The position comparisons could not be read." },
+    refinancing: { rows: [], error: "The refinancing outcomes could not be read." },
+  });
+  if (!ENTITY_ID.test(legalEntityId)) return failBoth();
+  const executed = await executeSql(COMPARISONS_AND_REFINANCING_SQL(legalEntityId));
+  if (!executed.ok) return failBoth();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(executed.text === "" ? "null" : executed.text);
+  } catch {
+    return failBoth();
+  }
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return failBoth();
+  const record = parsed as Record<string, unknown>;
+  if (!Array.isArray(record.comparisons) || !Array.isArray(record.refinancing)) return failBoth();
+  return {
+    comparisons: parseComparisonRows(record.comparisons),
+    refinancing: parseRefinancingRows(record.refinancing),
+  };
+}
+
+/** Prefer loadBorrowerComparisonsAndRefinancing on the borrower detail path. */
+export async function loadBorrowerPositionComparisons(legalEntityId: string): Promise<ComparisonResult> {
+  return (await loadBorrowerComparisonsAndRefinancing(legalEntityId)).comparisons;
 }
 
 const VALUATION_SQL = (legalEntityId: string) => `
@@ -841,26 +869,28 @@ const OUTCOME_NULLABLE = [
   "registrant_link_status",
 ] as const;
 
-export type RefinancingOutcomeResult = { rows: RefinancingOutcomeRow[]; error: string | null };
-
-export async function loadBorrowerRefinancingOutcomes(legalEntityId: string): Promise<RefinancingOutcomeResult> {
-  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: "The refinancing outcomes could not be read." };
-  const parsed = await readJsonRows(readerJson(legalEntityId, "registry.borrower_refinancing_outcomes"));
-  if (!parsed.ok) return { rows: [], error: "The refinancing outcomes could not be read." };
+function parseRefinancingRows(parsed: unknown[]): RefinancingOutcomeResult {
+  const error = "The refinancing outcomes could not be read.";
   const rows: RefinancingOutcomeRow[] = [];
-  for (const item of parsed.rows) {
+  for (const item of parsed) {
+    if (item == null || typeof item !== "object") return { rows: [], error };
     try {
       assertRefinancingFields(item);
     } catch {
-      return { rows: [], error: "The refinancing outcomes could not be read." };
+      return { rows: [], error };
     }
     const record = item as Record<string, unknown>;
     const text = readText(record, OUTCOME_TEXT);
     const optional = readNullable(record, OUTCOME_NULLABLE);
-    if (!text || !optional) return { rows: [], error: "The refinancing outcomes could not be read." };
+    if (!text || !optional) return { rows: [], error };
     rows.push({ ...text, ...optional } as RefinancingOutcomeRow);
   }
   return { rows, error: null };
+}
+
+/** Prefer loadBorrowerComparisonsAndRefinancing on the borrower detail path. */
+export async function loadBorrowerRefinancingOutcomes(legalEntityId: string): Promise<RefinancingOutcomeResult> {
+  return (await loadBorrowerComparisonsAndRefinancing(legalEntityId)).refinancing;
 }
 
 async function readJsonRows(sql: string): Promise<{ ok: true; rows: unknown[] } | { ok: false }> {

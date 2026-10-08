@@ -32,6 +32,7 @@ vi.mock("@/server/load-borrowers", () => ({
   loadBorrowerObservations: mocks.loadBorrowerObservations,
   loadBorrowerObservationsForEntity: mocks.loadBorrowerObservationsForEntity,
   loadBorrowerPositionObservations: vi.fn(),
+  loadBorrowerComparisonsAndRefinancing: vi.fn(),
   loadBorrowerPositionComparisons: vi.fn(),
   loadBorrowerPositionValuation: vi.fn(),
   loadBorrowerMaturityObservations: vi.fn(),

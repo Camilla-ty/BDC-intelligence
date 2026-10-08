@@ -8,7 +8,7 @@ import { valuationHistory } from "@/lib/borrower-valuation";
 import { borrowerDetail } from "@/lib/borrowers";
 import { UNOBSERVED_BORROWER } from "@/lib/states";
 import { requireAuthenticatedUser } from "@/server/auth/access";
-import { loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservationsForEntity, loadBorrowerPositionComparisons, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadBorrowerRefinancingOutcomes, loadPositionResearchFields } from "@/server/load-borrowers";
+import { loadBorrowerComparisonsAndRefinancing, loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservationsForEntity, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadPositionResearchFields } from "@/server/load-borrowers";
 
 export const dynamic = "force-dynamic";
 
@@ -23,15 +23,16 @@ export default async function BorrowerPage({
   if (error) return <p className="text-sm">{error}</p>;
   const borrower = borrowerDetail(rows, id);
   if (!borrower) return <MissingRecord message={UNOBSERVED_BORROWER} href="/borrowers" label="Borrowers" />;
-  const [positions, comparisons, valuation, maturityRows, maturitySummary, maturityYearRows, refinancing] = await Promise.all([
+  const [positions, comparisonBundle, valuation, maturityRows, maturitySummary, maturityYearRows] = await Promise.all([
     loadBorrowerPositionObservations(id),
-    loadBorrowerPositionComparisons(id),
+    loadBorrowerComparisonsAndRefinancing(id),
     loadBorrowerPositionValuation(id),
     loadBorrowerMaturityObservations(id),
     loadBorrowerMaturitySummary(id),
     loadBorrowerMaturityYears(id),
-    loadBorrowerRefinancingOutcomes(id),
   ]);
+  const comparisons = comparisonBundle.comparisons;
+  const refinancing = comparisonBundle.refinancing;
   const research = positions.error
     ? { rows: [], error: null }
     : await loadPositionResearchFields(positions.rows.map((row) => row.position_observation_id));

@@ -2095,6 +2095,224 @@ $$;
 
 COMMENT ON FUNCTION registry.bdc_portfolio_summary(p_cik text, p_reported_date date) IS 'Observable counts for one CIK and one reported date. Principal and fair value are totaled only when every holding in that date has a reported number and the same known currency. A missing amount is not zero. Unknown currency is not a total. Counts are stored rows, not a score.';
 
+CREATE FUNCTION registry.borrower_comparisons_and_refinancing(p_legal_entity_id uuid) RETURNS TABLE(comparisons json, refinancing json)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH comparisons AS MATERIALIZED (
+    SELECT p_legal_entity_id::text AS legal_entity_id,
+           c.position_id::text AS position_id,
+           c.earlier_position_observation_id::text AS earlier_position_observation_id,
+           c.later_position_observation_id::text AS later_position_observation_id,
+           c.earlier_reported_date::text AS earlier_reported_date,
+           c.later_reported_date::text AS later_reported_date,
+           c.earlier_accession_number,
+           c.later_accession_number,
+           c.earlier_observation_evidence_id::text AS earlier_observation_evidence_id,
+           c.later_observation_evidence_id::text AS later_observation_evidence_id,
+           earlier.observation_evidence_level AS earlier_observation_evidence_level,
+           later.observation_evidence_level AS later_observation_evidence_level,
+           earlier.registrant_cik AS earlier_registrant_cik,
+           earlier.registrant_link_status AS earlier_registrant_link_status,
+           later.registrant_cik AS later_registrant_cik,
+           later.registrant_link_status AS later_registrant_link_status,
+           c.principal_comparison_state,
+           c.earlier_principal_raw,
+           c.later_principal_raw,
+           c.principal_delta::text AS principal_delta,
+           earlier.principal_currency_state AS earlier_principal_currency_state,
+           later.principal_currency_state AS later_principal_currency_state,
+           c.cost_comparison_state,
+           c.earlier_cost_raw,
+           c.later_cost_raw,
+           c.cost_delta::text AS cost_delta,
+           earlier.cost_currency_state AS earlier_cost_currency_state,
+           later.cost_currency_state AS later_cost_currency_state,
+           c.fair_value_comparison_state,
+           c.earlier_fair_value_raw,
+           c.later_fair_value_raw,
+           c.fair_value_delta::text AS fair_value_delta,
+           earlier.fair_value_currency_state AS earlier_fair_value_currency_state,
+           later.fair_value_currency_state AS later_fair_value_currency_state,
+           c.maturity_comparison_state,
+           c.maturity_changed,
+           c.earlier_maturity_raw,
+           c.later_maturity_raw,
+           c.earlier_maturity_precision,
+           c.later_maturity_precision,
+           c.earlier_maturity_date::text AS earlier_maturity_date,
+           c.later_maturity_date::text AS later_maturity_date,
+           c.acquisition_comparison_state,
+           c.earlier_acquisition_raw,
+           c.later_acquisition_raw,
+           c.earlier_acquisition_precision,
+           c.later_acquisition_precision,
+           c.earlier_acquisition_date::text AS earlier_acquisition_date,
+           c.later_acquisition_date::text AS later_acquisition_date,
+           c.interest_rate_comparison_state,
+           c.earlier_interest_rate_raw,
+           c.later_interest_rate_raw,
+           c.interest_rate_delta::text AS interest_rate_delta,
+           c.spread_comparison_state,
+           c.earlier_spread_raw,
+           c.later_spread_raw,
+           c.spread_delta::text AS spread_delta,
+           c.interest_rate_floor_comparison_state,
+           c.earlier_interest_rate_floor_raw,
+           c.later_interest_rate_floor_raw,
+           c.interest_rate_floor_delta::text AS interest_rate_floor_delta
+    FROM (
+      SELECT scoped.*
+      FROM registry.borrower_valuation_period_comparison(p_legal_entity_id) scoped
+      OFFSET 0
+    ) c
+    JOIN LATERAL (
+      SELECT observed.observation_evidence_level,
+             observed.registrant_cik,
+             observed.registrant_link_status,
+             observed.principal_currency_state,
+             observed.cost_currency_state,
+             observed.fair_value_currency_state
+      FROM registry.position_read observed
+      WHERE observed.position_observation_id = c.earlier_position_observation_id
+        AND observed.legal_entity_id = p_legal_entity_id
+        AND observed.entity_resolution_state = 'MATCHED'
+      OFFSET 0
+    ) earlier ON true
+    JOIN LATERAL (
+      SELECT observed.observation_evidence_level,
+             observed.registrant_cik,
+             observed.registrant_link_status,
+             observed.principal_currency_state,
+             observed.cost_currency_state,
+             observed.fair_value_currency_state
+      FROM registry.position_read observed
+      WHERE observed.position_observation_id = c.later_position_observation_id
+        AND observed.legal_entity_id = p_legal_entity_id
+        AND observed.entity_resolution_state = 'MATCHED'
+      OFFSET 0
+    ) later ON true
+  )
+  SELECT coalesce(
+           (SELECT json_agg(row_to_json(c) ORDER BY
+                      c.later_reported_date DESC,
+                      c.earlier_reported_date DESC,
+                      c.later_registrant_cik ASC NULLS LAST,
+                      c.position_id ASC,
+                      c.earlier_position_observation_id ASC,
+                      c.later_position_observation_id ASC)
+            FROM comparisons c),
+           '[]'::json),
+         coalesce(
+           (SELECT json_agg(row_to_json(o) ORDER BY
+                      o.later_reported_date DESC,
+                      o.earlier_reported_date DESC,
+                      o.position_id,
+                      o.later_position_observation_id)
+            FROM (
+              SELECT p_legal_entity_id::text AS legal_entity_id,
+                     c.position_id,
+                     later.instrument_id::text AS instrument_id,
+                     later.instrument_resolution_state,
+                     later.continuity_state,
+                     CASE
+                       WHEN instrument_type.n IS NULL OR instrument_type.n = 0 THEN 'UNKNOWN'
+                       WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1 THEN 'REPORTED'
+                       ELSE 'MULTIPLE_VALUES'
+                     END AS instrument_type_state,
+                     CASE WHEN instrument_type.n = 1 AND instrument_type.reported_n = 1
+                          THEN instrument_type.raw_value END AS instrument_type_raw,
+                     c.earlier_position_observation_id,
+                     c.later_position_observation_id,
+                     c.earlier_reported_date,
+                     c.later_reported_date,
+                     NULL::text AS event_date,
+                     'MATURITY_CHANGED'::text AS event_type,
+                     'UNKNOWN'::text AS refinancing_outcome_state,
+                     c.earlier_maturity_raw,
+                     c.later_maturity_raw,
+                     c.earlier_maturity_precision,
+                     c.later_maturity_precision,
+                     earlier.principal_state AS earlier_principal_state,
+                     earlier.principal_raw AS earlier_principal_raw,
+                     earlier.principal_currency_state AS earlier_principal_currency_state,
+                     earlier_principal.currency_code AS earlier_principal_currency_code,
+                     later.principal_state AS later_principal_state,
+                     later.principal_raw AS later_principal_raw,
+                     later.principal_currency_state AS later_principal_currency_state,
+                     later_principal.currency_code AS later_principal_currency_code,
+                     c.earlier_accession_number,
+                     c.later_accession_number,
+                     c.earlier_observation_evidence_id,
+                     c.later_observation_evidence_id,
+                     earlier.observation_evidence_level AS earlier_observation_evidence_level,
+                     later.observation_evidence_level AS later_observation_evidence_level,
+                     later.registrant_cik,
+                     later.registrant_link_status,
+                     'refinancing.outcome_history.v1'::text AS outcome_definition
+              FROM comparisons c
+              JOIN LATERAL (
+                SELECT observed.instrument_id,
+                       observed.instrument_resolution_state,
+                       observed.continuity_state,
+                       observed.principal_state,
+                       observed.principal_raw,
+                       observed.principal_currency_state,
+                       observed.observation_evidence_level,
+                       observed.registrant_cik,
+                       observed.registrant_link_status
+                FROM registry.position_read observed
+                WHERE observed.position_observation_id = c.later_position_observation_id::bigint
+                  AND observed.legal_entity_id = p_legal_entity_id
+                  AND observed.entity_resolution_state = 'MATCHED'
+                OFFSET 0
+              ) later ON true
+              JOIN LATERAL (
+                SELECT observed.instrument_id,
+                       observed.instrument_resolution_state,
+                       observed.continuity_state,
+                       observed.principal_state,
+                       observed.principal_raw,
+                       observed.principal_currency_state,
+                       observed.observation_evidence_level
+                FROM registry.position_read observed
+                WHERE observed.position_observation_id = c.earlier_position_observation_id::bigint
+                  AND observed.legal_entity_id = p_legal_entity_id
+                  AND observed.entity_resolution_state = 'MATCHED'
+                OFFSET 0
+              ) earlier ON true
+              LEFT JOIN LATERAL (
+                SELECT count(*)::integer AS n,
+                       count(*) FILTER (WHERE rf.value_state = 'REPORTED')::integer AS reported_n,
+                       min(rf.raw_value) AS raw_value
+                FROM obs.current_position_research_field rf
+                WHERE rf.position_observation_id = c.later_position_observation_id::bigint
+                  AND rf.field_code = 'INSTRUMENT_TYPE'
+              ) instrument_type ON true
+              LEFT JOIN LATERAL (
+                SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+                FROM obs.current_position_field_value fv
+                WHERE fv.position_observation_id = c.earlier_position_observation_id::bigint
+                  AND fv.field_code = 'PRINCIPAL_AMOUNT'
+              ) earlier_principal ON true
+              LEFT JOIN LATERAL (
+                SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+                FROM obs.current_position_field_value fv
+                WHERE fv.position_observation_id = c.later_position_observation_id::bigint
+                  AND fv.field_code = 'PRINCIPAL_AMOUNT'
+              ) later_principal ON true
+              WHERE c.maturity_changed IS TRUE
+                AND c.maturity_comparison_state = 'COMPARABLE'
+                AND earlier.instrument_resolution_state = 'MATCHED'
+                AND later.instrument_resolution_state = 'MATCHED'
+                AND earlier.continuity_state = 'MATCHED'
+                AND later.continuity_state = 'MATCHED'
+                AND earlier.instrument_id IS NOT DISTINCT FROM later.instrument_id
+            ) o),
+           '[]'::json)
+$$;
+
+COMMENT ON FUNCTION registry.borrower_comparisons_and_refinancing(p_legal_entity_id uuid) IS 'One legal-entity read: comparisons json matches borrower_position_comparisons; refinancing json matches the MATURITY_CHANGED UNKNOWN outcome shape. Comparisons CTE is MATERIALIZED from registry.borrower_valuation_period_comparison so the entity-scoped comparison graph is evaluated once. event_date is null. A missing later observation is not a row.';
+
 CREATE FUNCTION registry.borrower_maturity_observations(p_legal_entity_id uuid) RETURNS TABLE(legal_entity_id text, position_observation_id text, position_id text, instrument_id text, borrower_name_raw text, reported_date text, accession_number text, registrant_cik text, registrant_link_status text, entity_resolution_state text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, maturity_source text, maturity_raw text, maturity_date text, maturity_precision text, maturity_year text, maturity_month text, maturity_precision_class text, maturity_bucket_year text, maturity_observation_state text, maturity_evidence_id text, maturity_filing_verified boolean, maturity_document_url text, observation_evidence_level text, principal_state text, principal_raw text, principal_numeric text, principal_currency_state text, principal_currency_code text, fair_value_state text, fair_value_raw text, fair_value_numeric text, fair_value_currency_state text, fair_value_currency_code text, refinancing_outcome_state text, maturity_definition text)
     LANGUAGE sql STABLE
     AS $$
@@ -2504,6 +2722,16 @@ COMMENT ON FUNCTION registry.borrower_position_observations(p_legal_entity_id uu
 CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RETURNS TABLE(legal_entity_id text, position_observation_id text, position_id text, instrument_id text, borrower_name_raw text, reported_date text, accession_number text, registrant_cik text, registrant_link_status text, entity_resolution_state text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, instrument_type_evidence_level text, fair_value_state text, fair_value_raw text, fair_value_numeric text, fair_value_currency_state text, fair_value_currency_code text, principal_state text, principal_raw text, principal_numeric text, principal_currency_state text, principal_currency_code text, cost_state text, cost_raw text, cost_numeric text, cost_currency_state text, cost_currency_code text, observation_evidence_id text, observation_evidence_level text, earlier_reported_date text, fair_value_change_state text, fair_value_delta text, fair_value_percentage_state text, fair_value_percentage text, fair_value_to_principal_state text, fair_value_to_principal text, fair_value_to_cost_state text, fair_value_to_cost text, cross_bdc_comparison_state text, valuation_definition text)
     LANGUAGE sql STABLE
     AS $$
+  WITH entity_cmp AS MATERIALIZED (
+    SELECT c.position_id,
+           c.later_position_observation_id,
+           c.earlier_position_observation_id,
+           c.earlier_reported_date,
+           c.fair_value_comparison_state,
+           c.fair_value_delta,
+           c.earlier_fair_value_numeric
+    FROM registry.borrower_valuation_period_comparison(p_legal_entity_id) c
+  )
   SELECT r.legal_entity_id::text,
          r.position_observation_id::text,
          r.position_id::text,
@@ -2701,7 +2929,7 @@ CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RET
            c.earlier_fair_value_numeric,
            earlier.fair_value_currency_state AS earlier_fair_value_currency_state,
            earlier_code.currency_code AS earlier_fair_value_currency_code
-    FROM registry.position_period_comparison c
+    FROM entity_cmp c
     JOIN LATERAL (
       SELECT observed.legal_entity_id,
              observed.entity_resolution_state,
@@ -2730,7 +2958,7 @@ CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RET
            r.position_observation_id ASC
 $$;
 
-COMMENT ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) IS 'Historical valuation for one legal entity under valuation.position_history.v1. The legal entity filter is applied before registry.position_read. A fair-value delta is copied from registry.position_period_comparison. The percentage is that stored delta divided by the earlier fair_value_numeric, times 100, rounded to 6 decimal places, and only when the earlier number is stored and not zero. Fair value / principal and fair value / cost use the stored numerics on one observation and require a non-zero denominator. An unresolved instrument does not receive those figures. Different stored currency codes are not combined. Currency is not converted. cross_bdc_comparison_state stays UNAVAILABLE: a cross-BDC comparison requires a resolved legal entity, a resolved instrument, established position continuity, comparable observations, and compatible currency. Unknown is not zero.';
+COMMENT ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) IS 'Historical valuation for one legal entity under valuation.position_history.v1. The legal entity filter is applied before registry.position_read. A fair-value delta is copied from registry.borrower_valuation_period_comparison for that entity. The percentage is that stored delta divided by the earlier fair_value_numeric, times 100, rounded to 6 decimal places, and only when the earlier number is stored and not zero. Fair value / principal and fair value / cost use the stored numerics on one observation and require a non-zero denominator. An unresolved instrument does not receive those figures. Different stored currency codes are not combined. Currency is not converted. cross_bdc_comparison_state stays UNAVAILABLE: a cross-BDC comparison requires a resolved legal entity, a resolved instrument, established position continuity, comparable observations, and compatible currency. Unknown is not zero.';
 
 CREATE FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) RETURNS TABLE(legal_entity_id text, position_id text, instrument_id text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, earlier_position_observation_id text, later_position_observation_id text, earlier_reported_date text, later_reported_date text, event_date text, event_type text, refinancing_outcome_state text, earlier_maturity_raw text, later_maturity_raw text, earlier_maturity_precision text, later_maturity_precision text, earlier_principal_state text, earlier_principal_raw text, earlier_principal_currency_state text, earlier_principal_currency_code text, later_principal_state text, later_principal_raw text, later_principal_currency_state text, later_principal_currency_code text, earlier_accession_number text, later_accession_number text, earlier_observation_evidence_id text, later_observation_evidence_id text, earlier_observation_evidence_level text, later_observation_evidence_level text, registrant_cik text, registrant_link_status text, outcome_definition text)
     LANGUAGE sql STABLE
@@ -2839,6 +3067,276 @@ CREATE FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) R
 $$;
 
 COMMENT ON FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) IS 'Historical outcomes for one legal entity under refinancing.outcome_history.v1. The only emitted event_type is MATURITY_CHANGED, copied from a comparable registry.position_period_comparison row. refinancing_outcome_state is UNKNOWN. event_date is null because a report date is not a transaction date. A missing later observation is not a row. Acquisition date is not an input. No probability, score, or amount is calculated.';
+
+CREATE FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id uuid) RETURNS TABLE(position_id uuid, earlier_position_observation_id bigint, later_position_observation_id bigint, earlier_reported_date date, later_reported_date date, earlier_accession_number text, later_accession_number text, earlier_observation_evidence_id bigint, later_observation_evidence_id bigint, principal_comparison_state text, earlier_principal_raw text, later_principal_raw text, earlier_principal_numeric numeric, later_principal_numeric numeric, principal_delta numeric, principal_changed boolean, cost_comparison_state text, earlier_cost_raw text, later_cost_raw text, earlier_cost_numeric numeric, later_cost_numeric numeric, cost_delta numeric, cost_changed boolean, fair_value_comparison_state text, earlier_fair_value_raw text, later_fair_value_raw text, earlier_fair_value_numeric numeric, later_fair_value_numeric numeric, fair_value_delta numeric, fair_value_changed boolean, maturity_comparison_state text, earlier_maturity_source text, later_maturity_source text, earlier_maturity_raw text, later_maturity_raw text, earlier_maturity_date date, later_maturity_date date, earlier_maturity_precision text, later_maturity_precision text, earlier_maturity_year integer, earlier_maturity_month integer, later_maturity_year integer, later_maturity_month integer, maturity_changed boolean, acquisition_comparison_state text, earlier_acquisition_raw text, later_acquisition_raw text, earlier_acquisition_date date, later_acquisition_date date, earlier_acquisition_precision text, later_acquisition_precision text, earlier_acquisition_year integer, earlier_acquisition_month integer, later_acquisition_year integer, later_acquisition_month integer, interest_rate_comparison_state text, earlier_interest_rate_raw text, later_interest_rate_raw text, earlier_interest_rate_numeric numeric, later_interest_rate_numeric numeric, interest_rate_delta numeric, interest_rate_changed boolean, spread_comparison_state text, earlier_spread_raw text, later_spread_raw text, earlier_spread_numeric numeric, later_spread_numeric numeric, spread_delta numeric, spread_changed boolean, interest_rate_floor_comparison_state text, earlier_interest_rate_floor_raw text, later_interest_rate_floor_raw text, earlier_interest_rate_floor_numeric numeric, later_interest_rate_floor_numeric numeric, interest_rate_floor_delta numeric, interest_rate_floor_changed boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH entity_position_ids AS MATERIALIZED (
+    SELECT DISTINCT d.position_id
+    FROM registry.matched_entity_position m
+    JOIN resolution.current_position_continuity d
+      ON d.position_observation_id = m.position_observation_id
+    WHERE m.legal_entity_id = p_legal_entity_id
+      AND d.state = 'MATCHED'
+      AND d.position_id IS NOT NULL
+  ),
+  continuity_match AS MATERIALIZED (
+    SELECT d.position_observation_id
+    FROM resolution.current_position_continuity d
+    WHERE d.state = 'MATCHED'
+      AND d.position_id IS NOT NULL
+      AND d.position_id IN (SELECT e.position_id FROM entity_position_ids e)
+  ),
+  confirmed AS (
+    SELECT r.*
+    FROM continuity_match d
+    JOIN LATERAL (
+      SELECT pr.*
+      FROM registry.position_read pr
+      WHERE pr.position_observation_id = d.position_observation_id
+      OFFSET 0
+    ) r ON true
+    WHERE r.continuity_state = 'MATCHED'
+      AND r.position_id IS NOT NULL
+      AND r.reported_date IS NOT NULL
+  ),
+  date_population AS (
+    SELECT position_id, reported_date, count(*)::integer AS observation_count
+    FROM confirmed
+    GROUP BY position_id, reported_date
+  ),
+  endpoints AS (
+    SELECT c.*
+    FROM confirmed c
+    JOIN date_population d
+      ON d.position_id = c.position_id
+     AND d.reported_date = c.reported_date
+     AND d.observation_count = 1
+  )
+  SELECT
+    l.position_id,
+    e.position_observation_id AS earlier_position_observation_id,
+    l.position_observation_id AS later_position_observation_id,
+    e.reported_date AS earlier_reported_date,
+    l.reported_date AS later_reported_date,
+    e.accession_number AS earlier_accession_number,
+    l.accession_number AS later_accession_number,
+    e.observation_evidence_id AS earlier_observation_evidence_id,
+    l.observation_evidence_id AS later_observation_evidence_id,
+    CASE
+      WHEN e.principal_state = 'REPORTED' AND e.principal_numeric IS NOT NULL
+       AND l.principal_state = 'REPORTED' AND l.principal_numeric IS NOT NULL
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS principal_comparison_state,
+    e.principal_raw AS earlier_principal_raw,
+    l.principal_raw AS later_principal_raw,
+    e.principal_numeric AS earlier_principal_numeric,
+    l.principal_numeric AS later_principal_numeric,
+    CASE
+      WHEN e.principal_state = 'REPORTED' AND e.principal_numeric IS NOT NULL
+       AND l.principal_state = 'REPORTED' AND l.principal_numeric IS NOT NULL
+      THEN l.principal_numeric - e.principal_numeric
+    END AS principal_delta,
+    CASE
+      WHEN e.principal_state = 'REPORTED' AND e.principal_numeric IS NOT NULL
+       AND l.principal_state = 'REPORTED' AND l.principal_numeric IS NOT NULL
+      THEN l.principal_numeric IS DISTINCT FROM e.principal_numeric
+    END AS principal_changed,
+    CASE
+      WHEN e.cost_state = 'REPORTED' AND e.cost_numeric IS NOT NULL
+       AND l.cost_state = 'REPORTED' AND l.cost_numeric IS NOT NULL
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS cost_comparison_state,
+    e.cost_raw AS earlier_cost_raw,
+    l.cost_raw AS later_cost_raw,
+    e.cost_numeric AS earlier_cost_numeric,
+    l.cost_numeric AS later_cost_numeric,
+    CASE
+      WHEN e.cost_state = 'REPORTED' AND e.cost_numeric IS NOT NULL
+       AND l.cost_state = 'REPORTED' AND l.cost_numeric IS NOT NULL
+      THEN l.cost_numeric - e.cost_numeric
+    END AS cost_delta,
+    CASE
+      WHEN e.cost_state = 'REPORTED' AND e.cost_numeric IS NOT NULL
+       AND l.cost_state = 'REPORTED' AND l.cost_numeric IS NOT NULL
+      THEN l.cost_numeric IS DISTINCT FROM e.cost_numeric
+    END AS cost_changed,
+    CASE
+      WHEN e.fair_value_state = 'REPORTED' AND e.fair_value_numeric IS NOT NULL
+       AND l.fair_value_state = 'REPORTED' AND l.fair_value_numeric IS NOT NULL
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS fair_value_comparison_state,
+    e.fair_value_raw AS earlier_fair_value_raw,
+    l.fair_value_raw AS later_fair_value_raw,
+    e.fair_value_numeric AS earlier_fair_value_numeric,
+    l.fair_value_numeric AS later_fair_value_numeric,
+    CASE
+      WHEN e.fair_value_state = 'REPORTED' AND e.fair_value_numeric IS NOT NULL
+       AND l.fair_value_state = 'REPORTED' AND l.fair_value_numeric IS NOT NULL
+      THEN l.fair_value_numeric - e.fair_value_numeric
+    END AS fair_value_delta,
+    CASE
+      WHEN e.fair_value_state = 'REPORTED' AND e.fair_value_numeric IS NOT NULL
+       AND l.fair_value_state = 'REPORTED' AND l.fair_value_numeric IS NOT NULL
+      THEN l.fair_value_numeric IS DISTINCT FROM e.fair_value_numeric
+    END AS fair_value_changed,
+    CASE
+      WHEN e.maturity_date IS NOT NULL
+       AND e.maturity_precision IS NULL
+       AND e.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+       AND l.maturity_date IS NOT NULL
+       AND l.maturity_precision IS NULL
+       AND l.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+      THEN 'COMPARABLE'
+      WHEN e.maturity_precision = 'MONTH'
+       AND l.maturity_precision = 'MONTH'
+       AND e.maturity_year IS NOT NULL
+       AND e.maturity_month IS NOT NULL
+       AND l.maturity_year IS NOT NULL
+       AND l.maturity_month IS NOT NULL
+       AND e.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+       AND l.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS maturity_comparison_state,
+    e.maturity_source AS earlier_maturity_source,
+    l.maturity_source AS later_maturity_source,
+    e.maturity_raw AS earlier_maturity_raw,
+    l.maturity_raw AS later_maturity_raw,
+    e.maturity_date AS earlier_maturity_date,
+    l.maturity_date AS later_maturity_date,
+    e.maturity_precision AS earlier_maturity_precision,
+    l.maturity_precision AS later_maturity_precision,
+    e.maturity_year AS earlier_maturity_year,
+    e.maturity_month AS earlier_maturity_month,
+    l.maturity_year AS later_maturity_year,
+    l.maturity_month AS later_maturity_month,
+    CASE
+      WHEN e.maturity_date IS NOT NULL
+       AND e.maturity_precision IS NULL
+       AND e.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+       AND l.maturity_date IS NOT NULL
+       AND l.maturity_precision IS NULL
+       AND l.maturity_source IN ('REPORTED_STRUCTURED', 'FILING_DISPLAYED')
+      THEN e.maturity_date IS DISTINCT FROM l.maturity_date
+      WHEN e.maturity_precision = 'MONTH'
+       AND l.maturity_precision = 'MONTH'
+       AND e.maturity_year IS NOT NULL
+       AND e.maturity_month IS NOT NULL
+       AND l.maturity_year IS NOT NULL
+       AND l.maturity_month IS NOT NULL
+       AND e.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+       AND l.maturity_source IN ('REPORTED_MONTH', 'FILING_MONTH')
+      THEN e.maturity_year IS DISTINCT FROM l.maturity_year
+        OR e.maturity_month IS DISTINCT FROM l.maturity_month
+    END AS maturity_changed,
+    CASE
+      WHEN e.acquisition_state = 'REPORTED'
+       AND e.acquisition_date IS NOT NULL
+       AND e.acquisition_precision IS NULL
+       AND l.acquisition_state = 'REPORTED'
+       AND l.acquisition_date IS NOT NULL
+       AND l.acquisition_precision IS NULL
+      THEN 'COMPARABLE'
+      WHEN e.acquisition_state = 'REPORTED'
+       AND e.acquisition_precision = 'MONTH'
+       AND e.acquisition_year IS NOT NULL
+       AND e.acquisition_month IS NOT NULL
+       AND l.acquisition_state = 'REPORTED'
+       AND l.acquisition_precision = 'MONTH'
+       AND l.acquisition_year IS NOT NULL
+       AND l.acquisition_month IS NOT NULL
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS acquisition_comparison_state,
+    e.acquisition_raw AS earlier_acquisition_raw,
+    l.acquisition_raw AS later_acquisition_raw,
+    e.acquisition_date AS earlier_acquisition_date,
+    l.acquisition_date AS later_acquisition_date,
+    e.acquisition_precision AS earlier_acquisition_precision,
+    l.acquisition_precision AS later_acquisition_precision,
+    e.acquisition_year AS earlier_acquisition_year,
+    e.acquisition_month AS earlier_acquisition_month,
+    l.acquisition_year AS later_acquisition_year,
+    l.acquisition_month AS later_acquisition_month,
+    CASE
+      WHEN e.interest_rate_state = 'REPORTED' AND e.interest_rate_numeric IS NOT NULL
+       AND l.interest_rate_state = 'REPORTED' AND l.interest_rate_numeric IS NOT NULL
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS interest_rate_comparison_state,
+    e.interest_rate_raw AS earlier_interest_rate_raw,
+    l.interest_rate_raw AS later_interest_rate_raw,
+    e.interest_rate_numeric AS earlier_interest_rate_numeric,
+    l.interest_rate_numeric AS later_interest_rate_numeric,
+    CASE
+      WHEN e.interest_rate_state = 'REPORTED' AND e.interest_rate_numeric IS NOT NULL
+       AND l.interest_rate_state = 'REPORTED' AND l.interest_rate_numeric IS NOT NULL
+      THEN l.interest_rate_numeric - e.interest_rate_numeric
+    END AS interest_rate_delta,
+    CASE
+      WHEN e.interest_rate_state = 'REPORTED' AND e.interest_rate_numeric IS NOT NULL
+       AND l.interest_rate_state = 'REPORTED' AND l.interest_rate_numeric IS NOT NULL
+      THEN l.interest_rate_numeric IS DISTINCT FROM e.interest_rate_numeric
+    END AS interest_rate_changed,
+    CASE
+      WHEN e.spread_state = 'REPORTED' AND e.spread_numeric IS NOT NULL
+       AND l.spread_state = 'REPORTED' AND l.spread_numeric IS NOT NULL
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS spread_comparison_state,
+    e.spread_raw AS earlier_spread_raw,
+    l.spread_raw AS later_spread_raw,
+    e.spread_numeric AS earlier_spread_numeric,
+    l.spread_numeric AS later_spread_numeric,
+    CASE
+      WHEN e.spread_state = 'REPORTED' AND e.spread_numeric IS NOT NULL
+       AND l.spread_state = 'REPORTED' AND l.spread_numeric IS NOT NULL
+      THEN l.spread_numeric - e.spread_numeric
+    END AS spread_delta,
+    CASE
+      WHEN e.spread_state = 'REPORTED' AND e.spread_numeric IS NOT NULL
+       AND l.spread_state = 'REPORTED' AND l.spread_numeric IS NOT NULL
+      THEN l.spread_numeric IS DISTINCT FROM e.spread_numeric
+    END AS spread_changed,
+    CASE
+      WHEN e.interest_rate_floor_state = 'REPORTED' AND e.interest_rate_floor_numeric IS NOT NULL
+       AND l.interest_rate_floor_state = 'REPORTED' AND l.interest_rate_floor_numeric IS NOT NULL
+      THEN 'COMPARABLE'
+      ELSE 'INSUFFICIENT_DATA'
+    END AS interest_rate_floor_comparison_state,
+    e.interest_rate_floor_raw AS earlier_interest_rate_floor_raw,
+    l.interest_rate_floor_raw AS later_interest_rate_floor_raw,
+    e.interest_rate_floor_numeric AS earlier_interest_rate_floor_numeric,
+    l.interest_rate_floor_numeric AS later_interest_rate_floor_numeric,
+    CASE
+      WHEN e.interest_rate_floor_state = 'REPORTED' AND e.interest_rate_floor_numeric IS NOT NULL
+       AND l.interest_rate_floor_state = 'REPORTED' AND l.interest_rate_floor_numeric IS NOT NULL
+      THEN l.interest_rate_floor_numeric - e.interest_rate_floor_numeric
+    END AS interest_rate_floor_delta,
+    CASE
+      WHEN e.interest_rate_floor_state = 'REPORTED' AND e.interest_rate_floor_numeric IS NOT NULL
+       AND l.interest_rate_floor_state = 'REPORTED' AND l.interest_rate_floor_numeric IS NOT NULL
+      THEN l.interest_rate_floor_numeric IS DISTINCT FROM e.interest_rate_floor_numeric
+    END AS interest_rate_floor_changed
+  FROM endpoints e
+  JOIN endpoints l
+    ON l.position_id = e.position_id
+   AND l.reported_date > e.reported_date
+   AND l.position_observation_id <> e.position_observation_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM confirmed mid
+    WHERE mid.position_id = e.position_id
+      AND mid.reported_date > e.reported_date
+      AND mid.reported_date < l.reported_date
+  )
+$$;
+
+COMMENT ON FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id uuid) IS 'Entity-scoped consecutive MATCHED position comparisons for valuation.position_history.v1. Continuity is seeded from position_ids already MATCHED to the requested legal entity on registry.matched_entity_position, then confirmed observations, single-date endpoints, and consecutive pairs follow the same rules as registry.position_period_comparison. The global comparison view is unchanged. Unknown is not zero.';
 
 CREATE FUNCTION registry.check_bdc_report_edition() RETURNS trigger
     LANGUAGE plpgsql
@@ -6280,16 +6778,34 @@ CREATE VIEW registry.borrower_observation_listing AS
                     ELSE 1
                 END, doc.id
          LIMIT 1) fd ON (true))
-     LEFT JOIN LATERAL ( SELECT cfr.registrant_id,
-            cfr.cik,
-            cfr.registrant_link_status
-           FROM registry.current_filing_registrant cfr
-          WHERE (cfr.filing_id = p.filing_id)
+     LEFT JOIN LATERAL ( SELECT x.registrant_id,
+            x.cik,
+            x.registrant_link_status
+           FROM ( SELECT h.registrant_id,
+                    r.cik,
+                        CASE
+                            WHEN (h.id IS NULL) THEN 'UNKNOWN'::text
+                            WHEN (pf.registrant_count > 1) THEN 'MULTIPLE'::text
+                            ELSE 'LINKED'::text
+                        END AS registrant_link_status
+                   FROM (((( SELECT p.filing_id) scoped
+                     LEFT JOIN LATERAL ( SELECT l.id,
+                            l.registrant_id
+                           FROM registry.filing_registrant_link l
+                          WHERE ((l.filing_id = scoped.filing_id) AND (NOT (EXISTS ( SELECT 1
+                                   FROM registry.filing_registrant_link s
+                                  WHERE (s.supersedes_id = l.id)))))) h ON (true))
+                     LEFT JOIN LATERAL ( SELECT count(DISTINCT l.registrant_id) AS registrant_count
+                           FROM registry.filing_registrant_link l
+                          WHERE ((l.filing_id = scoped.filing_id) AND (NOT (EXISTS ( SELECT 1
+                                   FROM registry.filing_registrant_link s
+                                  WHERE (s.supersedes_id = l.id)))))) pf ON (true))
+                     LEFT JOIN registry.registrant r ON ((r.id = h.registrant_id)))) x
           ORDER BY
                 CASE
-                    WHEN (cfr.registrant_link_status = 'LINKED'::text) THEN 0
+                    WHEN (x.registrant_link_status = 'LINKED'::text) THEN 0
                     ELSE 1
-                END, cfr.registrant_id
+                END, x.registrant_id
          LIMIT 1) fr ON (true))
      LEFT JOIN LATERAL ( SELECT string_agg(DISTINCT h.name_raw, ' · '::text ORDER BY h.name_raw) AS registrant_name
            FROM registry.current_registrant_name_history h
@@ -6316,7 +6832,7 @@ CREATE VIEW registry.borrower_observation_listing AS
          LIMIT 1) nv ON (true))
   WHERE ((d.state = 'MATCHED'::ref.resolution_state) AND (d.legal_entity_id IS NOT NULL) AND (b.source_column_label = 'Investment, Identifier Axis'::text) AND (b.extraction_state = 'EXTRACTED'::text));
 
-COMMENT ON VIEW registry.borrower_observation_listing IS 'Phase 10-min borrower observations. One row per MATCHED name observation. No cost, fair value, or invented instrument attributes. A missing date is absent, not zero.';
+COMMENT ON VIEW registry.borrower_observation_listing IS 'Phase 10-min borrower observations. One row per MATCHED name observation. No cost, fair value, or invented instrument attributes. A missing date is absent, not zero. Filing registrant status is resolved per filing_id (LINKED/MULTIPLE/UNKNOWN) without scanning all filing_registrant_link heads.';
 
 CREATE TABLE registry.filing_relationship_decision (
     id bigint NOT NULL,
@@ -10263,6 +10779,9 @@ GRANT ALL ON FUNCTION registry.bdc_portfolio_scope(p_cik text, p_reported_date d
 REVOKE ALL ON FUNCTION registry.bdc_portfolio_summary(p_cik text, p_reported_date date) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.bdc_portfolio_summary(p_cik text, p_reported_date date) TO bdc_reader;
 
+REVOKE ALL ON FUNCTION registry.borrower_comparisons_and_refinancing(p_legal_entity_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.borrower_comparisons_and_refinancing(p_legal_entity_id uuid) TO bdc_reader;
+
 REVOKE ALL ON FUNCTION registry.borrower_maturity_observations(p_legal_entity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.borrower_maturity_observations(p_legal_entity_id uuid) TO bdc_reader;
 
@@ -10283,6 +10802,9 @@ GRANT ALL ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uui
 
 REVOKE ALL ON FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) TO bdc_reader;
+
+REVOKE ALL ON FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id uuid) TO bdc_reader;
 
 REVOKE ALL ON FUNCTION registry.market_date_registrant(p_date date) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.market_date_registrant(p_date date) TO bdc_reader;

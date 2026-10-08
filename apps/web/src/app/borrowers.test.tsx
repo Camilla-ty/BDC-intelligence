@@ -1057,8 +1057,12 @@ describe("what changed", () => {
 
     const page = readFileSync(join(process.cwd(), "src/app/borrowers/[id]/page.tsx"), "utf8");
     const loader = readFileSync(join(process.cwd(), "src/server/load-borrowers.ts"), "utf8");
-    expect(page.match(/loadBorrowerPositionComparisons/g)).toHaveLength(2);
-    expect(loader.match(/borrower_position_comparisons/g)).toHaveLength(1);
+    expect(page.match(/loadBorrowerComparisonsAndRefinancing/g)).toHaveLength(2);
+    expect(page).not.toMatch(/loadBorrowerPositionComparisons/);
+    expect(page).not.toMatch(/loadBorrowerRefinancingOutcomes/);
+    expect(loader).toMatch(/borrower_comparisons_and_refinancing/);
+    expect(loader).not.toMatch(/FROM registry\.borrower_position_comparisons/);
+    expect(loader).not.toMatch(/registry\.borrower_refinancing_outcomes/);
     expect(loader).not.toMatch(/tsv_cell|TSV_CELL/);
   });
 });
