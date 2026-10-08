@@ -3,7 +3,7 @@
 CREATE TEMP VIEW layer_columns AS
 SELECT c.table_schema, c.table_name, c.column_name, c.data_type, c.column_default, c.is_identity
 FROM information_schema.columns c
-WHERE c.table_schema IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review');
+WHERE c.table_schema IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review', 'access');
 
 SELECT pg_temp.check('G-09: the only CIK column in any base table is registry.registrant.cik', NOT EXISTS (
   SELECT 1 FROM layer_columns lc
@@ -61,7 +61,9 @@ SELECT pg_temp.check('G-04/G-05: no defaults except recorded_at/applied_at = now
     AND NOT (column_name IN ('recorded_at', 'applied_at') AND column_default = 'now()')
     AND NOT (column_name = 'id' AND column_default = 'gen_random_uuid()')
     AND NOT (table_schema = 'obs' AND table_name = 'borrower_name_observation'
-             AND column_name = 'name_source' AND column_default = '''SOI_CELL''::text')));
+             AND column_name = 'name_source' AND column_default = '''SOI_CELL''::text')
+    AND NOT (table_schema = 'access' AND table_name = 'grant_event'
+             AND column_name = 'created_at' AND column_default = 'now()')));
 
 SELECT pg_temp.check('SOI has no natural key: no unique index on obs or position tables uses business columns', NOT EXISTS (
   SELECT 1

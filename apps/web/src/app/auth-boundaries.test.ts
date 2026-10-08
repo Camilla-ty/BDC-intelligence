@@ -70,4 +70,13 @@ describe("authentication boundaries", () => {
       expect(text, file).not.toMatch(/DATABASE_URL|PIPELINE_DATABASE_URL/);
     }
   });
+
+  it("does not let the web application write authorization grants", () => {
+    for (const { file, text } of files.filter(({ file }) => file.startsWith("app/") || file.startsWith("server/") || file.startsWith("components/"))) {
+      expect(text, file).not.toMatch(/record_grant|INSERT INTO access\.grant_event/i);
+    }
+    const access = files.find(({ file }) => file === "server/auth/access.ts");
+    expect(access?.text).toMatch(/SET ROLE access_reader/);
+    expect(access?.text).not.toMatch(/email|user_metadata|app_metadata/i);
+  });
 });

@@ -1,3 +1,7 @@
+CREATE SCHEMA access;
+
+COMMENT ON SCHEMA access IS 'Application authorization. Append-only ADMIN and PRO grants keyed by Supabase Auth user id. Not the identity layer.';
+
 CREATE SCHEMA derived;
 
 COMMENT ON SCHEMA derived IS 'Values computed by versioned deterministic rules, with their exact inputs.';
@@ -41,6 +45,22 @@ COMMENT ON SCHEMA review IS 'Research cases, source citations, researcher notes,
 CREATE SCHEMA validation;
 
 COMMENT ON SCHEMA validation IS 'Validation results and evidence-status assertions.';
+
+CREATE TYPE access.grant_action AS ENUM (
+    'GRANT',
+    'REVOKE'
+);
+
+CREATE TYPE access.grant_kind AS ENUM (
+    'ADMIN',
+    'PRO'
+);
+
+CREATE TYPE access.grant_source AS ENUM (
+    'BOOTSTRAP',
+    'OPERATOR',
+    'SUBSCRIPTION'
+);
 
 CREATE TYPE ops.rule_kind AS ENUM (
     'PARSER',
@@ -279,6 +299,21 @@ CREATE TYPE review.source_type AS ENUM (
     'STATE_REGISTRY',
     'OTHER'
 );
+
+CREATE FUNCTION access.record_grant(p_user_id uuid, p_grant_kind access.grant_kind, p_action access.grant_action, p_source access.grant_source, p_reason text, p_actor_user_id uuid) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  new_id bigint;
+BEGIN
+  INSERT INTO access.grant_event (user_id, grant_kind, action, source, actor_user_id, reason)
+  VALUES (p_user_id, p_grant_kind, p_action, p_source, p_actor_user_id, p_reason)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+COMMENT ON FUNCTION access.record_grant(p_user_id uuid, p_grant_kind access.grant_kind, p_action access.grant_action, p_source access.grant_source, p_reason text, p_actor_user_id uuid) IS 'Operator/bootstrap insert. EXECUTE is not granted to application roles. The web application must not call this.';
 
 CREATE FUNCTION derived.check_derived_value() RETURNS trigger
     LANGUAGE plpgsql
@@ -1141,7 +1176,7 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind IN ('r', 'p')
       AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity',
-                        'resolution', 'validation', 'derived', 'ref', 'review')
+                        'resolution', 'validation', 'derived', 'ref', 'review', 'access')
       AND NOT EXISTS (
         SELECT 1 FROM pg_trigger tg
         WHERE tg.tgrelid = c.oid AND tg.tgname = 'append_only_row'
@@ -2930,6 +2965,63 @@ BEGIN
   RETURN NEW;
 END
 $$;
+
+CREATE TABLE access.grant_event (
+    id bigint NOT NULL,
+    user_id uuid NOT NULL,
+    grant_kind access.grant_kind NOT NULL,
+    action access.grant_action NOT NULL,
+    source access.grant_source NOT NULL,
+    actor_user_id uuid,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT grant_event_bootstrap_actor CHECK ((((source = 'BOOTSTRAP'::access.grant_source) AND (actor_user_id IS NULL)) OR ((source <> 'BOOTSTRAP'::access.grant_source) AND (actor_user_id IS NOT NULL)))),
+    CONSTRAINT grant_event_not_self CHECK ((actor_user_id IS DISTINCT FROM user_id)),
+    CONSTRAINT grant_event_reason_check CHECK ((btrim(reason) <> ''::text))
+);
+
+COMMENT ON TABLE access.grant_event IS 'Immutable GRANT and REVOKE events. Current access is access.current_access. MEMBER is never stored.';
+
+COMMENT ON COLUMN access.grant_event.user_id IS 'Supabase Auth user id (JWT sub). Not an email address.';
+
+COMMENT ON COLUMN access.grant_event.actor_user_id IS 'Authenticated administrator who recorded the event. Null only for BOOTSTRAP.';
+
+CREATE VIEW access.current_grant AS
+ SELECT DISTINCT ON (user_id, grant_kind) id,
+    user_id,
+    grant_kind,
+    action,
+    source,
+    actor_user_id,
+    reason,
+    created_at
+   FROM access.grant_event
+  ORDER BY user_id, grant_kind, created_at DESC, id DESC;
+
+COMMENT ON VIEW access.current_grant IS 'Latest event per user and grant kind. action GRANT means the kind is active; REVOKE means it is not.';
+
+CREATE VIEW access.current_access AS
+ SELECT user_id,
+    bool_or(((grant_kind = 'ADMIN'::access.grant_kind) AND (action = 'GRANT'::access.grant_action))) AS is_admin,
+    bool_or(((grant_kind = 'PRO'::access.grant_kind) AND (action = 'GRANT'::access.grant_action))) AS is_pro,
+        CASE
+            WHEN bool_or(((grant_kind = 'ADMIN'::access.grant_kind) AND (action = 'GRANT'::access.grant_action))) THEN 'ADMIN'::text
+            WHEN bool_or(((grant_kind = 'PRO'::access.grant_kind) AND (action = 'GRANT'::access.grant_action))) THEN 'PRO'::text
+            ELSE 'MEMBER'::text
+        END AS effective_role
+   FROM access.current_grant
+  GROUP BY user_id;
+
+COMMENT ON VIEW access.current_access IS 'Users with at least one grant_event. Active ADMIN wins over active PRO. Users absent from this view are MEMBER if authenticated.';
+
+ALTER TABLE access.grant_event ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME access.grant_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 CREATE TABLE derived.derived_value (
     id bigint NOT NULL,
@@ -7261,6 +7353,9 @@ ALTER TABLE validation.validation_result ALTER COLUMN id ADD GENERATED ALWAYS AS
     CACHE 1
 );
 
+ALTER TABLE ONLY access.grant_event
+    ADD CONSTRAINT grant_event_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY derived.derived_value_input
     ADD CONSTRAINT derived_value_input_pkey PRIMARY KEY (id);
 
@@ -7588,6 +7683,8 @@ ALTER TABLE ONLY validation.evidence_status_assertion
 ALTER TABLE ONLY validation.validation_result
     ADD CONSTRAINT validation_result_pkey PRIMARY KEY (id);
 
+CREATE INDEX grant_event_lookup ON access.grant_event USING btree (user_id, grant_kind, created_at DESC, id DESC);
+
 CREATE INDEX evidence_artifact_idx ON evidence.evidence USING btree (artifact_id);
 
 CREATE UNIQUE INDEX evidence_html_column_heading_location ON evidence.evidence USING btree (artifact_id, html_row_ordinal, html_slot_ordinal) WHERE (locator_type = 'HTML_COLUMN_HEADING'::ref.locator_type);
@@ -7687,6 +7784,10 @@ CREATE INDEX evidence_status_assertion_subject_idx ON validation.evidence_status
 CREATE UNIQUE INDEX evidence_status_assertion_supersedes_once ON validation.evidence_status_assertion USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
 CREATE INDEX validation_result_subject_idx ON validation.validation_result USING btree (subject_table, subject_id);
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON access.grant_event FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON access.grant_event FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON derived.derived_value FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -8906,6 +9007,8 @@ ALTER TABLE ONLY validation.validation_result
 ALTER TABLE ONLY validation.validation_result
     ADD CONSTRAINT validation_result_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
 
+GRANT USAGE ON SCHEMA access TO access_reader;
+
 GRANT USAGE ON SCHEMA derived TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA derived TO bdc_reader;
 
@@ -8938,6 +9041,8 @@ GRANT USAGE ON SCHEMA review TO bdc_reader;
 
 GRANT USAGE ON SCHEMA validation TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA validation TO bdc_reader;
+
+REVOKE ALL ON FUNCTION access.record_grant(p_user_id uuid, p_grant_kind access.grant_kind, p_action access.grant_action, p_source access.grant_source, p_reason text, p_actor_user_id uuid) FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION registry.borrower_position_comparisons(p_legal_entity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.borrower_position_comparisons(p_legal_entity_id uuid) TO bdc_reader;
@@ -9007,6 +9112,8 @@ GRANT ALL ON FUNCTION review.open_candidate(p_case_key text, p_candidate_type te
 
 REVOKE ALL ON FUNCTION review.set_candidate_status(p_candidate_id bigint, p_status text, p_reason text, p_created_by text) FROM PUBLIC;
 GRANT ALL ON FUNCTION review.set_candidate_status(p_candidate_id bigint, p_status text, p_reason text, p_created_by text) TO review_writer;
+
+GRANT SELECT ON TABLE access.current_access TO access_reader;
 
 GRANT SELECT,INSERT ON TABLE derived.derived_value TO bdc_pipeline_writer;
 

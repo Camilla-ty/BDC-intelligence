@@ -24,7 +24,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const TESTS_DIR = path.join(repoRoot, "db", "tests");
 const SETUP_FILE = path.join(TESTS_DIR, "_setup.sql");
 const SNAPSHOT_PATH = path.join(repoRoot, "db", "schema.snapshot.sql");
-const LAYER_SCHEMAS = ["ops", "raw", "registry", "evidence", "obs", "identity", "resolution", "validation", "derived", "ref", "review"];
+const LAYER_SCHEMAS = ["ops", "raw", "registry", "evidence", "obs", "identity", "resolution", "validation", "derived", "ref", "review", "access"];
 
 const results = [];
 const pass = (name, detail = "") => results.push({ name, ok: true, detail });

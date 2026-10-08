@@ -5,7 +5,7 @@ SELECT pg_temp.check('every layer table has row-level and TRUNCATE append-only t
   SELECT 1
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE c.relkind = 'r'
-    AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review')
+    AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review', 'access')
     AND (NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'append_only_row'
                        AND t.tgfoid = 'ops.forbid_mutation'::regproc AND t.tgenabled = 'O')
       OR NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'append_only_truncate'
@@ -23,7 +23,7 @@ BEGIN
     SELECT n.nspname AS s, c.relname AS r, c.oid
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind = 'r'
-      AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review')
+      AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived', 'ref', 'review', 'access')
     ORDER BY 1, 2
   LOOP
     EXECUTE format('SELECT count(*) FROM %I.%I', t.s, t.r) INTO n;

@@ -25,6 +25,7 @@ authentication, and similar) are recorded in the phase in which they are decided
 | [0011](0011-registry-ingestion.md) | Registry ingestion pipeline | Accepted |
 | [0012](0012-soi-ingestion.md) | SOI ingestion pipeline | Accepted |
 | [0013](0013-supabase-auth-email-otp.md) | Supabase Auth with email one-time codes | Accepted |
+| [0014](0014-application-authorization.md) | Application authorization ledger | Accepted |
 
 ## Template
 

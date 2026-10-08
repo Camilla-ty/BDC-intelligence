@@ -40,6 +40,6 @@ the existing SQL-text client and `bdc_reader`.
 - Sign-in works only after the Supabase project is configured (email provider, a code-based
   email template, URL settings, and custom SMTP for non-team addresses).
 - No application table stores users; a user is identified by the Supabase user id.
-- A later phase adds authorization (for example an admin check) on top of `getCurrentUser()`.
+- Application authorization is [ADR 0014](0014-application-authorization.md).
 - Making the auth cookies HttpOnly is an open engineering decision; it is possible because no
   browser client reads them, but it is not enabled here.
