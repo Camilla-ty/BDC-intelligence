@@ -2,6 +2,7 @@
 // Values and deltas come from registry.borrower_position_comparisons.
 // This module does not subtract, divide, or classify a field change.
 
+import type { AmountFieldTraceSide } from "@/lib/borrower-field-trace";
 import type { ObservationRow } from "@/lib/borrowers";
 import { CURRENCY_NOTE, secUrl } from "@/lib/portfolios";
 
@@ -10,7 +11,7 @@ export const COMPARISON_NOTE =
 export const CONTINUITY_SCOPE_NOTE =
   "A matched legal-entity name is not a confirmed position. Confirmed changes require MATCHED position continuity between two observations, then a Comparable field comparison.";
 export const EVIDENCE_REVIEW_NOTE =
-  "Evidence & change review lists each stored amount with its reporting periods, SEC accession links, currency status, and comparison state. A stored delta appears only when the comparison is Comparable.";
+  "Evidence & change review lists each stored amount with its reporting periods, SEC accession links, field-level trace when one current field head exists, currency status, and comparison state. A stored delta appears only when the comparison is Comparable.";
 export const EMPTY_COMPARISONS =
   "Confirmed period-to-period changes are unavailable because no MATCHED position-continuity pair is stored for this legal entity. An unresolved continuity decision is not a confirmed change. A period with no stored observation is left absent.";
 export const ACQUISITION_LABEL = "Acquisition date";
@@ -112,6 +113,9 @@ export type ComparisonField = {
   state: string;
   /** Explains whether a stored amount delta may be shown; never invents a numeric change. */
   reviewNote: string | null;
+  /** Populated from obs.current_position_field_value when trace rows are loaded. */
+  earlierTrace?: AmountFieldTraceSide;
+  laterTrace?: AmountFieldTraceSide;
 };
 
 export type PositionComparison = {

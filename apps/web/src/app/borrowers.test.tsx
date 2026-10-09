@@ -19,6 +19,12 @@ import {
   positionComparisons,
   type PositionComparisonRow,
 } from "@/lib/borrower-comparisons";
+import {
+  enrichComparisonsWithFieldTrace,
+  FIELD_TRACE_NOTE,
+  TRACE_UNAVAILABLE,
+  type FieldValueTraceRow,
+} from "@/lib/borrower-field-trace";
 import { CURRENCY_NOTE } from "@/lib/portfolios";
 import { observedActivity, storedDifferences } from "@/lib/borrower-activity";
 import { EMPTY_WHAT_CHANGED, WHAT_CHANGED_NOTE, whatChanged } from "@/lib/borrower-what-changed";
@@ -942,6 +948,134 @@ describe("confirmed position changes", () => {
     expect(storedDifferences(positionComparisons([
       comparison({ principal_delta: "not-stored", fair_value_comparison_state: "INSUFFICIENT_DATA", maturity_changed: null, maturity_comparison_state: "INSUFFICIENT_DATA" }),
     ], listings, ID))).toEqual([]);
+  });
+
+  describe("field-level evidence trace", () => {
+    function tracedComparisons(trace: FieldValueTraceRow[]) {
+      return enrichComparisonsWithFieldTrace(
+        positionComparisons([comparison()], listings, ID),
+        trace,
+      );
+    }
+
+    it("renders field evidence ids and normalization rule versions when stored", () => {
+      const detail = borrowerDetail([row()], ID);
+      render(<BorrowerIntelligence borrower={detail!} comparisons={tracedComparisons([
+        {
+          position_observation_id: "9100000001",
+          field_code: "PRINCIPAL_AMOUNT",
+          raw_value: "100",
+          normalized_numeric: "100",
+          currency_code: "USD",
+          currency_state: "FROM_FILING",
+          scale_state: "UNITS",
+          evidence_id: "9199307",
+          normalization_rule_version_id: "42",
+        },
+        {
+          position_observation_id: "9100000002",
+          field_code: "PRINCIPAL_AMOUNT",
+          raw_value: "120",
+          normalized_numeric: "120",
+          currency_code: "USD",
+          currency_state: "FROM_FILING",
+          scale_state: "UNITS",
+          evidence_id: "9199308",
+          normalization_rule_version_id: "42",
+        },
+      ])} />);
+      const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+      expect(section).toHaveTextContent(FIELD_TRACE_NOTE);
+      expect(section).toHaveTextContent("Field trace");
+      expect(section).toHaveTextContent("Field evidence id");
+      expect(section).toHaveTextContent("9199307");
+      expect(section).toHaveTextContent("9199308");
+      expect(section).toHaveTextContent("Normalization rule version");
+      expect(section).toHaveTextContent("42");
+      expect(section).toHaveTextContent("Observed value");
+      expect(section).toHaveTextContent("Normalized stored value");
+    });
+
+    it("shows unavailable field evidence when trace rows are missing", () => {
+      const detail = borrowerDetail([row()], ID);
+      render(<BorrowerIntelligence borrower={detail!} comparisons={tracedComparisons([])} />);
+      const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+      expect(section).toHaveTextContent("Field evidence id");
+      expect(section!.textContent?.match(new RegExp(TRACE_UNAVAILABLE, "g"))?.length ?? 0).toBeGreaterThan(3);
+    });
+
+    it("shows both observed and normalized values when both are stored", () => {
+      const detail = borrowerDetail([row()], ID);
+      render(<BorrowerIntelligence borrower={detail!} comparisons={tracedComparisons([
+        {
+          position_observation_id: "9100000001",
+          field_code: "PRINCIPAL_AMOUNT",
+          raw_value: "1,000",
+          normalized_numeric: "1000",
+          currency_code: "USD",
+          currency_state: "FROM_FILING",
+          scale_state: "THOUSANDS",
+          evidence_id: "9001",
+          normalization_rule_version_id: "7",
+        },
+      ])} />);
+      const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+      expect(section).toHaveTextContent("1,000");
+      expect(section).toHaveTextContent("1000");
+    });
+
+    it("shows unavailable normalization rule when not stored on the field row", () => {
+      const detail = borrowerDetail([row()], ID);
+      render(<BorrowerIntelligence borrower={detail!} comparisons={tracedComparisons([
+        {
+          position_observation_id: "9100000002",
+          field_code: "PRINCIPAL_AMOUNT",
+          raw_value: "120",
+          normalized_numeric: "120",
+          currency_code: "USD",
+          currency_state: "FROM_FILING",
+          scale_state: "UNITS",
+          evidence_id: "9002",
+          normalization_rule_version_id: null,
+        },
+      ])} />);
+      const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+      expect(section).toHaveTextContent("9002");
+      expect(section!.textContent?.match(new RegExp(TRACE_UNAVAILABLE, "g"))?.length ?? 0).toBeGreaterThan(0);
+    });
+
+    it("keeps currency ambiguity on comparison amounts without inventing ISO codes", () => {
+      const comparisons = enrichComparisonsWithFieldTrace(
+        positionComparisons([
+          comparison({
+            principal_comparison_state: "INSUFFICIENT_DATA",
+            principal_delta: null,
+            earlier_principal_raw: "10",
+            later_principal_raw: "25",
+            earlier_principal_currency_state: "AMBIGUOUS",
+            later_principal_currency_state: "AMBIGUOUS",
+          }),
+        ], listings, ID),
+        [{
+          position_observation_id: "9100000001",
+          field_code: "PRINCIPAL_AMOUNT",
+          raw_value: "10",
+          normalized_numeric: "10",
+          currency_code: null,
+          currency_state: "AMBIGUOUS",
+          scale_state: "UNITS",
+          evidence_id: "9010",
+          normalization_rule_version_id: "1",
+        }],
+      );
+      const detail = borrowerDetail([row()], ID);
+      render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+      const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+      expect(section).toHaveTextContent(CHANGE_NOT_ESTABLISHED_CURRENCY_UNKNOWN);
+      expect(section).toHaveTextContent("Currency Ambiguous");
+      expect(section).toHaveTextContent("9010");
+      expect(section).not.toHaveTextContent("USD");
+    });
   });
 });
 

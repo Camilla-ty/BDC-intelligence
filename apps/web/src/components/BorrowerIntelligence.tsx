@@ -21,8 +21,14 @@ import {
   CONTINUITY_SCOPE_NOTE,
   EMPTY_COMPARISONS,
   EVIDENCE_REVIEW_NOTE,
+  type ComparisonField,
   type PositionComparison,
 } from "@/lib/borrower-comparisons";
+import {
+  amountFieldHasTrace,
+  FIELD_TRACE_NOTE,
+  type AmountFieldTraceSide,
+} from "@/lib/borrower-field-trace";
 import {
   ACQUISITION_LABEL,
   EMPTY_POSITIONS,
@@ -277,15 +283,75 @@ function ObservationSource({
   );
 }
 
+function FieldTraceSideBlock({
+  title,
+  side,
+}: {
+  title: string;
+  side: AmountFieldTraceSide;
+}) {
+  return (
+    <div className="rounded border border-line p-2">
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted">{title}</p>
+      {side.headNote ? <p className="mt-1 text-xs text-muted">{side.headNote}</p> : null}
+      <dl className="mt-2 grid gap-1 text-sm">
+        <div>
+          <dt className="text-xs text-muted">Observed value</dt>
+          <dd><StateText text={side.observedValue} /></dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Normalized stored value</dt>
+          <dd><StateText text={side.normalizedValue} /></dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Currency code</dt>
+          <dd><StateText text={side.currencyCode} /></dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Currency state</dt>
+          <dd><StateText text={side.currencyState} /></dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Scale state</dt>
+          <dd><StateText text={side.scaleState} /></dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Field evidence id</dt>
+          <dd><StateText text={side.fieldEvidenceId} /></dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Normalization rule version</dt>
+          <dd><StateText text={side.normalizationRuleVersionId} /></dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function AmountFieldTraceReview({ field, comparison }: { field: ComparisonField; comparison: PositionComparison }) {
+  if (!amountFieldHasTrace(field)) return null;
+  return (
+    <div className="mt-3">
+      <p className="text-xs uppercase tracking-wider text-muted">Field trace</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <FieldTraceSideBlock title={`Earlier (${comparison.earlierDate})`} side={field.earlierTrace} />
+        <FieldTraceSideBlock title={`Later (${comparison.laterDate})`} side={field.laterTrace} />
+      </div>
+    </div>
+  );
+}
+
 function AmountEvidenceReview({ comparison }: { comparison: PositionComparison }) {
   const fields = amountReviewFields(comparison);
   return (
     <div className="mt-4">
       <h4 className="text-xs uppercase tracking-wider text-muted">Amount evidence</h4>
+      <p className="mt-1 text-sm text-muted">{FIELD_TRACE_NOTE}</p>
       <ul className="mt-2 flex flex-col gap-3">
         {fields.map((field) => (
           <li key={field.label} className="text-sm">
             <p className="font-semibold text-navy">{field.label}</p>
+            <p className="text-xs text-muted">Comparison amounts (period read path)</p>
             <dl className="mt-1 grid gap-1 sm:grid-cols-2">
               <div>
                 <dt className="text-xs text-muted">Earlier ({comparison.earlierDate})</dt>
@@ -310,6 +376,7 @@ function AmountEvidenceReview({ comparison }: { comparison: PositionComparison }
                 </dd>
               </div>
             </dl>
+            <AmountFieldTraceReview field={field} comparison={comparison} />
             {field.reviewNote ? <p className="mt-1 text-sm text-muted">{field.reviewNote}</p> : null}
           </li>
         ))}

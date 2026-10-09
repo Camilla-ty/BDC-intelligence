@@ -1,6 +1,7 @@
 import { BorrowerIntelligence } from "@/components/BorrowerIntelligence";
 import { MissingRecord } from "@/components/MissingRecord";
 import { creditTimeline } from "@/lib/borrower-credit-timeline";
+import { enrichComparisonsWithFieldTrace } from "@/lib/borrower-field-trace";
 import { positionComparisons } from "@/lib/borrower-comparisons";
 import { historicalPositions } from "@/lib/borrower-positions";
 import { maturityChangeLines, maturityWall, maturityYears } from "@/lib/borrower-maturity";
@@ -9,7 +10,7 @@ import { valuationHistory } from "@/lib/borrower-valuation";
 import { borrowerDetail } from "@/lib/borrowers";
 import { UNOBSERVED_BORROWER } from "@/lib/states";
 import { requireAuthenticatedUser } from "@/server/auth/access";
-import { loadBorrowerComparisonsAndRefinancing, loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservationsForEntity, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadPositionResearchFields } from "@/server/load-borrowers";
+import { loadBorrowerComparisonsAndRefinancing, loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservationsForEntity, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadComparisonFieldTrace, loadPositionResearchFields } from "@/server/load-borrowers";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,15 @@ export default async function BorrowerPage({
   const research = positions.error
     ? { rows: [], error: null }
     : await loadPositionResearchFields(positions.rows.map((row) => row.position_observation_id));
-  const comparisonRows = comparisons.error ? [] : positionComparisons(comparisons.rows, rows, id);
+  const fieldTrace = comparisons.error
+    ? { rows: [], error: null }
+    : await loadComparisonFieldTrace(comparisons.rows);
+  const comparisonRows = comparisons.error
+    ? []
+    : enrichComparisonsWithFieldTrace(
+        positionComparisons(comparisons.rows, rows, id),
+        fieldTrace.error ? [] : fieldTrace.rows,
+      );
   const timeline = creditTimeline({
     observations: positions.error ? [] : positions.rows,
     valuations: valuation.error ? [] : valuation.rows,

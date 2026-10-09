@@ -1,4 +1,5 @@
 import { assertComparisonFields, type PositionComparisonRow } from "@/lib/borrower-comparisons";
+import type { FieldValueTraceRow } from "@/lib/borrower-field-trace";
 import { assertMaturityFields, type MaturityObservationRow, type MaturitySummaryRow, type MaturityYearRow } from "@/lib/borrower-maturity";
 import { assertRefinancingFields, type RefinancingOutcomeRow } from "@/lib/borrower-refinancing";
 import { assertValuationFields, type ValuationRow } from "@/lib/borrower-valuation";
@@ -531,6 +532,96 @@ export async function loadBorrowerComparisonsAndRefinancing(
 /** Prefer loadBorrowerComparisonsAndRefinancing on the borrower detail path. */
 export async function loadBorrowerPositionComparisons(legalEntityId: string): Promise<ComparisonResult> {
   return (await loadBorrowerComparisonsAndRefinancing(legalEntityId)).comparisons;
+}
+
+function uniqueObservationIds(comparisons: PositionComparisonRow[]): string[] {
+  const ids = new Set<string>();
+  for (const row of comparisons) {
+    ids.add(row.earlier_position_observation_id);
+    ids.add(row.later_position_observation_id);
+  }
+  return [...ids].sort();
+}
+
+const FIELD_TRACE_SQL = (observationIds: string[]) => `
+SET ROLE bdc_reader;
+SET statement_timeout = '30s';
+SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+  SELECT fv.position_observation_id::text,
+         fv.field_code,
+         fv.raw_value,
+         fv.normalized_numeric::text AS normalized_numeric,
+         fv.currency_code,
+         fv.currency_state::text AS currency_state,
+         fv.scale_state::text AS scale_state,
+         fv.evidence_id::text AS evidence_id,
+         fv.normalization_rule_version_id::text AS normalization_rule_version_id
+  FROM obs.current_position_field_value fv
+  WHERE fv.position_observation_id IN (${observationIds.join(",")})
+    AND fv.field_code IN ('PRINCIPAL_AMOUNT', 'COST', 'FAIR_VALUE')
+) t;
+RESET ROLE;
+`;
+
+export type FieldTraceResult = { rows: FieldValueTraceRow[]; error: string | null };
+
+export async function loadComparisonFieldTrace(
+  comparisons: PositionComparisonRow[],
+): Promise<FieldTraceResult> {
+  const observationIds = uniqueObservationIds(comparisons);
+  if (observationIds.length === 0) return { rows: [], error: null };
+  for (const id of observationIds) {
+    if (!/^\d+$/.test(id)) return { rows: [], error: "Field trace could not be read." };
+  }
+  const executed = await executeSql(FIELD_TRACE_SQL(observationIds));
+  if (!executed.ok) return { rows: [], error: "Field trace could not be read." };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(executed.text === "" ? "[]" : executed.text);
+  } catch {
+    return { rows: [], error: "Field trace could not be read." };
+  }
+  if (!Array.isArray(parsed)) return { rows: [], error: "Field trace could not be read." };
+  const rows: FieldValueTraceRow[] = [];
+  for (const item of parsed) {
+    if (item == null || typeof item !== "object") return { rows: [], error: "Field trace could not be read." };
+    const record = item as Record<string, unknown>;
+    const positionObservationId = requiredText(record, "position_observation_id");
+    const fieldCode = requiredText(record, "field_code");
+    if (
+      positionObservationId == null || fieldCode == null
+      || (fieldCode !== "PRINCIPAL_AMOUNT" && fieldCode !== "COST" && fieldCode !== "FAIR_VALUE")
+    ) {
+      return { rows: [], error: "Field trace could not be read." };
+    }
+    const rawValue = textOrNull(record.raw_value);
+    const normalizedNumeric = textOrNull(record.normalized_numeric);
+    const currencyCode = textOrNull(record.currency_code);
+    const currencyState = textOrNull(record.currency_state);
+    const scaleState = textOrNull(record.scale_state);
+    const evidenceId = textOrNull(record.evidence_id);
+    const normalizationRuleVersionId = textOrNull(record.normalization_rule_version_id);
+    if (
+      rawValue === undefined || normalizedNumeric === undefined || currencyCode === undefined
+      || currencyState === undefined || scaleState === undefined || evidenceId === undefined
+      || normalizationRuleVersionId === undefined
+    ) {
+      return { rows: [], error: "Field trace could not be read." };
+    }
+    rows.push({
+      position_observation_id: positionObservationId,
+      field_code: fieldCode,
+      raw_value: rawValue,
+      normalized_numeric: normalizedNumeric,
+      currency_code: currencyCode,
+      currency_state: currencyState,
+      scale_state: scaleState,
+      evidence_id: evidenceId,
+      normalization_rule_version_id: normalizationRuleVersionId,
+    });
+  }
+  return { rows, error: null };
 }
 
 const VALUATION_SQL = (legalEntityId: string) => `
