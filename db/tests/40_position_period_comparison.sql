@@ -19,6 +19,32 @@ LANGUAGE sql AS $$
           pg_temp.fx('r_field'), pg_temp.l2_evidence(), pg_temp.fx('run'))
 $$;
 
+CREATE FUNCTION pg_temp.l2_coded_money(
+  pos_key text, field_code text, raw text, amount numeric, code text
+) RETURNS void
+LANGUAGE sql AS $$
+  INSERT INTO obs.position_field_value (
+      position_observation_id, field_code, raw_value, normalized_numeric,
+      currency_code, currency_state, scale_state, value_state,
+      normalization_rule_version_id, evidence_id, run_id)
+  VALUES (pg_temp.fx(pos_key), field_code, raw, amount,
+          code, 'FROM_FILING', 'NOT_APPLICABLE', 'REPORTED',
+          pg_temp.fx('r_field'), pg_temp.l2_evidence(), pg_temp.fx('run'))
+$$;
+
+CREATE FUNCTION pg_temp.l2_ambiguous_money(
+  pos_key text, field_code text, raw text, amount numeric
+) RETURNS void
+LANGUAGE sql AS $$
+  INSERT INTO obs.position_field_value (
+      position_observation_id, field_code, raw_value, normalized_numeric,
+      currency_state, scale_state, value_state,
+      normalization_rule_version_id, evidence_id, run_id)
+  VALUES (pg_temp.fx(pos_key), field_code, raw, amount,
+          'AMBIGUOUS', 'NOT_APPLICABLE', 'REPORTED',
+          pg_temp.fx('r_field'), pg_temp.l2_evidence(), pg_temp.fx('run'))
+$$;
+
 CREATE FUNCTION pg_temp.l2_rate(pos_key text, field_code text, raw text, amount numeric) RETURNS void
 LANGUAGE sql AS $$
   INSERT INTO obs.position_field_value (
@@ -147,19 +173,25 @@ SELECT pg_temp.series_position('po_prob_a', 'TEST COMPARISON PROBABLE | A', 93, 
 SELECT pg_temp.series_position('po_prob_b', 'TEST COMPARISON PROBABLE | B', 94, '2099-06-30');
 SELECT pg_temp.series_position('po_raw_a', 'TEST COMPARISON RAW RATE | A', 95, '2099-03-31');
 SELECT pg_temp.series_position('po_raw_b', 'TEST COMPARISON RAW RATE | B', 96, '2099-06-30');
+SELECT pg_temp.series_position('po_ccy_a', 'TEST COMPARISON CURRENCY | A', 97, '2099-03-31');
+SELECT pg_temp.series_position('po_ccy_b', 'TEST COMPARISON CURRENCY | B', 98, '2099-06-30');
+SELECT pg_temp.series_position('po_unk_a', 'TEST COMPARISON UNKNOWN CCY | A', 99, '2099-03-31');
+SELECT pg_temp.series_position('po_unk_b', 'TEST COMPARISON UNKNOWN CCY | B', 100, '2099-06-30');
+SELECT pg_temp.series_position('po_amb_a', 'TEST COMPARISON AMBIGUOUS CCY | A', 101, '2099-03-31');
+SELECT pg_temp.series_position('po_amb_b', 'TEST COMPARISON AMBIGUOUS CCY | B', 102, '2099-06-30');
 
-SELECT pg_temp.l2_money('po_mar', 'PRINCIPAL_AMOUNT', '100', 100);
-SELECT pg_temp.l2_money('po_mar', 'COST', '80', 80);
-SELECT pg_temp.l2_money('po_mar', 'FAIR_VALUE', '70', 70);
+SELECT pg_temp.l2_coded_money('po_mar', 'PRINCIPAL_AMOUNT', '100', 100, 'AAA');
+SELECT pg_temp.l2_coded_money('po_mar', 'COST', '80', 80, 'AAA');
+SELECT pg_temp.l2_coded_money('po_mar', 'FAIR_VALUE', '70', 70, 'AAA');
 SELECT pg_temp.l2_rate('po_mar', 'INTEREST_RATE', '0.05', 0.05);
 SELECT pg_temp.l2_rate('po_mar', 'SPREAD', '0.01', 0.01);
 SELECT pg_temp.l2_rate('po_mar', 'INTEREST_RATE_FLOOR', '0.04', 0.04);
 SELECT pg_temp.l2_calendar('po_mar', 'MATURITY_DATE', '2099-06-15', DATE '2099-06-15');
 SELECT pg_temp.l2_calendar('po_mar', 'ACQUISITION_DATE', '2099-01-15', DATE '2099-01-15');
 
-SELECT pg_temp.l2_money('po_jun', 'PRINCIPAL_AMOUNT', '120', 120);
-SELECT pg_temp.l2_money('po_jun', 'COST', '90', 90);
-SELECT pg_temp.l2_money('po_jun', 'FAIR_VALUE', '60', 60);
+SELECT pg_temp.l2_coded_money('po_jun', 'PRINCIPAL_AMOUNT', '120', 120, 'AAA');
+SELECT pg_temp.l2_coded_money('po_jun', 'COST', '90', 90, 'AAA');
+SELECT pg_temp.l2_coded_money('po_jun', 'FAIR_VALUE', '60', 60, 'AAA');
 SELECT pg_temp.l2_rate('po_jun', 'INTEREST_RATE', '0.06', 0.06);
 SELECT pg_temp.l2_rate('po_jun', 'SPREAD', '0.02', 0.02);
 SELECT pg_temp.l2_rate('po_jun', 'INTEREST_RATE_FLOOR', '0.05', 0.05);
@@ -178,6 +210,21 @@ SELECT pg_temp.l2_month('po_m2', 'MATURITY_DATE', '06/2100', 2100, 6);
 SELECT pg_temp.l2_unresolved_rate('po_raw_a', 'INTEREST_RATE', '0.05');
 SELECT pg_temp.l2_unresolved_rate('po_raw_b', 'INTEREST_RATE', '0.07');
 
+SELECT pg_temp.l2_coded_money('po_ccy_a', 'PRINCIPAL_AMOUNT', '10', 10, 'AAA');
+SELECT pg_temp.l2_coded_money('po_ccy_a', 'FAIR_VALUE', '8', 8, 'AAA');
+SELECT pg_temp.l2_coded_money('po_ccy_b', 'PRINCIPAL_AMOUNT', '25', 25, 'BBB');
+SELECT pg_temp.l2_coded_money('po_ccy_b', 'FAIR_VALUE', '20', 20, 'BBB');
+SELECT pg_temp.l2_money('po_unk_a', 'PRINCIPAL_AMOUNT', '10', 10);
+SELECT pg_temp.l2_money('po_unk_a', 'FAIR_VALUE', '8', 8);
+SELECT pg_temp.l2_money('po_unk_b', 'PRINCIPAL_AMOUNT', '25', 25);
+SELECT pg_temp.l2_money('po_unk_b', 'FAIR_VALUE', '20', 20);
+SELECT pg_temp.l2_ambiguous_money('po_amb_a', 'PRINCIPAL_AMOUNT', '10', 10);
+SELECT pg_temp.l2_ambiguous_money('po_amb_a', 'COST', '9', 9);
+SELECT pg_temp.l2_ambiguous_money('po_amb_a', 'FAIR_VALUE', '8', 8);
+SELECT pg_temp.l2_ambiguous_money('po_amb_b', 'PRINCIPAL_AMOUNT', '25', 25);
+SELECT pg_temp.l2_ambiguous_money('po_amb_b', 'COST', '22', 22);
+SELECT pg_temp.l2_ambiguous_money('po_amb_b', 'FAIR_VALUE', '20', 20);
+
 SELECT pg_temp.add_position('TEST ONLY comparison series');
 SELECT pg_temp.add_position('TEST ONLY comparison month');
 SELECT pg_temp.add_position('TEST ONLY comparison same date');
@@ -185,6 +232,9 @@ SELECT pg_temp.add_position('TEST ONLY comparison rejected');
 SELECT pg_temp.add_position('TEST ONLY comparison probable');
 SELECT pg_temp.add_position('TEST ONLY comparison only');
 SELECT pg_temp.add_position('TEST ONLY comparison raw rate');
+SELECT pg_temp.add_position('TEST ONLY comparison currency mismatch');
+SELECT pg_temp.add_position('TEST ONLY comparison unknown currency');
+SELECT pg_temp.add_position('TEST ONLY comparison ambiguous currency');
 
 SELECT pg_temp.link_continuity('po_mar', 'TEST ONLY comparison series', 'MATCHED');
 SELECT pg_temp.link_continuity('po_jun', 'TEST ONLY comparison series', 'MATCHED');
@@ -201,6 +251,12 @@ SELECT pg_temp.link_continuity('po_prob_a', 'TEST ONLY comparison probable', 'PR
 SELECT pg_temp.link_continuity('po_prob_b', 'TEST ONLY comparison probable', 'PROBABLE');
 SELECT pg_temp.link_continuity('po_raw_a', 'TEST ONLY comparison raw rate', 'MATCHED');
 SELECT pg_temp.link_continuity('po_raw_b', 'TEST ONLY comparison raw rate', 'MATCHED');
+SELECT pg_temp.link_continuity('po_ccy_a', 'TEST ONLY comparison currency mismatch', 'MATCHED');
+SELECT pg_temp.link_continuity('po_ccy_b', 'TEST ONLY comparison currency mismatch', 'MATCHED');
+SELECT pg_temp.link_continuity('po_unk_a', 'TEST ONLY comparison unknown currency', 'MATCHED');
+SELECT pg_temp.link_continuity('po_unk_b', 'TEST ONLY comparison unknown currency', 'MATCHED');
+SELECT pg_temp.link_continuity('po_amb_a', 'TEST ONLY comparison ambiguous currency', 'MATCHED');
+SELECT pg_temp.link_continuity('po_amb_b', 'TEST ONLY comparison ambiguous currency', 'MATCHED');
 
 SELECT pg_temp.check('1: one confirmed series produces the consecutive pairs only', (
   SELECT count(*) = 2
@@ -215,7 +271,7 @@ SELECT pg_temp.check('1: one confirmed series produces the consecutive pairs onl
     SELECT id FROM identity.position WHERE creation_reason = 'TEST ONLY comparison series')));
 
 SELECT pg_temp.check('2: earlier reporting date is strictly before the later date', (
-  SELECT count(*) = 4
+  SELECT count(*) = 7
      AND bool_and(earlier_reported_date < later_reported_date)
   FROM registry.position_period_comparison));
 
@@ -494,14 +550,75 @@ SELECT pg_temp.check('the comparison does not name an exit, repayment, refinanci
       OR column_name ILIKE '%default%'
       OR column_name ILIKE '%non_accrual%')));
 
+SELECT pg_temp.check('different known currency codes are not a principal or fair-value delta', (
+  SELECT principal_comparison_state = 'INSUFFICIENT_DATA'
+     AND principal_delta IS NULL
+     AND principal_changed IS NULL
+     AND fair_value_comparison_state = 'INSUFFICIENT_DATA'
+     AND fair_value_delta IS NULL
+     AND fair_value_changed IS NULL
+  FROM registry.position_period_comparison
+  WHERE earlier_position_observation_id = pg_temp.fx('po_ccy_a')
+    AND later_position_observation_id = pg_temp.fx('po_ccy_b')));
+
+SELECT pg_temp.check('unknown currency on both sides is not comparable', (
+  SELECT principal_comparison_state = 'INSUFFICIENT_DATA'
+     AND principal_delta IS NULL
+     AND fair_value_comparison_state = 'INSUFFICIENT_DATA'
+     AND fair_value_delta IS NULL
+  FROM registry.position_period_comparison
+  WHERE earlier_position_observation_id = pg_temp.fx('po_unk_a')
+    AND later_position_observation_id = pg_temp.fx('po_unk_b')));
+
+SELECT pg_temp.check('ambiguous currency on both sides is not a principal, cost, or fair-value delta', (
+  SELECT c.principal_comparison_state = 'INSUFFICIENT_DATA'
+     AND c.principal_delta IS NULL
+     AND c.principal_changed IS NULL
+     AND c.cost_comparison_state = 'INSUFFICIENT_DATA'
+     AND c.cost_delta IS NULL
+     AND c.cost_changed IS NULL
+     AND c.fair_value_comparison_state = 'INSUFFICIENT_DATA'
+     AND c.fair_value_delta IS NULL
+     AND c.fair_value_changed IS NULL
+     AND c.earlier_principal_numeric = 10
+     AND c.later_principal_numeric = 25
+     AND c.earlier_cost_numeric = 9
+     AND c.later_cost_numeric = 22
+     AND c.earlier_fair_value_numeric = 8
+     AND c.later_fair_value_numeric = 20
+     AND e.principal_currency_state = 'AMBIGUOUS'
+     AND l.principal_currency_state = 'AMBIGUOUS'
+     AND e.cost_currency_state = 'AMBIGUOUS'
+     AND l.cost_currency_state = 'AMBIGUOUS'
+     AND e.fair_value_currency_state = 'AMBIGUOUS'
+     AND l.fair_value_currency_state = 'AMBIGUOUS'
+     AND earlier_principal.currency_code IS NULL
+     AND later_principal.currency_code IS NULL
+  FROM registry.position_period_comparison c
+  JOIN registry.position_read e
+    ON e.position_observation_id = c.earlier_position_observation_id
+  JOIN registry.position_read l
+    ON l.position_observation_id = c.later_position_observation_id
+  JOIN obs.current_position_field_value earlier_principal
+    ON earlier_principal.position_observation_id = c.earlier_position_observation_id
+   AND earlier_principal.field_code = 'PRINCIPAL_AMOUNT'
+  JOIN obs.current_position_field_value later_principal
+    ON later_principal.position_observation_id = c.later_position_observation_id
+   AND later_principal.field_code = 'PRINCIPAL_AMOUNT'
+  WHERE c.earlier_position_observation_id = pg_temp.fx('po_amb_a')
+    AND c.later_position_observation_id = pg_temp.fx('po_amb_b')));
+
 SELECT pg_temp.check('the comparison reads position_read and does not invent a date or a ratio', (
   SELECT position('position_read' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) > 0
      AND position('current_position_continuity' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) > 0
-     AND position('position_field_value' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) = 0
+     AND position('current_position_field_value' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) > 0
+     AND pg_get_viewdef('registry.position_period_comparison'::regclass) !~ 'obs\.position_field_value([^_]|$)'
      AND position('observation_event' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) = 0
      AND position('make_date' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) = 0
      AND pg_get_viewdef('registry.position_period_comparison'::regclass) !~ 'sum\('
-     AND pg_get_viewdef('registry.position_period_comparison'::regclass) !~ 'similarity'));
+     AND pg_get_viewdef('registry.position_period_comparison'::regclass) !~ 'similarity'
+     AND position('UNKNOWN' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) > 0
+     AND position('AMBIGUOUS' IN pg_get_viewdef('registry.position_period_comparison'::regclass)) > 0));
 
 SELECT pg_temp.check('observation events stay limited to the registrant-first-observed name', (
   SELECT count(*) FILTER (

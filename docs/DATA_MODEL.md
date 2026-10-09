@@ -340,13 +340,19 @@ Fair value, principal, and cost are the stored states, raw text, and normalized
 numbers already on `registry.position_read`. A missing field stays unknown.
 Currency codes are the stored codes. The function does not convert currency.
 
-A fair-value change is copied from `registry.position_period_comparison` when
-the observation is the later endpoint of a confirmed pair and both the
-instrument and the position continuity are `MATCHED`. The function does not
-subtract the two fair values again. The percentage is that stored delta
-divided by the earlier stored fair value, times 100, rounded to 6 decimal
-places, and only when the earlier number is stored and not zero. A zero
-denominator is `INSUFFICIENT_DATA` and null.
+A fair-value change is copied from the entity-scoped period comparison when
+the observation is the later endpoint of a confirmed pair, both the
+instrument and the position continuity are `MATCHED`, and that comparison is
+`COMPARABLE`. Principal, cost, and fair-value period deltas are `COMPARABLE`
+only when both sides are reported numerics and stored currency is established
+and compatible: both currency states are present and not `UNKNOWN` or
+`AMBIGUOUS`, both currency codes are present, and the codes are equal.
+Null or unknown currency on either side is `INSUFFICIENT_DATA` and no numeric
+delta. The function does not subtract the two fair values again. The
+percentage is that stored delta divided by the earlier stored fair value,
+times 100, rounded to 6 decimal places, and only when the earlier number is
+stored and not zero and currency is established. A zero denominator is
+`INSUFFICIENT_DATA` and null.
 
 Fair value / principal and fair value / cost are the stored fair-value number
 divided by the stored denominator on the same observation, rounded to 6

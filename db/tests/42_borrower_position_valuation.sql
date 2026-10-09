@@ -151,22 +151,28 @@ SELECT pg_temp.series_position('p_early', 'TEST VALUATION ENTITY | ZERO FV', 113
 SELECT pg_temp.series_position('p_late', 'TEST VALUATION ENTITY | AFTER ZERO FV', 114, '2099-02-28');
 SELECT pg_temp.series_position('u_row', 'TEST VALUATION ENTITY | UNRESOLVED', 115, '2099-08-31');
 SELECT pg_temp.series_position('c_row', 'TEST VALUATION ENTITY | CURRENCY', 116, '2099-07-31');
+SELECT pg_temp.series_position('m_early', 'TEST VALUATION ENTITY | MISMATCH EARLY', 117, '2098-03-31');
+SELECT pg_temp.series_position('m_late', 'TEST VALUATION ENTITY | MISMATCH LATE', 118, '2098-06-30');
 
-SELECT pg_temp.l2_money('a_mar', 'FAIR_VALUE', '70', 70);
-SELECT pg_temp.l2_money('a_mar', 'PRINCIPAL_AMOUNT', '100', 100);
-SELECT pg_temp.l2_money('a_mar', 'COST', '50', 50);
+SELECT pg_temp.l2_coded_money('a_mar', 'FAIR_VALUE', '70', 70, 'AAA');
+SELECT pg_temp.l2_coded_money('a_mar', 'PRINCIPAL_AMOUNT', '100', 100, 'AAA');
+SELECT pg_temp.l2_coded_money('a_mar', 'COST', '50', 50, 'AAA');
 SELECT pg_temp.l2_type('a_mar', 'TEST FIRST LIEN');
-SELECT pg_temp.l2_money('a_jun', 'FAIR_VALUE', '60', 60);
+SELECT pg_temp.l2_coded_money('a_jun', 'FAIR_VALUE', '60', 60, 'AAA');
 SELECT pg_temp.l2_type('a_jun', 'TEST FIRST LIEN');
-SELECT pg_temp.l2_money('z_only', 'FAIR_VALUE', '40', 40);
-SELECT pg_temp.l2_money('z_only', 'PRINCIPAL_AMOUNT', '0', 0);
-SELECT pg_temp.l2_money('z_only', 'COST', '0', 0);
-SELECT pg_temp.l2_money('p_early', 'FAIR_VALUE', '0', 0);
-SELECT pg_temp.l2_money('p_late', 'FAIR_VALUE', '10', 10);
+SELECT pg_temp.l2_coded_money('z_only', 'FAIR_VALUE', '40', 40, 'AAA');
+SELECT pg_temp.l2_coded_money('z_only', 'PRINCIPAL_AMOUNT', '0', 0, 'AAA');
+SELECT pg_temp.l2_coded_money('z_only', 'COST', '0', 0, 'AAA');
+SELECT pg_temp.l2_coded_money('p_early', 'FAIR_VALUE', '0', 0, 'AAA');
+SELECT pg_temp.l2_coded_money('p_late', 'FAIR_VALUE', '10', 10, 'AAA');
 SELECT pg_temp.l2_money('u_row', 'FAIR_VALUE', '90', 90);
 SELECT pg_temp.l2_money('u_row', 'PRINCIPAL_AMOUNT', '30', 30);
 SELECT pg_temp.l2_coded_money('c_row', 'FAIR_VALUE', '80', 80, 'AAA');
 SELECT pg_temp.l2_coded_money('c_row', 'PRINCIPAL_AMOUNT', '40', 40, 'BBB');
+SELECT pg_temp.l2_coded_money('m_early', 'FAIR_VALUE', '70', 70, 'AAA');
+SELECT pg_temp.l2_type('m_early', 'TEST FIRST LIEN');
+SELECT pg_temp.l2_coded_money('m_late', 'FAIR_VALUE', '60', 60, 'BBB');
+SELECT pg_temp.l2_type('m_late', 'TEST FIRST LIEN');
 
 SELECT pg_temp.history_name('a_mar', 'TEST VALUATION ENTITY | MAR');
 SELECT pg_temp.history_name('a_jun', 'TEST VALUATION ENTITY | JUN');
@@ -175,6 +181,8 @@ SELECT pg_temp.history_name('p_early', 'TEST VALUATION ENTITY | ZERO FV');
 SELECT pg_temp.history_name('p_late', 'TEST VALUATION ENTITY | AFTER ZERO FV');
 SELECT pg_temp.history_name('u_row', 'TEST VALUATION ENTITY | UNRESOLVED');
 SELECT pg_temp.history_name('c_row', 'TEST VALUATION ENTITY | CURRENCY');
+SELECT pg_temp.history_name('m_early', 'TEST VALUATION ENTITY | MISMATCH EARLY');
+SELECT pg_temp.history_name('m_late', 'TEST VALUATION ENTITY | MISMATCH LATE');
 
 SELECT pg_temp.expect_ok('valuation entity', ARRAY[
   format($$INSERT INTO identity.legal_entity (creation_reason, run_id) VALUES ('TEST ONLY valuation entity', %s)$$, pg_temp.fx('run'))]);
@@ -186,28 +194,36 @@ SELECT pg_temp.match_entity('p_early');
 SELECT pg_temp.match_entity('p_late');
 SELECT pg_temp.match_entity('u_row');
 SELECT pg_temp.match_entity('c_row');
+SELECT pg_temp.match_entity('m_early');
+SELECT pg_temp.match_entity('m_late');
 
 SELECT pg_temp.add_instrument('TEST ONLY valuation instrument A');
 SELECT pg_temp.add_instrument('TEST ONLY valuation instrument zero');
 SELECT pg_temp.add_instrument('TEST ONLY valuation instrument percent');
 SELECT pg_temp.add_instrument('TEST ONLY valuation instrument currency');
+SELECT pg_temp.add_instrument('TEST ONLY valuation instrument mismatch');
 SELECT pg_temp.match_instrument('a_mar', 'TEST ONLY valuation instrument A');
 SELECT pg_temp.match_instrument('a_jun', 'TEST ONLY valuation instrument A');
 SELECT pg_temp.match_instrument('z_only', 'TEST ONLY valuation instrument zero');
 SELECT pg_temp.match_instrument('p_early', 'TEST ONLY valuation instrument percent');
 SELECT pg_temp.match_instrument('p_late', 'TEST ONLY valuation instrument percent');
 SELECT pg_temp.match_instrument('c_row', 'TEST ONLY valuation instrument currency');
+SELECT pg_temp.match_instrument('m_early', 'TEST ONLY valuation instrument mismatch');
+SELECT pg_temp.match_instrument('m_late', 'TEST ONLY valuation instrument mismatch');
 
 SELECT pg_temp.add_position('TEST ONLY valuation series A');
 SELECT pg_temp.add_position('TEST ONLY valuation series zero');
 SELECT pg_temp.add_position('TEST ONLY valuation series percent');
 SELECT pg_temp.add_position('TEST ONLY valuation series currency');
+SELECT pg_temp.add_position('TEST ONLY valuation series mismatch');
 SELECT pg_temp.link_continuity('a_mar', 'TEST ONLY valuation series A');
 SELECT pg_temp.link_continuity('a_jun', 'TEST ONLY valuation series A');
 SELECT pg_temp.link_continuity('z_only', 'TEST ONLY valuation series zero');
 SELECT pg_temp.link_continuity('p_early', 'TEST ONLY valuation series percent');
 SELECT pg_temp.link_continuity('p_late', 'TEST ONLY valuation series percent');
 SELECT pg_temp.link_continuity('c_row', 'TEST ONLY valuation series currency');
+SELECT pg_temp.link_continuity('m_early', 'TEST ONLY valuation series mismatch');
+SELECT pg_temp.link_continuity('m_late', 'TEST ONLY valuation series mismatch');
 
 SET CONSTRAINTS ALL IMMEDIATE;
 
@@ -314,6 +330,28 @@ SELECT pg_temp.check('different currency codes are not combined', (
     (SELECT id FROM identity.legal_entity WHERE creation_reason = 'TEST ONLY valuation entity')
   )
   WHERE position_observation_id = pg_temp.fx('c_row')::text));
+
+SELECT pg_temp.check('a cross-period fair-value currency mismatch is not a valuation delta', (
+  SELECT v.instrument_resolution_state = 'MATCHED'
+     AND v.continuity_state = 'MATCHED'
+     AND v.fair_value_state = 'REPORTED'
+     AND v.fair_value_raw = '60'
+     AND v.fair_value_currency_code = 'BBB'
+     AND v.earlier_reported_date = '2098-03-31'
+     AND v.fair_value_change_state = 'INSUFFICIENT_DATA'
+     AND v.fair_value_delta IS NULL
+     AND v.fair_value_percentage_state = 'INSUFFICIENT_DATA'
+     AND v.fair_value_percentage IS NULL
+     AND c.fair_value_comparison_state = 'INSUFFICIENT_DATA'
+     AND c.fair_value_delta IS NULL
+     AND c.earlier_fair_value_numeric = 70
+     AND c.later_fair_value_numeric = 60
+  FROM registry.borrower_position_valuation(
+    (SELECT id FROM identity.legal_entity WHERE creation_reason = 'TEST ONLY valuation entity')
+  ) v
+  JOIN registry.position_period_comparison c
+    ON c.later_position_observation_id = v.position_observation_id::bigint
+  WHERE v.position_observation_id = pg_temp.fx('m_late')::text));
 
 SELECT pg_temp.check('currency codes come from the current field view', (
   SELECT position('obs.current_position_field_value' IN pg_get_functiondef('registry.borrower_position_valuation(uuid)'::regprocedure)) > 0

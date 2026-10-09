@@ -2772,13 +2772,14 @@ CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RET
          CASE
            WHEN r.instrument_resolution_state = 'MATCHED'
             AND r.continuity_state = 'MATCHED'
-            AND cmp.fair_value_comparison_state IS NOT NULL
-           THEN cmp.fair_value_comparison_state
+            AND cmp.fair_value_comparison_state = 'COMPARABLE'
+           THEN 'COMPARABLE'
            ELSE 'INSUFFICIENT_DATA'
          END,
          CASE
            WHEN r.instrument_resolution_state = 'MATCHED'
             AND r.continuity_state = 'MATCHED'
+            AND cmp.fair_value_comparison_state = 'COMPARABLE'
            THEN cmp.fair_value_delta::text
          END,
          CASE
@@ -2788,13 +2789,13 @@ CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RET
             AND cmp.fair_value_delta IS NOT NULL
             AND cmp.earlier_fair_value_numeric IS NOT NULL
             AND cmp.earlier_fair_value_numeric <> 0
-            AND r.fair_value_currency_state IS DISTINCT FROM 'AMBIGUOUS'
-            AND cmp.earlier_fair_value_currency_state IS DISTINCT FROM 'AMBIGUOUS'
-            AND NOT (
-              fair_value_code.currency_code IS NOT NULL
-              AND cmp.earlier_fair_value_currency_code IS NOT NULL
-              AND fair_value_code.currency_code IS DISTINCT FROM cmp.earlier_fair_value_currency_code
-            )
+            AND r.fair_value_currency_state IS NOT NULL
+            AND cmp.earlier_fair_value_currency_state IS NOT NULL
+            AND r.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+            AND cmp.earlier_fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+            AND fair_value_code.currency_code IS NOT NULL
+            AND cmp.earlier_fair_value_currency_code IS NOT NULL
+            AND fair_value_code.currency_code = cmp.earlier_fair_value_currency_code
            THEN 'COMPARABLE'
            ELSE 'INSUFFICIENT_DATA'
          END,
@@ -2805,13 +2806,13 @@ CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RET
             AND cmp.fair_value_delta IS NOT NULL
             AND cmp.earlier_fair_value_numeric IS NOT NULL
             AND cmp.earlier_fair_value_numeric <> 0
-            AND r.fair_value_currency_state IS DISTINCT FROM 'AMBIGUOUS'
-            AND cmp.earlier_fair_value_currency_state IS DISTINCT FROM 'AMBIGUOUS'
-            AND NOT (
-              fair_value_code.currency_code IS NOT NULL
-              AND cmp.earlier_fair_value_currency_code IS NOT NULL
-              AND fair_value_code.currency_code IS DISTINCT FROM cmp.earlier_fair_value_currency_code
-            )
+            AND r.fair_value_currency_state IS NOT NULL
+            AND cmp.earlier_fair_value_currency_state IS NOT NULL
+            AND r.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+            AND cmp.earlier_fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+            AND fair_value_code.currency_code IS NOT NULL
+            AND cmp.earlier_fair_value_currency_code IS NOT NULL
+            AND fair_value_code.currency_code = cmp.earlier_fair_value_currency_code
            THEN round(cmp.fair_value_delta / cmp.earlier_fair_value_numeric * 100, 6)::text
          END,
          CASE
@@ -2958,7 +2959,7 @@ CREATE FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) RET
            r.position_observation_id ASC
 $$;
 
-COMMENT ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) IS 'Historical valuation for one legal entity under valuation.position_history.v1. The legal entity filter is applied before registry.position_read. A fair-value delta is copied from registry.borrower_valuation_period_comparison for that entity. The percentage is that stored delta divided by the earlier fair_value_numeric, times 100, rounded to 6 decimal places, and only when the earlier number is stored and not zero. Fair value / principal and fair value / cost use the stored numerics on one observation and require a non-zero denominator. An unresolved instrument does not receive those figures. Different stored currency codes are not combined. Currency is not converted. cross_bdc_comparison_state stays UNAVAILABLE: a cross-BDC comparison requires a resolved legal entity, a resolved instrument, established position continuity, comparable observations, and compatible currency. Unknown is not zero.';
+COMMENT ON FUNCTION registry.borrower_position_valuation(p_legal_entity_id uuid) IS 'Historical valuation for one legal entity under valuation.position_history.v1. The legal entity filter is applied before registry.position_read. A fair-value delta is copied from registry.borrower_valuation_period_comparison only when that comparison is COMPARABLE, which requires compatible stored currency codes. The percentage uses that delta divided by the earlier fair_value_numeric, times 100, rounded to 6 decimal places, only when the earlier number is stored and not zero and currency is established. Fair value / principal and fair value / cost use the stored numerics on one observation and require a non-zero denominator. An unresolved instrument does not receive those figures. Different stored currency codes are not combined. Unknown or missing currency does not become comparable. Currency is not converted. cross_bdc_comparison_state stays UNAVAILABLE. Unknown is not zero.';
 
 CREATE FUNCTION registry.borrower_refinancing_outcomes(p_legal_entity_id uuid) RETURNS TABLE(legal_entity_id text, position_id text, instrument_id text, instrument_resolution_state text, continuity_state text, instrument_type_state text, instrument_type_raw text, earlier_position_observation_id text, later_position_observation_id text, earlier_reported_date text, later_reported_date text, event_date text, event_type text, refinancing_outcome_state text, earlier_maturity_raw text, later_maturity_raw text, earlier_maturity_precision text, later_maturity_precision text, earlier_principal_state text, earlier_principal_raw text, earlier_principal_currency_state text, earlier_principal_currency_code text, later_principal_state text, later_principal_raw text, later_principal_currency_state text, later_principal_currency_code text, earlier_accession_number text, later_accession_number text, earlier_observation_evidence_id text, later_observation_evidence_id text, earlier_observation_evidence_level text, later_observation_evidence_level text, registrant_cik text, registrant_link_status text, outcome_definition text)
     LANGUAGE sql STABLE
@@ -3126,6 +3127,13 @@ CREATE FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id 
     CASE
       WHEN e.principal_state = 'REPORTED' AND e.principal_numeric IS NOT NULL
        AND l.principal_state = 'REPORTED' AND l.principal_numeric IS NOT NULL
+       AND e.principal_currency_state IS NOT NULL
+       AND l.principal_currency_state IS NOT NULL
+       AND e.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_principal_ccy.currency_code IS NOT NULL
+       AND l_principal_ccy.currency_code IS NOT NULL
+       AND e_principal_ccy.currency_code = l_principal_ccy.currency_code
       THEN 'COMPARABLE'
       ELSE 'INSUFFICIENT_DATA'
     END AS principal_comparison_state,
@@ -3136,16 +3144,37 @@ CREATE FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id 
     CASE
       WHEN e.principal_state = 'REPORTED' AND e.principal_numeric IS NOT NULL
        AND l.principal_state = 'REPORTED' AND l.principal_numeric IS NOT NULL
+       AND e.principal_currency_state IS NOT NULL
+       AND l.principal_currency_state IS NOT NULL
+       AND e.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_principal_ccy.currency_code IS NOT NULL
+       AND l_principal_ccy.currency_code IS NOT NULL
+       AND e_principal_ccy.currency_code = l_principal_ccy.currency_code
       THEN l.principal_numeric - e.principal_numeric
     END AS principal_delta,
     CASE
       WHEN e.principal_state = 'REPORTED' AND e.principal_numeric IS NOT NULL
        AND l.principal_state = 'REPORTED' AND l.principal_numeric IS NOT NULL
+       AND e.principal_currency_state IS NOT NULL
+       AND l.principal_currency_state IS NOT NULL
+       AND e.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.principal_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_principal_ccy.currency_code IS NOT NULL
+       AND l_principal_ccy.currency_code IS NOT NULL
+       AND e_principal_ccy.currency_code = l_principal_ccy.currency_code
       THEN l.principal_numeric IS DISTINCT FROM e.principal_numeric
     END AS principal_changed,
     CASE
       WHEN e.cost_state = 'REPORTED' AND e.cost_numeric IS NOT NULL
        AND l.cost_state = 'REPORTED' AND l.cost_numeric IS NOT NULL
+       AND e.cost_currency_state IS NOT NULL
+       AND l.cost_currency_state IS NOT NULL
+       AND e.cost_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.cost_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_cost_ccy.currency_code IS NOT NULL
+       AND l_cost_ccy.currency_code IS NOT NULL
+       AND e_cost_ccy.currency_code = l_cost_ccy.currency_code
       THEN 'COMPARABLE'
       ELSE 'INSUFFICIENT_DATA'
     END AS cost_comparison_state,
@@ -3156,16 +3185,37 @@ CREATE FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id 
     CASE
       WHEN e.cost_state = 'REPORTED' AND e.cost_numeric IS NOT NULL
        AND l.cost_state = 'REPORTED' AND l.cost_numeric IS NOT NULL
+       AND e.cost_currency_state IS NOT NULL
+       AND l.cost_currency_state IS NOT NULL
+       AND e.cost_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.cost_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_cost_ccy.currency_code IS NOT NULL
+       AND l_cost_ccy.currency_code IS NOT NULL
+       AND e_cost_ccy.currency_code = l_cost_ccy.currency_code
       THEN l.cost_numeric - e.cost_numeric
     END AS cost_delta,
     CASE
       WHEN e.cost_state = 'REPORTED' AND e.cost_numeric IS NOT NULL
        AND l.cost_state = 'REPORTED' AND l.cost_numeric IS NOT NULL
+       AND e.cost_currency_state IS NOT NULL
+       AND l.cost_currency_state IS NOT NULL
+       AND e.cost_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.cost_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_cost_ccy.currency_code IS NOT NULL
+       AND l_cost_ccy.currency_code IS NOT NULL
+       AND e_cost_ccy.currency_code = l_cost_ccy.currency_code
       THEN l.cost_numeric IS DISTINCT FROM e.cost_numeric
     END AS cost_changed,
     CASE
       WHEN e.fair_value_state = 'REPORTED' AND e.fair_value_numeric IS NOT NULL
        AND l.fair_value_state = 'REPORTED' AND l.fair_value_numeric IS NOT NULL
+       AND e.fair_value_currency_state IS NOT NULL
+       AND l.fair_value_currency_state IS NOT NULL
+       AND e.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_fair_value_ccy.currency_code IS NOT NULL
+       AND l_fair_value_ccy.currency_code IS NOT NULL
+       AND e_fair_value_ccy.currency_code = l_fair_value_ccy.currency_code
       THEN 'COMPARABLE'
       ELSE 'INSUFFICIENT_DATA'
     END AS fair_value_comparison_state,
@@ -3176,11 +3226,25 @@ CREATE FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id 
     CASE
       WHEN e.fair_value_state = 'REPORTED' AND e.fair_value_numeric IS NOT NULL
        AND l.fair_value_state = 'REPORTED' AND l.fair_value_numeric IS NOT NULL
+       AND e.fair_value_currency_state IS NOT NULL
+       AND l.fair_value_currency_state IS NOT NULL
+       AND e.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_fair_value_ccy.currency_code IS NOT NULL
+       AND l_fair_value_ccy.currency_code IS NOT NULL
+       AND e_fair_value_ccy.currency_code = l_fair_value_ccy.currency_code
       THEN l.fair_value_numeric - e.fair_value_numeric
     END AS fair_value_delta,
     CASE
       WHEN e.fair_value_state = 'REPORTED' AND e.fair_value_numeric IS NOT NULL
        AND l.fair_value_state = 'REPORTED' AND l.fair_value_numeric IS NOT NULL
+       AND e.fair_value_currency_state IS NOT NULL
+       AND l.fair_value_currency_state IS NOT NULL
+       AND e.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND l.fair_value_currency_state NOT IN ('UNKNOWN', 'AMBIGUOUS')
+       AND e_fair_value_ccy.currency_code IS NOT NULL
+       AND l_fair_value_ccy.currency_code IS NOT NULL
+       AND e_fair_value_ccy.currency_code = l_fair_value_ccy.currency_code
       THEN l.fair_value_numeric IS DISTINCT FROM e.fair_value_numeric
     END AS fair_value_changed,
     CASE
@@ -3327,6 +3391,42 @@ CREATE FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id 
     ON l.position_id = e.position_id
    AND l.reported_date > e.reported_date
    AND l.position_observation_id <> e.position_observation_id
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = e.position_observation_id
+      AND fv.field_code = 'PRINCIPAL_AMOUNT'
+  ) e_principal_ccy ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = l.position_observation_id
+      AND fv.field_code = 'PRINCIPAL_AMOUNT'
+  ) l_principal_ccy ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = e.position_observation_id
+      AND fv.field_code = 'COST'
+  ) e_cost_ccy ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = l.position_observation_id
+      AND fv.field_code = 'COST'
+  ) l_cost_ccy ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = e.position_observation_id
+      AND fv.field_code = 'FAIR_VALUE'
+  ) e_fair_value_ccy ON true
+  LEFT JOIN LATERAL (
+    SELECT CASE WHEN count(*) = 1 THEN min(fv.currency_code) END AS currency_code
+    FROM obs.current_position_field_value fv
+    WHERE fv.position_observation_id = l.position_observation_id
+      AND fv.field_code = 'FAIR_VALUE'
+  ) l_fair_value_ccy ON true
   WHERE NOT EXISTS (
     SELECT 1
     FROM confirmed mid
@@ -3336,7 +3436,7 @@ CREATE FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id 
   )
 $$;
 
-COMMENT ON FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id uuid) IS 'Entity-scoped consecutive MATCHED position comparisons for valuation.position_history.v1. Continuity is seeded from position_ids already MATCHED to the requested legal entity on registry.matched_entity_position, then confirmed observations, single-date endpoints, and consecutive pairs follow the same rules as registry.position_period_comparison. The global comparison view is unchanged. Unknown is not zero.';
+COMMENT ON FUNCTION registry.borrower_valuation_period_comparison(p_legal_entity_id uuid) IS 'Entity-scoped consecutive MATCHED position comparisons for valuation.position_history.v1. Continuity is seeded from position_ids already MATCHED to the requested legal entity on registry.matched_entity_position, then confirmed observations, single-date endpoints, and consecutive pairs follow the same rules as registry.position_period_comparison. Principal, cost, and fair-value deltas require reported numerics and compatible stored currency codes (same non-null code; currency state not UNKNOWN or AMBIGUOUS). Currency is not converted. The global comparison view is unchanged by this function body. Unknown is not zero.';
 
 CREATE FUNCTION registry.check_bdc_report_edition() RETURNS trigger
     LANGUAGE plpgsql
@@ -8492,7 +8592,7 @@ CREATE VIEW registry.position_period_comparison AS
     e.observation_evidence_id AS earlier_observation_evidence_id,
     l.observation_evidence_id AS later_observation_evidence_id,
         CASE
-            WHEN ((e.principal_state = 'REPORTED'::text) AND (e.principal_numeric IS NOT NULL) AND (l.principal_state = 'REPORTED'::text) AND (l.principal_numeric IS NOT NULL)) THEN 'COMPARABLE'::text
+            WHEN ((e.principal_state = 'REPORTED'::text) AND (e.principal_numeric IS NOT NULL) AND (l.principal_state = 'REPORTED'::text) AND (l.principal_numeric IS NOT NULL) AND (e.principal_currency_state IS NOT NULL) AND (l.principal_currency_state IS NOT NULL) AND (e.principal_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.principal_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_principal_ccy.currency_code IS NOT NULL) AND (l_principal_ccy.currency_code IS NOT NULL) AND (e_principal_ccy.currency_code = l_principal_ccy.currency_code)) THEN 'COMPARABLE'::text
             ELSE 'INSUFFICIENT_DATA'::text
         END AS principal_comparison_state,
     e.principal_raw AS earlier_principal_raw,
@@ -8500,15 +8600,15 @@ CREATE VIEW registry.position_period_comparison AS
     e.principal_numeric AS earlier_principal_numeric,
     l.principal_numeric AS later_principal_numeric,
         CASE
-            WHEN ((e.principal_state = 'REPORTED'::text) AND (e.principal_numeric IS NOT NULL) AND (l.principal_state = 'REPORTED'::text) AND (l.principal_numeric IS NOT NULL)) THEN (l.principal_numeric - e.principal_numeric)
+            WHEN ((e.principal_state = 'REPORTED'::text) AND (e.principal_numeric IS NOT NULL) AND (l.principal_state = 'REPORTED'::text) AND (l.principal_numeric IS NOT NULL) AND (e.principal_currency_state IS NOT NULL) AND (l.principal_currency_state IS NOT NULL) AND (e.principal_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.principal_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_principal_ccy.currency_code IS NOT NULL) AND (l_principal_ccy.currency_code IS NOT NULL) AND (e_principal_ccy.currency_code = l_principal_ccy.currency_code)) THEN (l.principal_numeric - e.principal_numeric)
             ELSE NULL::numeric
         END AS principal_delta,
         CASE
-            WHEN ((e.principal_state = 'REPORTED'::text) AND (e.principal_numeric IS NOT NULL) AND (l.principal_state = 'REPORTED'::text) AND (l.principal_numeric IS NOT NULL)) THEN (l.principal_numeric IS DISTINCT FROM e.principal_numeric)
+            WHEN ((e.principal_state = 'REPORTED'::text) AND (e.principal_numeric IS NOT NULL) AND (l.principal_state = 'REPORTED'::text) AND (l.principal_numeric IS NOT NULL) AND (e.principal_currency_state IS NOT NULL) AND (l.principal_currency_state IS NOT NULL) AND (e.principal_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.principal_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_principal_ccy.currency_code IS NOT NULL) AND (l_principal_ccy.currency_code IS NOT NULL) AND (e_principal_ccy.currency_code = l_principal_ccy.currency_code)) THEN (l.principal_numeric IS DISTINCT FROM e.principal_numeric)
             ELSE NULL::boolean
         END AS principal_changed,
         CASE
-            WHEN ((e.cost_state = 'REPORTED'::text) AND (e.cost_numeric IS NOT NULL) AND (l.cost_state = 'REPORTED'::text) AND (l.cost_numeric IS NOT NULL)) THEN 'COMPARABLE'::text
+            WHEN ((e.cost_state = 'REPORTED'::text) AND (e.cost_numeric IS NOT NULL) AND (l.cost_state = 'REPORTED'::text) AND (l.cost_numeric IS NOT NULL) AND (e.cost_currency_state IS NOT NULL) AND (l.cost_currency_state IS NOT NULL) AND (e.cost_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.cost_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_cost_ccy.currency_code IS NOT NULL) AND (l_cost_ccy.currency_code IS NOT NULL) AND (e_cost_ccy.currency_code = l_cost_ccy.currency_code)) THEN 'COMPARABLE'::text
             ELSE 'INSUFFICIENT_DATA'::text
         END AS cost_comparison_state,
     e.cost_raw AS earlier_cost_raw,
@@ -8516,15 +8616,15 @@ CREATE VIEW registry.position_period_comparison AS
     e.cost_numeric AS earlier_cost_numeric,
     l.cost_numeric AS later_cost_numeric,
         CASE
-            WHEN ((e.cost_state = 'REPORTED'::text) AND (e.cost_numeric IS NOT NULL) AND (l.cost_state = 'REPORTED'::text) AND (l.cost_numeric IS NOT NULL)) THEN (l.cost_numeric - e.cost_numeric)
+            WHEN ((e.cost_state = 'REPORTED'::text) AND (e.cost_numeric IS NOT NULL) AND (l.cost_state = 'REPORTED'::text) AND (l.cost_numeric IS NOT NULL) AND (e.cost_currency_state IS NOT NULL) AND (l.cost_currency_state IS NOT NULL) AND (e.cost_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.cost_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_cost_ccy.currency_code IS NOT NULL) AND (l_cost_ccy.currency_code IS NOT NULL) AND (e_cost_ccy.currency_code = l_cost_ccy.currency_code)) THEN (l.cost_numeric - e.cost_numeric)
             ELSE NULL::numeric
         END AS cost_delta,
         CASE
-            WHEN ((e.cost_state = 'REPORTED'::text) AND (e.cost_numeric IS NOT NULL) AND (l.cost_state = 'REPORTED'::text) AND (l.cost_numeric IS NOT NULL)) THEN (l.cost_numeric IS DISTINCT FROM e.cost_numeric)
+            WHEN ((e.cost_state = 'REPORTED'::text) AND (e.cost_numeric IS NOT NULL) AND (l.cost_state = 'REPORTED'::text) AND (l.cost_numeric IS NOT NULL) AND (e.cost_currency_state IS NOT NULL) AND (l.cost_currency_state IS NOT NULL) AND (e.cost_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.cost_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_cost_ccy.currency_code IS NOT NULL) AND (l_cost_ccy.currency_code IS NOT NULL) AND (e_cost_ccy.currency_code = l_cost_ccy.currency_code)) THEN (l.cost_numeric IS DISTINCT FROM e.cost_numeric)
             ELSE NULL::boolean
         END AS cost_changed,
         CASE
-            WHEN ((e.fair_value_state = 'REPORTED'::text) AND (e.fair_value_numeric IS NOT NULL) AND (l.fair_value_state = 'REPORTED'::text) AND (l.fair_value_numeric IS NOT NULL)) THEN 'COMPARABLE'::text
+            WHEN ((e.fair_value_state = 'REPORTED'::text) AND (e.fair_value_numeric IS NOT NULL) AND (l.fair_value_state = 'REPORTED'::text) AND (l.fair_value_numeric IS NOT NULL) AND (e.fair_value_currency_state IS NOT NULL) AND (l.fair_value_currency_state IS NOT NULL) AND (e.fair_value_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.fair_value_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_fair_value_ccy.currency_code IS NOT NULL) AND (l_fair_value_ccy.currency_code IS NOT NULL) AND (e_fair_value_ccy.currency_code = l_fair_value_ccy.currency_code)) THEN 'COMPARABLE'::text
             ELSE 'INSUFFICIENT_DATA'::text
         END AS fair_value_comparison_state,
     e.fair_value_raw AS earlier_fair_value_raw,
@@ -8532,11 +8632,11 @@ CREATE VIEW registry.position_period_comparison AS
     e.fair_value_numeric AS earlier_fair_value_numeric,
     l.fair_value_numeric AS later_fair_value_numeric,
         CASE
-            WHEN ((e.fair_value_state = 'REPORTED'::text) AND (e.fair_value_numeric IS NOT NULL) AND (l.fair_value_state = 'REPORTED'::text) AND (l.fair_value_numeric IS NOT NULL)) THEN (l.fair_value_numeric - e.fair_value_numeric)
+            WHEN ((e.fair_value_state = 'REPORTED'::text) AND (e.fair_value_numeric IS NOT NULL) AND (l.fair_value_state = 'REPORTED'::text) AND (l.fair_value_numeric IS NOT NULL) AND (e.fair_value_currency_state IS NOT NULL) AND (l.fair_value_currency_state IS NOT NULL) AND (e.fair_value_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.fair_value_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_fair_value_ccy.currency_code IS NOT NULL) AND (l_fair_value_ccy.currency_code IS NOT NULL) AND (e_fair_value_ccy.currency_code = l_fair_value_ccy.currency_code)) THEN (l.fair_value_numeric - e.fair_value_numeric)
             ELSE NULL::numeric
         END AS fair_value_delta,
         CASE
-            WHEN ((e.fair_value_state = 'REPORTED'::text) AND (e.fair_value_numeric IS NOT NULL) AND (l.fair_value_state = 'REPORTED'::text) AND (l.fair_value_numeric IS NOT NULL)) THEN (l.fair_value_numeric IS DISTINCT FROM e.fair_value_numeric)
+            WHEN ((e.fair_value_state = 'REPORTED'::text) AND (e.fair_value_numeric IS NOT NULL) AND (l.fair_value_state = 'REPORTED'::text) AND (l.fair_value_numeric IS NOT NULL) AND (e.fair_value_currency_state IS NOT NULL) AND (l.fair_value_currency_state IS NOT NULL) AND (e.fair_value_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (l.fair_value_currency_state <> ALL (ARRAY['UNKNOWN'::text, 'AMBIGUOUS'::text])) AND (e_fair_value_ccy.currency_code IS NOT NULL) AND (l_fair_value_ccy.currency_code IS NOT NULL) AND (e_fair_value_ccy.currency_code = l_fair_value_ccy.currency_code)) THEN (l.fair_value_numeric IS DISTINCT FROM e.fair_value_numeric)
             ELSE NULL::boolean
         END AS fair_value_changed,
         CASE
@@ -8624,19 +8724,61 @@ CREATE VIEW registry.position_period_comparison AS
             WHEN ((e.interest_rate_floor_state = 'REPORTED'::text) AND (e.interest_rate_floor_numeric IS NOT NULL) AND (l.interest_rate_floor_state = 'REPORTED'::text) AND (l.interest_rate_floor_numeric IS NOT NULL)) THEN (l.interest_rate_floor_numeric IS DISTINCT FROM e.interest_rate_floor_numeric)
             ELSE NULL::boolean
         END AS interest_rate_floor_changed
-   FROM (endpoints e
+   FROM (((((((endpoints e
      JOIN endpoints l ON (((l.position_id = e.position_id) AND (l.reported_date > e.reported_date) AND (l.position_observation_id <> e.position_observation_id))))
+     LEFT JOIN LATERAL ( SELECT
+                CASE
+                    WHEN (count(*) = 1) THEN min(fv.currency_code)
+                    ELSE NULL::text
+                END AS currency_code
+           FROM obs.current_position_field_value fv
+          WHERE ((fv.position_observation_id = e.position_observation_id) AND (fv.field_code = 'PRINCIPAL_AMOUNT'::text))) e_principal_ccy ON (true))
+     LEFT JOIN LATERAL ( SELECT
+                CASE
+                    WHEN (count(*) = 1) THEN min(fv.currency_code)
+                    ELSE NULL::text
+                END AS currency_code
+           FROM obs.current_position_field_value fv
+          WHERE ((fv.position_observation_id = l.position_observation_id) AND (fv.field_code = 'PRINCIPAL_AMOUNT'::text))) l_principal_ccy ON (true))
+     LEFT JOIN LATERAL ( SELECT
+                CASE
+                    WHEN (count(*) = 1) THEN min(fv.currency_code)
+                    ELSE NULL::text
+                END AS currency_code
+           FROM obs.current_position_field_value fv
+          WHERE ((fv.position_observation_id = e.position_observation_id) AND (fv.field_code = 'COST'::text))) e_cost_ccy ON (true))
+     LEFT JOIN LATERAL ( SELECT
+                CASE
+                    WHEN (count(*) = 1) THEN min(fv.currency_code)
+                    ELSE NULL::text
+                END AS currency_code
+           FROM obs.current_position_field_value fv
+          WHERE ((fv.position_observation_id = l.position_observation_id) AND (fv.field_code = 'COST'::text))) l_cost_ccy ON (true))
+     LEFT JOIN LATERAL ( SELECT
+                CASE
+                    WHEN (count(*) = 1) THEN min(fv.currency_code)
+                    ELSE NULL::text
+                END AS currency_code
+           FROM obs.current_position_field_value fv
+          WHERE ((fv.position_observation_id = e.position_observation_id) AND (fv.field_code = 'FAIR_VALUE'::text))) e_fair_value_ccy ON (true))
+     LEFT JOIN LATERAL ( SELECT
+                CASE
+                    WHEN (count(*) = 1) THEN min(fv.currency_code)
+                    ELSE NULL::text
+                END AS currency_code
+           FROM obs.current_position_field_value fv
+          WHERE ((fv.position_observation_id = l.position_observation_id) AND (fv.field_code = 'FAIR_VALUE'::text))) l_fair_value_ccy ON (true))
   WHERE (NOT (EXISTS ( SELECT 1
            FROM confirmed mid
           WHERE ((mid.position_id = e.position_id) AND (mid.reported_date > e.reported_date) AND (mid.reported_date < l.reported_date)))));
 
-COMMENT ON VIEW registry.position_period_comparison IS 'One comparison for one identity.position and two consecutive MATCHED observations with strictly increasing reported dates. Both observations must be the only MATCHED observation of that position on their reporting date. Delta is later normalized value minus earlier normalized value when both are stored. A missing value is INSUFFICIENT_DATA and null. Observed field change is not itself a credit event. Absence of a later observation is not evidence of repayment or exit.';
+COMMENT ON VIEW registry.position_period_comparison IS 'One comparison for one identity.position and two consecutive MATCHED observations with strictly increasing reported dates. Continuity is seeded from resolution.current_position_continuity. Both observations must be the only MATCHED observation of that position on their reporting date. Principal, cost, and fair-value deltas require reported numerics and compatible stored currency: both currency states are present and not UNKNOWN or AMBIGUOUS, both currency codes are present, and the codes are equal. Currency is not converted. A missing or incompatible currency is INSUFFICIENT_DATA and null. Observed field change is not itself a credit event. Absence of a later observation is not evidence of repayment or exit.';
 
-COMMENT ON COLUMN registry.position_period_comparison.principal_delta IS 'Later principal_numeric minus earlier principal_numeric when both are stored. Null when either side is missing. Unknown is not zero.';
+COMMENT ON COLUMN registry.position_period_comparison.principal_delta IS 'Later principal_numeric minus earlier principal_numeric when both are stored with compatible currency codes. Null when either side is missing or currency is not established. Unknown is not zero.';
 
-COMMENT ON COLUMN registry.position_period_comparison.cost_delta IS 'Later stored COST minus earlier stored COST when both normalized numbers are stored. Null when either side is missing.';
+COMMENT ON COLUMN registry.position_period_comparison.cost_delta IS 'Later stored COST minus earlier stored COST when both normalized numbers are stored with compatible currency codes. Null when either side is missing or currency is not established.';
 
-COMMENT ON COLUMN registry.position_period_comparison.fair_value_delta IS 'Later fair_value_numeric minus earlier fair_value_numeric when both are stored. A decrease is a numeric delta, not a credit event.';
+COMMENT ON COLUMN registry.position_period_comparison.fair_value_delta IS 'Later fair_value_numeric minus earlier fair_value_numeric when both are stored with compatible currency codes. A decrease is a numeric delta, not a credit event. Null when currency is not established.';
 
 COMMENT ON COLUMN registry.position_period_comparison.maturity_changed IS 'True when both maturities are comparable calendar days and the days differ, or both are month precision and the year or month differs. Null when the two precisions are not comparable. A month is not converted to a day.';
 

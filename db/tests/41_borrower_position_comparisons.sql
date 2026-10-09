@@ -19,6 +19,19 @@ LANGUAGE sql AS $$
           pg_temp.fx('r_field'), pg_temp.l2_evidence(), pg_temp.fx('run'))
 $$;
 
+CREATE FUNCTION pg_temp.l2_coded_money(
+  pos_key text, field_code text, raw text, amount numeric, code text
+) RETURNS void
+LANGUAGE sql AS $$
+  INSERT INTO obs.position_field_value (
+      position_observation_id, field_code, raw_value, normalized_numeric,
+      currency_code, currency_state, scale_state, value_state,
+      normalization_rule_version_id, evidence_id, run_id)
+  VALUES (pg_temp.fx(pos_key), field_code, raw, amount,
+          code, 'FROM_FILING', 'NOT_APPLICABLE', 'REPORTED',
+          pg_temp.fx('r_field'), pg_temp.l2_evidence(), pg_temp.fx('run'))
+$$;
+
 CREATE FUNCTION pg_temp.l2_calendar(pos_key text, field_code text, raw text, d date) RETURNS void
 LANGUAGE sql AS $$
   INSERT INTO obs.position_field_value (
@@ -133,12 +146,12 @@ SELECT pg_temp.series_position('b_jun', 'TEST COMPARISON ENTITY B | JUN', 104, '
 SELECT pg_temp.series_position('s_mar', 'TEST COMPARISON SPLIT | MAR', 105, '2099-03-31');
 SELECT pg_temp.series_position('s_jun', 'TEST COMPARISON SPLIT | JUN', 106, '2099-06-30');
 
-SELECT pg_temp.l2_money('a_mar', 'PRINCIPAL_AMOUNT', '100', 100);
-SELECT pg_temp.l2_money('a_mar', 'FAIR_VALUE', '70', 70);
+SELECT pg_temp.l2_coded_money('a_mar', 'PRINCIPAL_AMOUNT', '100', 100, 'AAA');
+SELECT pg_temp.l2_coded_money('a_mar', 'FAIR_VALUE', '70', 70, 'AAA');
 SELECT pg_temp.l2_month('a_mar', 'MATURITY_DATE', '12/2099', 2099, 12);
 SELECT pg_temp.l2_calendar('a_mar', 'ACQUISITION_DATE', '2099-01-15', DATE '2099-01-15');
-SELECT pg_temp.l2_money('a_jun', 'PRINCIPAL_AMOUNT', '120', 120);
-SELECT pg_temp.l2_money('a_jun', 'FAIR_VALUE', '60', 60);
+SELECT pg_temp.l2_coded_money('a_jun', 'PRINCIPAL_AMOUNT', '120', 120, 'AAA');
+SELECT pg_temp.l2_coded_money('a_jun', 'FAIR_VALUE', '60', 60, 'AAA');
 SELECT pg_temp.l2_month('a_jun', 'MATURITY_DATE', '06/2100', 2100, 6);
 SELECT pg_temp.l2_calendar('a_jun', 'ACQUISITION_DATE', '2099-01-15', DATE '2099-01-15');
 SELECT pg_temp.l2_calendar('a_sep', 'MATURITY_DATE', '2099-12-15', DATE '2099-12-15');

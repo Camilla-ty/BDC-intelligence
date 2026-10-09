@@ -335,6 +335,24 @@ SELECT pg_temp.check('entity B has comparisons and empty refinancing', (
   FROM registry.borrower_comparisons_and_refinancing(
     (SELECT id FROM identity.legal_entity WHERE creation_reason = 'TEST ONLY scoped combined B'))));
 
+SELECT pg_temp.check('entity B different currency codes are not a principal delta', (
+  SELECT bool_and(elem->>'principal_comparison_state' = 'INSUFFICIENT_DATA')
+     AND bool_and(elem->>'principal_delta' IS NULL)
+     AND bool_and(elem->>'cost_comparison_state' = 'INSUFFICIENT_DATA')
+     AND bool_and(elem->>'fair_value_comparison_state' = 'INSUFFICIENT_DATA')
+  FROM registry.borrower_comparisons_and_refinancing(
+    (SELECT id FROM identity.legal_entity WHERE creation_reason = 'TEST ONLY scoped combined B')) c,
+       LATERAL json_array_elements(c.comparisons) elem));
+
+SELECT pg_temp.check('entity A same currency code keeps a principal delta', (
+  SELECT bool_or(
+           elem->>'later_position_observation_id' = pg_temp.fx('a_jun')::text
+       AND elem->>'principal_comparison_state' = 'COMPARABLE'
+       AND elem->>'principal_delta' = '30')
+  FROM registry.borrower_comparisons_and_refinancing(
+    (SELECT id FROM identity.legal_entity WHERE creation_reason = 'TEST ONLY scoped combined A')) c,
+       LATERAL json_array_elements(c.comparisons) elem));
+
 SELECT pg_temp.check('entity C has no pairs', (
   SELECT comparisons::jsonb = '[]'::jsonb
      AND refinancing::jsonb = '[]'::jsonb
