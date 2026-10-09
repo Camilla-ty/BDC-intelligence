@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  HOSTED_STATEMENT_TIMEOUT,
+  appendResultLines,
   assertPipelineUrl,
   copyBlock,
+  hostedPipelineScript,
   pipelineConnectionTarget,
   pipelineScript,
   publicPipelineError,
+  rowsToLines,
   splitPsqlScript,
 } from "../lib/db.mjs";
 
@@ -83,6 +87,85 @@ test("hosted script keeps SET ROLE and the same COPY payload", () => {
   assert.equal(pipelineScript("SELECT 1;", { asWriter: false }), "SELECT 1;");
 });
 
+
+test("hosted script sets a bounded session statement_timeout before SET ROLE", () => {
+  assert.equal(HOSTED_STATEMENT_TIMEOUT, "60min");
+  const sql = hostedPipelineScript(`SELECT 1;\n${copyBlock("_t", ["n"], [["1"]])}\nSELECT 2;`);
+  assert.match(sql, /^SET statement_timeout = '60min';\nSET ROLE bdc_pipeline_writer;\nSELECT 1;/);
+  const parts = splitPsqlScript(sql);
+  assert.equal(parts.length, 3);
+  assert.match(parts[0].text, /^SET statement_timeout = '60min';\nSET ROLE bdc_pipeline_writer;\nSELECT 1;$/);
+  assert.equal(parts[1].kind, "copy");
+  assert.equal(
+    hostedPipelineScript("SELECT 1;", { asWriter: false }),
+    "SET statement_timeout = '60min';\nSELECT 1;",
+  );
+});
+
+test("local script is unchanged and carries no statement_timeout", () => {
+  assert.equal(pipelineScript("SELECT 1;"), "SET ROLE bdc_pipeline_writer;\nSELECT 1;");
+  assert.equal(pipelineScript("SELECT 1;", { asWriter: false }), "SELECT 1;");
+  assert.equal(pipelineScript("SELECT 1;").includes("statement_timeout"), false);
+  const src = readFileSync(new URL("../lib/db.mjs", import.meta.url), "utf8");
+  const runScript = src.slice(src.indexOf("export function runScript"), src.indexOf("export function queryRows"));
+  assert.match(runScript, /mode === "hosted"\) return runHosted\(target\.connectionString, hostedPipelineScript\(/);
+  assert.match(runScript, /psql\(database, pipelineScript\(sql, \{ asWriter \}\)/);
+});
+
+test("pipeline database module changes no database, role, or server configuration", () => {
+  const src = readFileSync(new URL("../lib/db.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /ALTER\s+(ROLE|USER|DATABASE|SYSTEM)/i);
+  assert.doesNotMatch(src, /set_config\s*\(/i);
+  assert.doesNotMatch(src, /SET\s+LOCAL\s+statement_timeout/i);
+  assert.equal(src.match(/SET statement_timeout/g)?.length, 1);
+});
+
 test("a COPY block without a terminator fails closed", () => {
   assert.throws(() => splitPsqlScript("COPY _t (n) FROM STDIN;\n1\n"), /missing its terminator/);
+});
+
+test("appendResultLines keeps empty, small, and multi-result order", () => {
+  assert.deepEqual(appendResultLines([], { rows: [] }), []);
+  assert.deepEqual(appendResultLines([], {}), []);
+  assert.deepEqual(appendResultLines([], []), []);
+  assert.deepEqual(appendResultLines(["keep"], { rows: [["a"], ["b", "c"]] }), ["keep", "a", "b\tc"]);
+  assert.deepEqual(
+    appendResultLines([], [{ rows: [["1"], ["2"]] }, { rows: [] }, { rows: [["3", "x"]] }]),
+    ["1", "2", "3\tx"],
+  );
+  assert.deepEqual(rowsToLines({ rows: [[null], [1], [true], [{ k: "v" }]] }), ["", "1", "true", '{"k":"v"}']);
+});
+
+test("appendResultLines does not overflow at the production soi_ok_rows boundary", () => {
+  const n = 181_903;
+  const result = { rows: Array.from({ length: n }, (_, i) => [String(i), "2099-12-31"]) };
+  const lines = [];
+  appendResultLines(lines, result);
+  assert.equal(lines.length, n);
+  assert.equal(lines[0], "0\t2099-12-31");
+  assert.equal(lines[100], "100\t2099-12-31");
+  assert.equal(lines[n - 1], `${n - 1}\t2099-12-31`);
+  assert.throws(
+    () => {
+      const exploded = [];
+      exploded.push(...rowsToLines(result));
+    },
+    (error) => {
+      assert.equal(error.name, "RangeError");
+      assert.match(error.message, /Maximum call stack size exceeded/);
+      return true;
+    },
+  );
+});
+
+test("hosted client collects SQL result rows without an argument spread", () => {
+  const src = readFileSync(new URL("../lib/db.mjs", import.meta.url), "utf8");
+  const hosted = src.slice(
+    src.indexOf("export async function executeHostedScript"),
+    src.indexOf("function runHosted"),
+  );
+  assert.match(hosted, /appendResultLines\(lines, result\)/);
+  assert.doesNotMatch(hosted, /\.push\(\.\.\./);
+  assert.doesNotMatch(hosted, /\.apply\s*\(/);
+  assert.doesNotMatch(src, /lines\.push\(\.\.\.\s*rowsToLines/);
 });

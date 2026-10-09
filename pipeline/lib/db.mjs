@@ -76,6 +76,21 @@ export function pipelineScript(sql, { asWriter = true } = {}) {
   return `${asWriter ? "SET ROLE bdc_pipeline_writer;\n" : ""}${sql}`;
 }
 
+// The hosted server default (120s) is shorter than some load statements. Session-level SET
+// lasts only for this connection (session pooler or direct; port 6543 is refused), and each
+// hosted script opens its own connection. Bounded so a hung statement still fails.
+// Local rebuilds sampled position_field_value inserts at ~86s on Docker; hosted compute is
+// smaller, so 60min is the production bound rather than 15min.
+export const HOSTED_STATEMENT_TIMEOUT = "60min";
+
+function sessionTimeoutSql() {
+  return `SET statement_timeout = ${lit(HOSTED_STATEMENT_TIMEOUT)}`;
+}
+
+export function hostedPipelineScript(sql, opts) {
+  return `${sessionTimeoutSql()};\n${pipelineScript(sql, opts)}`;
+}
+
 // Splits a psql script into SQL text and COPY FROM STDIN payloads. The `\.` terminator
 // is a psql meta-command; the hosted client sends that payload with the COPY protocol.
 export function splitPsqlScript(script) {
@@ -123,7 +138,7 @@ function cellText(value) {
   return JSON.stringify(value);
 }
 
-function rowsToLines(result) {
+export function rowsToLines(result) {
   const results = Array.isArray(result) ? result : [result];
   const lines = [];
   for (const item of results) {
@@ -131,6 +146,13 @@ function rowsToLines(result) {
       const cells = Array.isArray(row) ? row : [row];
       lines.push(cells.map(cellText).join("\t"));
     }
+  }
+  return lines;
+}
+
+export function appendResultLines(lines, result) {
+  for (const line of rowsToLines(result)) {
+    lines.push(line);
   }
   return lines;
 }
@@ -184,7 +206,7 @@ export async function executeHostedScript(connectionString, script) {
     for (const part of splitPsqlScript(script)) {
       if (part.kind === "sql") {
         const result = await client.query({ text: part.text, queryMode: "simple", rowMode: "array" });
-        lines.push(...rowsToLines(result));
+        appendResultLines(lines, result);
       } else {
         await new Promise((resolve, reject) => {
           const query = copyInQuery(part.text, part.payload);
@@ -222,10 +244,9 @@ function runHosted(connectionString, script) {
 }
 
 export function runScript(database, sql, { asWriter = true } = {}) {
-  const script = pipelineScript(sql, { asWriter });
   const target = pipelineConnectionTarget();
-  if (target.mode === "hosted") return runHosted(target.connectionString, script);
-  const r = psql(database, script, ["-At", "-F", "\t"]);
+  if (target.mode === "hosted") return runHosted(target.connectionString, hostedPipelineScript(sql, { asWriter }));
+  const r = psql(database, pipelineScript(sql, { asWriter }), ["-At", "-F", "\t"]);
   if (r.status !== 0) {
     const message = r.stderr.split("\n").filter((l) => /ERROR|DETAIL|CONTEXT|LINE/.test(l)).slice(0, 10).join("\n");
     throw new Error(message || r.stderr.trim() || `psql exited with ${r.status}`);
