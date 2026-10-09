@@ -8,6 +8,7 @@ import { DEFAULT_DATA_DIR } from "../lib/config.mjs";
 import { lit, num, queryRows } from "../lib/db.mjs";
 import { createStore } from "../lib/store.mjs";
 import { fetchAndLinkFilingDocument } from "./filing-document-artifact.mjs";
+import { acquireMaturityWorkerLock, bindMaturityWorkerShutdown } from "./maturity-worker-lock.mjs";
 import { pipelineCodeVersion } from "./run.mjs";
 import {
   NO_BIND_REASON, bindMaturityContextRows, rejectSharedContextBinds,
@@ -437,6 +438,8 @@ export async function runMaturityInspectionBatch({
   log = () => {},
 }) {
   if (!sessionId) throw new Error("maturity batch requires a session_id");
+  const workerLock = await acquireMaturityWorkerLock(database);
+  const detachShutdown = bindMaturityWorkerShutdown(workerLock);
   let runId;
   try {
   const before = batchCounts(database);
@@ -565,5 +568,8 @@ export async function runMaturityInspectionBatch({
       }
     }
     throw error;
+  } finally {
+    detachShutdown();
+    await workerLock.release();
   }
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Maturity inspection for whole filings selected by accession number. Binding, NOT_BOUND
+// Maturity inspection for whole filings selected by accession number. One session-level
+// advisory lock is acquired before any filing read, SEC fetch, or run insert. Binding, NOT_BOUND
 // reasons, supersession, and evidence come unchanged from load/maturity-inspection-batch.mjs.
 // Filing HTML is fetched only when no artifact is linked to the primary document; that fetch
 // needs SEC_USER_AGENT. This script does not read .env.local.
@@ -18,6 +19,7 @@ import {
   RULE_VERSION, bindFilingPositions, commitInspectionPublication, ensureRule,
   formatInspectionErrors, inspectFilingPositions, recordMaturityRunFailure,
 } from "./load/maturity-inspection-batch.mjs";
+import { acquireMaturityWorkerLock, bindMaturityWorkerShutdown } from "./load/maturity-worker-lock.mjs";
 import { pipelineCodeVersion } from "./load/run.mjs";
 import { listIxContextRows } from "./normalize/ix-context-row.mjs";
 
@@ -145,6 +147,8 @@ export async function runMaturityInspect({
   log = console.log,
 }) {
   validateAccessions(accessions);
+  const workerLock = await acquireMaturityWorkerLock(database);
+  const detachShutdown = bindMaturityWorkerShutdown(workerLock);
   let runId;
   try {
   const sid = sessionId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
@@ -223,6 +227,9 @@ export async function runMaturityInspect({
       }
     }
     throw error;
+  } finally {
+    detachShutdown();
+    await workerLock.release();
   }
 }
 

@@ -90,6 +90,7 @@ npm run registry:fetch # local only; needs SEC_USER_AGENT; writes .data/sec/
 npm run registry:load  # offline rebuild from the fetch log
 npm run soi:load       # offline SOI projection from already-loaded ZIP artifacts
 npm run soi:reconcile  # local only: compare soi.tsv line counts to the database
+npm run maturity:inspect -- --accession ACCESSION  # filing maturity inspection; HTML fetch needs SEC_USER_AGENT
 npm run p4:golden      # Golden slice borrower-name observations; no fetch
 npm run p5:golden      # Golden slice filing-document fetch + string checks; needs SEC_USER_AGENT
 npm run p6:golden      # Golden slice legal-entity resolution; no fetch

@@ -3,11 +3,12 @@
 // local Docker container (scripts/db/pg.mjs). Every script runs as bdc_pipeline_writer
 // unless asWriter is false. Bulk data stays in COPY. This module does not read the web URL.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
-import { psql } from "../../scripts/db/pg.mjs";
+import { CONTAINER, DB_USER, psql } from "../../scripts/db/pg.mjs";
 
 export function lit(value) {
   if (value === null || value === undefined) return "NULL";
@@ -241,6 +242,137 @@ function runHosted(connectionString, script) {
     throw new Error(message);
   }
   return (result.stdout ?? "").split("\n").filter((line) => line !== "");
+}
+
+function assertLocalDatabaseName(name) {
+  if (!/^[a-z][a-z0-9_]{0,62}$/.test(name)) throw new Error(`invalid database name: ${name}`);
+}
+
+// A connection that stays open. queryRows cannot hold a session advisory lock:
+// each script opens a connection and closes it. Hosted sessions use the same
+// URL check, SSL, statement timeout, and writer role as hostedPipelineScript.
+export async function openPipelineSession(database) {
+  const target = pipelineConnectionTarget();
+  if (target.mode === "hosted") return openHostedPipelineSession(target.connectionString);
+  return openLocalPipelineSession(database);
+}
+
+async function applySessionContract(session) {
+  await session.query(sessionTimeoutSql());
+  await session.query("SET ROLE bdc_pipeline_writer");
+}
+
+async function openHostedPipelineSession(connectionString) {
+  assertPipelineUrl(connectionString);
+  const client = new pg.Client({
+    connectionString: String(connectionString).trim(),
+    ssl: hostedSsl(connectionString),
+    connectionTimeoutMillis: 30_000,
+  });
+  client._types.getTypeParser = () => (value) => value;
+  let closed = false;
+  client.on("error", () => {
+    if (closed) return;
+    closed = true;
+    process.exit(1);
+  });
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await client.end().catch(() => undefined);
+  };
+  try {
+    await client.connect();
+    await applySessionContract({
+      query: (sql) => client.query(sql).then(() => ""),
+    });
+  } catch (error) {
+    await close();
+    throw new Error(publicPipelineError(error, connectionString));
+  }
+  return {
+    query: async (sql) => {
+      try {
+        const result = await client.query({ text: sql, rowMode: "array" });
+        const row = result.rows?.[0];
+        if (!row) return "";
+        return row.map(cellText).join("\t");
+      } catch (error) {
+        throw new Error(publicPipelineError(error, connectionString));
+      }
+    },
+    close,
+  };
+}
+
+async function openLocalPipelineSession(database) {
+  assertLocalDatabaseName(database);
+  const child = spawn("docker", [
+    "exec", "-i", CONTAINER,
+    "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1",
+    "-U", DB_USER, "-d", database, "-At",
+  ], { stdio: ["pipe", "pipe", "pipe"] });
+  let out = "";
+  let err = "";
+  let pending = null;
+  let closed = false;
+  const fail = (error) => {
+    if (closed) return;
+    closed = true;
+    const waiting = pending;
+    pending = null;
+    waiting?.reject(error);
+  };
+  child.stdout.on("data", (chunk) => {
+    out += chunk.toString();
+    if (!pending) return;
+    const at = out.indexOf(pending.marker);
+    if (at < 0) return;
+    const body = out.slice(0, at).replace(/\s+$/, "");
+    out = out.slice(at + pending.marker.length);
+    const waiting = pending;
+    pending = null;
+    waiting.resolve(body);
+  });
+  child.stderr.on("data", (chunk) => { err += chunk.toString(); });
+  child.on("error", (error) => fail(error));
+  child.on("close", (code) => {
+    if (closed) return;
+    const waiting = pending;
+    fail(new Error(err.trim() || `psql session exited ${code}`));
+    if (!waiting) process.exit(1);
+  });
+  const session = {
+    query(sql) {
+      if (closed) return Promise.reject(new Error("pipeline session is closed"));
+      if (pending) return Promise.reject(new Error("pipeline session already has a query"));
+      const marker = `__BDC_MARK_${randomBytes(8).toString("hex")}__`;
+      const text = String(sql).trim().replace(/;+\s*$/, "");
+      return new Promise((resolve, reject) => {
+        pending = { marker, resolve, reject };
+        child.stdin.write(`${text};\nSELECT '${marker}';\n`);
+      });
+    },
+    close() {
+      if (closed) return Promise.resolve();
+      closed = true;
+      const waiting = pending;
+      pending = null;
+      waiting?.reject(new Error("pipeline session closed"));
+      child.stdin.end();
+      return new Promise((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) resolve();
+        else child.once("close", () => resolve());
+      });
+    },
+  };
+  try {
+    await applySessionContract(session);
+  } catch (error) {
+    await session.close();
+    throw error;
+  }
+  return session;
 }
 
 export function runScript(database, sql, { asWriter = true } = {}) {

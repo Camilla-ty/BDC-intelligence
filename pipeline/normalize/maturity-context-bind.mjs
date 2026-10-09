@@ -83,6 +83,43 @@ function factAmount(fact) {
   return withScale(parsed, fact.scale, fact.sign);
 }
 
+function decimalText(amount) {
+  let mantissa = amount.mantissa;
+  let exponent = amount.exponent;
+  const sign = mantissa < 0n ? "-" : "";
+  if (mantissa < 0n) mantissa = -mantissa;
+  while (exponent < 0 && mantissa % 10n === 0n) {
+    mantissa /= 10n;
+    exponent += 1;
+  }
+  const digits = mantissa.toString();
+  if (exponent >= 0) return sign + digits + "0".repeat(exponent);
+  const places = -exponent;
+  if (digits.length <= places) return `${sign}0.${"0".repeat(places - digits.length)}${digits}`;
+  const cut = digits.length - places;
+  return `${sign}${digits.slice(0, cut)}.${digits.slice(cut)}`;
+}
+
+// The single spread fact already selected by a maturity bind.
+// The returned raw value is the fact after its scale, so 5.25 at scale -2 is 0.0525.
+// Display text such as SOFR is not read.
+export function spreadFactFromBind(bind) {
+  if (!bind?.contextId || bind.outcome === "UNKNOWN") return null;
+  const facts = (bind.facts ?? []).filter((fact) => localName(fact.name) === "InvestmentBasisSpreadVariableRate");
+  if (facts.length !== 1) return null;
+  const amount = factAmount(facts[0]);
+  if (!amount) return null;
+  const rawValue = decimalText(amount);
+  return {
+    contextId: bind.contextId,
+    factId: facts[0].id,
+    displayedText: facts[0].text,
+    scale: facts[0].scale ?? null,
+    rawValue,
+    normalizedNumeric: rawValue,
+  };
+}
+
 export function normalizeDisplayedDate(raw) {
   if (typeof raw !== "string" || !FOUR_DIGIT_DATE.test(raw)) return null;
   const match = FOUR_DIGIT_DATE.exec(raw);

@@ -6,6 +6,7 @@ import { normalizeDateHeading } from "../normalize/date-heading.mjs";
 import { listIxContextRows } from "../normalize/ix-context-row.mjs";
 import {
   NO_BIND_REASON, bindMaturityContext, bindMaturityContextRows, normalizeDisplayedDate, rejectSharedContextBinds,
+  spreadFactFromBind,
 } from "../normalize/maturity-context-bind.mjs";
 import { RULE_TEXT, RULE_TEXT_VERSION_3, RULE_VERSION } from "../load/maturity-inspection-batch.mjs";
 
@@ -946,6 +947,77 @@ test("maturity bind rule version 4 is separate from the stored version 3 definit
   assert.match(RULE_TEXT, /except a stored ACQUISITION_DATE on a context that has no InvestmentAcquisitionDate fact/);
   assert.match(RULE_TEXT, /untagged Purchase Date text is not used/);
   assert.equal(RULE_TEXT.includes("A context row is eligible only when its context period end"), true);
+});
+
+test("Capital Southwest Geo Parent 2023-03-31 binds by stored amounts and leaves the 2022 row separate", () => {
+  const current = "i3209c8499d854347ae9587c162ae445a_I20230331";
+  const comparative = "i5eb6ad985d904f6a9343fd73a3935455_I20220331";
+  const other = "c-other-company";
+  const money = (contextId, prefix, principal, cost, fairValue) => [
+    { id: `${prefix}-spread`, name: "InvestmentBasisSpreadVariableRate", scale: "-2", text: "5.25" },
+    { id: `${prefix}-principal`, name: "InvestmentOwnedBalancePrincipalAmount", scale: "3", text: principal },
+    { id: `${prefix}-cost`, name: "InvestmentOwnedAtCost", scale: "3", text: cost },
+    { id: `${prefix}-fv`, name: "InvestmentOwnedAtFairValue", scale: "3", text: fairValue },
+  ].map((fact) => {
+    const scale = fact.scale == null ? "" : ` scale="${fact.scale}"`;
+    return `<ix:nonFraction contextRef="${contextId}" id="${fact.id}" name="us-gaap:${fact.name}"${scale}>${fact.text}</ix:nonFraction>`;
+  }).join("");
+  const html = `<table>
+    <tr><td>Portfolio Company</td><td>Maturity</td><td>Rate</td></tr>
+    <tr><td>Geo Parent Corporation</td><td>12/19/2025</td><td>SOFR+${money(current, "y2023", "6,769", "6,743", "6,397")}<span>1/15/2020</span></td></tr>
+    <tr><td>Geo Parent Corporation</td><td>12/19/2025</td><td>L+${money(comparative, "y2022", "6,840", "6,809", "6,806")}</td></tr>
+    <tr><td>Other Company</td><td>6/1/2024</td><td>${money(other, "other", "1,000", "1,000", "1,000")}</td></tr>
+  </table>`;
+  const periods = { [current]: "2023-03-31", [comparative]: "2022-03-31", [other]: "2023-03-31" };
+  const later = bind(html, [
+    { field_code: "PRINCIPAL_AMOUNT", raw_value: "6769000.0000", normalized_numeric: "6769000.0000" },
+    { field_code: "COST", raw_value: "6743000.0000", normalized_numeric: "6743000.0000" },
+    { field_code: "FAIR_VALUE", raw_value: "6397000.0000", normalized_numeric: "6397000.0000" },
+  ], "2023-03-31", periods);
+  assert.equal(later.outcome, "FILING_DISPLAYED");
+  assert.equal(later.contextId, current);
+  assert.notEqual(later.contextId, comparative);
+  assert.equal(later.rawValue, "12/19/2025");
+  assert.equal(later.normalizedDate, "2025-12-19");
+  assert.notEqual(later.rawValue, "1/15/2020");
+  assert.equal(later.facts.some((fact) => fact.id === "y2023-principal"), true);
+  assert.equal(later.facts.some((fact) => fact.id === "y2022-principal"), false);
+  const spread = spreadFactFromBind(later);
+  assert.equal(spread.contextId, current);
+  assert.equal(spread.factId, "y2023-spread");
+  assert.equal(spread.displayedText, "5.25");
+  assert.equal(spread.scale, "-2");
+  assert.equal(spread.rawValue, "0.0525");
+  assert.equal(spread.normalizedNumeric, "0.0525");
+  assert.equal(JSON.stringify(spread).includes("SOFR"), false);
+  const amounts = [
+    { field_code: "PRINCIPAL_AMOUNT", raw_value: "6769000.0000", normalized_numeric: "6769000.0000" },
+    { field_code: "COST", raw_value: "6743000.0000", normalized_numeric: "6743000.0000" },
+    { field_code: "FAIR_VALUE", raw_value: "6397000.0000", normalized_numeric: "6397000.0000" },
+  ];
+  const rebound = bind(html, [
+    ...amounts,
+    { field_code: "SPREAD", raw_value: "0.0525", normalized_numeric: "0.0525" },
+  ], "2023-03-31", periods);
+  assert.equal(rebound.outcome, "FILING_DISPLAYED");
+  assert.equal(rebound.contextId, current);
+  assert.equal(rebound.rawValue, "12/19/2025");
+  assert.equal(rebound.normalizedDate, "2025-12-19");
+  assert.equal(spreadFactFromBind(rebound).rawValue, "0.0525");
+  const displayed = bind(html, [
+    ...amounts,
+    { field_code: "SPREAD", raw_value: "5.25", normalized_numeric: "5.25" },
+  ], "2023-03-31", periods);
+  assert.equal(displayed.outcome, "UNKNOWN");
+  assert.equal(displayed.contextId, null);
+  const earlier = bind(html, [
+    { field_code: "PRINCIPAL_AMOUNT", raw_value: "6840000.0000", normalized_numeric: "6840000.0000" },
+    { field_code: "COST", raw_value: "6809000.0000", normalized_numeric: "6809000.0000" },
+    { field_code: "FAIR_VALUE", raw_value: "6806000.0000", normalized_numeric: "6806000.0000" },
+  ], "2022-03-31", periods);
+  assert.equal(earlier.contextId, comparative);
+  assert.equal(earlier.rawValue, "12/19/2025");
+  assert.equal(earlier.normalizedDate, "2025-12-19");
 });
 
 test("a zero-value warrant keeps acquisition date and expiration prose out of maturity", () => {
