@@ -1,0 +1,51 @@
+<!-- Faithful schedule-of-investments fragment for Geo Parent company-cell tests.
+     Mirrors the New Mountain Guardian IV structure verified against production
+     artifacts 368/369 (nmg4-20240630 / nmg4-20240930): one Portfolio Company cell
+     "Geo Parent Corporation" shared by First Lien 1 and First Lien 2 investment lines.
+     Real-filing byte validation against .data/sec raw artifacts is outstanding when
+     those files are absent from the isolated environment. -->
+<xbrli:context id="c-81"><xbrli:entity><xbrli:segment>
+<xbrldi:typedMember dimension="us-gaap:InvestmentIdentifierAxis">
+<us-gaap:InvestmentIdentifierAxis.domain>Geo Parent Corporation, First Lien 1</us-gaap:InvestmentIdentifierAxis.domain>
+</xbrldi:typedMember></xbrli:segment></xbrli:entity></xbrli:context>
+<xbrli:context id="c-82"><xbrli:entity><xbrli:segment>
+<xbrldi:typedMember dimension="us-gaap:InvestmentIdentifierAxis">
+<us-gaap:InvestmentIdentifierAxis.domain>Geo Parent Corporation, First Lien 2</us-gaap:InvestmentIdentifierAxis.domain>
+</xbrldi:typedMember></xbrli:segment></xbrli:entity></xbrli:context>
+<table>
+<tr>
+<td colspan="3">Portfolio Company, Location and Industry(1)</td>
+<td colspan="3">Type of Investment</td>
+<td colspan="3">Fair Value</td>
+</tr>
+<tr>
+<td colspan="3">Geo Parent Corporation</td>
+<td colspan="3"></td>
+<td colspan="3"></td>
+</tr>
+<tr>
+<td colspan="3">Business Services</td>
+<td colspan="3">First Lien(2)(5)</td>
+<td colspan="3"><ix:nonFraction id="f-1" contextRef="c-81" name="us-gaap:InvestmentOwnedBalancePrincipalAmount">17,717</ix:nonFraction></td>
+</tr>
+<tr>
+<td colspan="3"></td>
+<td colspan="3">First Lien(4)(5)</td>
+<td colspan="3"><ix:nonFraction id="f-2" contextRef="c-82" name="us-gaap:InvestmentOwnedBalancePrincipalAmount">3,299</ix:nonFraction></td>
+</tr>
+<tr>
+<td colspan="3"></td>
+<td colspan="3"></td>
+<td colspan="3">21,016</td>
+</tr>
+<tr>
+<td colspan="3">Other Borrower Inc.</td>
+<td colspan="3"></td>
+<td colspan="3"></td>
+</tr>
+<tr>
+<td colspan="3">Software</td>
+<td colspan="3">First Lien</td>
+<td colspan="3">100</td>
+</tr>
+</table>

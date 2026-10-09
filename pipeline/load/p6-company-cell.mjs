@@ -1,5 +1,5 @@
 // P6 company-cell legal-entity resolution for an explicit list of position_observation ids.
-// resolution.entity_exact_company_cell_name v1. Inserts only. The decision sits on the
+// resolution.entity_exact_company_cell_name v2. Inserts only. The decision sits on the
 // observation's single Identifier Axis name row, so the borrower read views are unchanged.
 // An observation whose identifier name already has a current decision is left as it is.
 

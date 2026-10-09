@@ -1,13 +1,15 @@
-// resolution.entity_exact_company_cell_name v1 (G-13, G-14, G-08).
+// resolution.entity_exact_company_cell_name v2 (G-13, G-14, G-08).
 // A legal entity is keyed only on a company name: the primary-filing company cell
 // (FILING_CELL) or the SOI ISSUER_NAME field. The Investment Identifier Axis text
 // combines company and instrument (Q5) and is never a legal-entity name or alias.
 // No identifier splitting, near-name, suffix, fuzzy, or LLM match.
+// v2 adds append-only supersession of NO_COMPANY_NAME_EVIDENCE when company-cell
+// evidence arrives later and matches an existing VERIFIED alias (same match rules).
 
 import { normalizeBorrowerName } from "./borrower-name.mjs";
 
 export const COMPANY_CELL_RULE_CODE = "resolution.entity_exact_company_cell_name";
-export const COMPANY_CELL_RULE_VERSION = "1";
+export const COMPANY_CELL_RULE_VERSION = "2";
 export const COMPANY_CELL_METHOD = "EXACT_COMPANY_CELL_NAME";
 export const NO_COMPANY_NAME_METHOD = "NO_COMPANY_NAME_EVIDENCE";
 export const CONFLICTING_COMPANY_NAMES_METHOD = "CONFLICTING_COMPANY_NAMES";

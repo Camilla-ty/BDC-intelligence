@@ -151,9 +151,18 @@ test("an identical identifier across registrants without company evidence is nev
 test("the rule is in the catalog and its files do not include P6-min or the near-name matcher", () => {
   const rule = RULES.find((item) => item.code === COMPANY_CELL_RULE_CODE && item.version === COMPANY_CELL_RULE_VERSION);
   assert.ok(rule);
+  assert.equal(COMPANY_CELL_RULE_VERSION, "2");
   assert.equal(rule.kind, "RESOLUTION");
+  assert.equal(rule.version, "2");
   assert.equal(rule.files.includes("pipeline/load/p6-min.mjs"), false);
   assert.equal(rule.files.includes("pipeline/normalize/entity-name-match.mjs"), false);
+  assert.equal(rule.files.includes("pipeline/load/p6-company-cell-supersession.mjs"), true);
+  assert.equal(rule.files.includes("pipeline/load/stored-filing-cell.mjs"), true);
+  assert.equal(
+    RULES.some((item) => item.code === COMPANY_CELL_RULE_CODE && item.version === "1"),
+    false,
+    "v1 stays historical in the database only; the catalog exposes the current version",
+  );
 });
 
 test("the company-cell planner does not split identifiers or use near-name matching", () => {
