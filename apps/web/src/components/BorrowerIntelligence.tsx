@@ -16,8 +16,11 @@ import {
   type CreditTimelineEvent,
 } from "@/lib/borrower-credit-timeline";
 import {
+  amountReviewFields,
   COMPARISON_NOTE,
+  CONTINUITY_SCOPE_NOTE,
   EMPTY_COMPARISONS,
+  EVIDENCE_REVIEW_NOTE,
   type PositionComparison,
 } from "@/lib/borrower-comparisons";
 import {
@@ -241,17 +244,76 @@ function ObservationSource({
   return (
     <div>
       <h4 className="text-xs uppercase tracking-wider text-muted">{label}</h4>
-      <p className="mt-1">
-        {observation.reportedDate}
-        {" · "}
-        <SecLink href={observation.documentUrl} missing={observation.accessionNumber}>
-          {observation.accessionNumber}
-        </SecLink>
-        {" · "}
-        <StateText text={observation.evidenceLabel} />
-        {" · Registrant CIK "}
-        <StateText text={observation.registrantCik} />
-      </p>
+      <dl className="mt-1 grid gap-1">
+        <div>
+          <dt className="text-xs text-muted">Reporting period</dt>
+          <dd>{observation.reportedDate}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">SEC accession</dt>
+          <dd>
+            <SecLink href={observation.documentUrl} missing={observation.accessionNumber}>
+              {observation.accessionNumber}
+            </SecLink>
+            {observation.documentUrl == null ? (
+              <span className="text-muted"> · Filing URL unavailable</span>
+            ) : null}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Evidence</dt>
+          <dd>
+            <StateText text={observation.evidenceLabel} />
+            {" · Observation evidence "}
+            <StateText text={observation.evidenceId} />
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Registrant CIK</dt>
+          <dd><StateText text={observation.registrantCik} /></dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function AmountEvidenceReview({ comparison }: { comparison: PositionComparison }) {
+  const fields = amountReviewFields(comparison);
+  return (
+    <div className="mt-4">
+      <h4 className="text-xs uppercase tracking-wider text-muted">Amount evidence</h4>
+      <ul className="mt-2 flex flex-col gap-3">
+        {fields.map((field) => (
+          <li key={field.label} className="text-sm">
+            <p className="font-semibold text-navy">{field.label}</p>
+            <dl className="mt-1 grid gap-1 sm:grid-cols-2">
+              <div>
+                <dt className="text-xs text-muted">Earlier ({comparison.earlierDate})</dt>
+                <dd><ComparisonAmount value={field.earlier} currency={field.earlierCurrency} /></dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted">Later ({comparison.laterDate})</dt>
+                <dd><ComparisonAmount value={field.later} currency={field.laterCurrency} /></dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted">Comparison state</dt>
+                <dd><StateText text={field.state} /></dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted">Stored delta</dt>
+                <dd>
+                  {field.state === "Comparable" ? (
+                    <StateText text={field.change} />
+                  ) : (
+                    <StateText text="Not shown" />
+                  )}
+                </dd>
+              </div>
+            </dl>
+            {field.reviewNote ? <p className="mt-1 text-sm text-muted">{field.reviewNote}</p> : null}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -427,6 +489,8 @@ export function BorrowerIntelligence({
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-navy">Confirmed Position Changes</h2>
         <p className="mt-1 text-sm">{COMPARISON_NOTE}</p>
+        <p className="mt-2 text-sm">{CONTINUITY_SCOPE_NOTE}</p>
+        <p className="mt-2 text-sm">{EVIDENCE_REVIEW_NOTE}</p>
         {comparisonError ? <p className="mt-3 text-sm">{comparisonError}</p> : null}
         {!comparisonError && comparisons.length === 0 ? <p className="mt-3 text-sm">{EMPTY_COMPARISONS}</p> : null}
         {!comparisonError && comparisons.length > 0 ? (
@@ -445,9 +509,7 @@ export function BorrowerIntelligence({
             {comparisons.map((comparison) => (
               <article key={comparison.key} className="border-t border-line pt-4">
                 <h3 className="text-sm font-semibold text-navy">
-                  {comparison.earlierDate}
-                  {" to "}
-                  {comparison.laterDate}
+                  {`Evidence & change review · ${comparison.earlierDate} to ${comparison.laterDate}`}
                 </h3>
                 <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                   <div>
@@ -463,6 +525,11 @@ export function BorrowerIntelligence({
                     <dd><StateText text={comparison.registrantCik} /></dd>
                   </div>
                 </dl>
+                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                  <ObservationSource label="Earlier source filing" observation={comparison.earlier} />
+                  <ObservationSource label="Later source filing" observation={comparison.later} />
+                </div>
+                <AmountEvidenceReview comparison={comparison} />
                 <div className="overflow-x-auto">
                   <table className="record-table mt-3 w-full border-collapse text-sm">
                     <thead>
@@ -484,16 +551,17 @@ export function BorrowerIntelligence({
                           <td data-label="Later" className="py-2 pr-4">
                             <ComparisonAmount value={field.later} currency={field.laterCurrency} />
                           </td>
-                          <td data-label="Stored change" className="py-2 pr-4"><StateText text={field.change} /></td>
+                          <td data-label="Stored change" className="py-2 pr-4">
+                            <StateText text={field.change} />
+                            {field.reviewNote && field.state !== "Comparable" ? (
+                              <p className="mt-1 text-xs text-muted">{field.reviewNote}</p>
+                            ) : null}
+                          </td>
                           <td data-label="Comparison state" className="py-2"><StateText text={field.state} /></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
-                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                  <ObservationSource label="Earlier observation" observation={comparison.earlier} />
-                  <ObservationSource label="Later observation" observation={comparison.later} />
                 </div>
               </article>
             ))}

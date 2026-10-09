@@ -8,11 +8,18 @@ vi.mock("next/navigation", () => ({
 }));
 import {
   ACQUISITION_LABEL as COMPARISON_ACQUISITION_LABEL,
+  CHANGE_NOT_ESTABLISHED,
+  CHANGE_NOT_ESTABLISHED_CURRENCY_UNKNOWN,
+  CHANGE_NOT_ESTABLISHED_MISSING_AMOUNT,
+  COMPARABLE_CHANGE_NOTE,
   COMPARISON_NOTE,
+  CONTINUITY_SCOPE_NOTE,
   EMPTY_COMPARISONS,
+  EVIDENCE_REVIEW_NOTE,
   positionComparisons,
   type PositionComparisonRow,
 } from "@/lib/borrower-comparisons";
+import { CURRENCY_NOTE } from "@/lib/portfolios";
 import { observedActivity, storedDifferences } from "@/lib/borrower-activity";
 import { EMPTY_WHAT_CHANGED, WHAT_CHANGED_NOTE, whatChanged } from "@/lib/borrower-what-changed";
 import {
@@ -668,23 +675,28 @@ describe("confirmed position changes", () => {
     const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
     expect(section).toBeTruthy();
     expect(section).toHaveTextContent(COMPARISON_NOTE);
+    expect(section).toHaveTextContent(CONTINUITY_SCOPE_NOTE);
+    expect(section).toHaveTextContent(EVIDENCE_REVIEW_NOTE);
     expect(COMPARISON_NOTE).toMatch(/across reporting periods/);
     expect(COMPARISON_NOTE).toMatch(/matched observation is not itself a confirmed change/i);
     expect(section).toHaveTextContent("2099-03-31");
     expect(section).toHaveTextContent("2099-06-30");
     expect(section).toHaveTextContent("2099-09-30");
+    expect(section).toHaveTextContent("Evidence & change review");
+    expect(section).toHaveTextContent("Observation evidence 501");
+    expect(section).toHaveTextContent("Observation evidence 502");
     const principalChanges = [...section!.querySelectorAll("tbody tr")]
       .filter((tr) => tr.querySelector("th")?.textContent === "Principal")
-      .map((tr) => tr.children[3]?.textContent);
+      .map((tr) => tr.children[3]?.textContent?.replace(/\s+/g, " ").trim());
     const fairValueChanges = [...section!.querySelectorAll("tbody tr")]
       .filter((tr) => tr.querySelector("th")?.textContent === "Fair value")
-      .map((tr) => tr.children[3]?.textContent);
+      .map((tr) => tr.children[3]?.textContent?.replace(/\s+/g, " ").trim());
     const rateChanges = [...section!.querySelectorAll("tbody tr")]
       .filter((tr) => tr.querySelector("th")?.textContent === "Interest rate")
-      .map((tr) => tr.children[3]?.textContent);
-    expect(principalChanges).toEqual(["7", "7"]);
-    expect(fairValueChanges).toEqual(["-10", "-10"]);
-    expect(rateChanges).toEqual(["Insufficient data", "Insufficient data"]);
+      .map((tr) => tr.children[3]?.textContent?.replace(/\s+/g, " ").trim());
+    expect(principalChanges.every((text) => text?.startsWith("7"))).toBe(true);
+    expect(fairValueChanges.every((text) => text?.startsWith("-10"))).toBe(true);
+    expect(rateChanges.every((text) => text?.startsWith("Insufficient data"))).toBe(true);
     expect(section).toHaveTextContent("Insufficient data");
     expect(section).toHaveTextContent("Acquisition date");
     expect(section).toHaveTextContent("12/2099");
@@ -703,14 +715,203 @@ describe("confirmed position changes", () => {
     expect(lateLink).toHaveAttribute("href", listings[1].document_url);
   });
 
-  it("shows the empty state when no confirmed comparison exists", () => {
+  it("shows the empty state when a matched entity has no confirmed same-position comparison", () => {
     const detail = borrowerDetail([row()], ID);
     render(<BorrowerIntelligence borrower={detail!} comparisons={[]} />);
     const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
     expect(section).toHaveTextContent(EMPTY_COMPARISONS);
+    expect(section).toHaveTextContent(CONTINUITY_SCOPE_NOTE);
+    expect(section).toHaveTextContent(EVIDENCE_REVIEW_NOTE);
     expect(section).toHaveTextContent("MATCHED");
+    expect(section).toHaveTextContent("matched legal-entity name is not a confirmed position");
+    expect(section).not.toHaveTextContent("Amount evidence");
+    expect(section).not.toHaveTextContent("Earlier source filing");
     expect(section).not.toHaveTextContent("could not be read");
     expect(section).not.toHaveTextContent(/no credit|no risk|no repayment|no refinancing/i);
+  });
+
+  it("reviews a same-currency comparable amount with prior, current, delta, and SEC links", () => {
+    const comparisons = positionComparisons([
+      comparison({
+        principal_comparison_state: "COMPARABLE",
+        principal_delta: "20",
+        earlier_principal_currency_state: "FROM_FILING",
+        later_principal_currency_state: "FROM_FILING",
+        fair_value_comparison_state: "COMPARABLE",
+        fair_value_delta: "-10",
+        earlier_fair_value_currency_state: "FROM_FILING",
+        later_fair_value_currency_state: "FROM_FILING",
+        cost_comparison_state: "COMPARABLE",
+        cost_delta: "10",
+        earlier_cost_currency_state: "FROM_FILING",
+        later_cost_currency_state: "FROM_FILING",
+      }),
+    ], listings, ID);
+    const principal = comparisons[0]?.fields.find((field) => field.label === "Principal");
+    expect(principal).toMatchObject({
+      earlier: "100",
+      later: "120",
+      change: "20",
+      state: "Comparable",
+      reviewNote: COMPARABLE_CHANGE_NOTE,
+      earlierCurrency: null,
+      laterCurrency: null,
+    });
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+    expect(section).toHaveTextContent("Evidence & change review · 2099-03-31 to 2099-06-30");
+    expect(section).toHaveTextContent("Amount evidence");
+    expect(section).toHaveTextContent(COMPARABLE_CHANGE_NOTE);
+    expect(section).toHaveTextContent("Stored delta");
+    expect(section).toHaveTextContent("20");
+    expect(section).toHaveTextContent("-10");
+    expect(withinSectionLink(section, "0000000000-99-000001")).toHaveAttribute("href", listings[0].document_url);
+    expect(withinSectionLink(section, "0000000000-99-000002")).toHaveAttribute("href", listings[1].document_url);
+    expect(section).not.toHaveTextContent(/deterioration|improvement|default|non-accrual|repayment|exit|refinanc|origination/i);
+  });
+
+  it("explains unknown currency without inventing a period delta", () => {
+    const comparisons = positionComparisons([
+      comparison({
+        principal_comparison_state: "INSUFFICIENT_DATA",
+        principal_delta: null,
+        earlier_principal_raw: "10",
+        later_principal_raw: "25",
+        earlier_principal_currency_state: "UNKNOWN",
+        later_principal_currency_state: "UNKNOWN",
+        fair_value_comparison_state: "INSUFFICIENT_DATA",
+        fair_value_delta: "999",
+        earlier_fair_value_raw: "8",
+        later_fair_value_raw: "20",
+        earlier_fair_value_currency_state: "AMBIGUOUS",
+        later_fair_value_currency_state: "AMBIGUOUS",
+        cost_comparison_state: "INSUFFICIENT_DATA",
+        cost_delta: null,
+        earlier_cost_raw: "9",
+        later_cost_raw: "22",
+        earlier_cost_currency_state: "UNKNOWN",
+        later_cost_currency_state: "UNKNOWN",
+      }),
+    ], listings, ID);
+    expect(comparisons[0]?.fields.find((field) => field.label === "Principal")).toMatchObject({
+      change: "Insufficient data",
+      state: "Insufficient data",
+      reviewNote: CHANGE_NOT_ESTABLISHED_CURRENCY_UNKNOWN,
+      earlierCurrency: CURRENCY_NOTE,
+      laterCurrency: CURRENCY_NOTE,
+    });
+    expect(comparisons[0]?.fields.find((field) => field.label === "Fair value")).toMatchObject({
+      change: "Insufficient data",
+      reviewNote: CHANGE_NOT_ESTABLISHED_CURRENCY_UNKNOWN,
+      earlierCurrency: "Currency Ambiguous",
+      laterCurrency: "Currency Ambiguous",
+    });
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+    expect(section).toHaveTextContent(CHANGE_NOT_ESTABLISHED_CURRENCY_UNKNOWN);
+    expect(section).toHaveTextContent(CURRENCY_NOTE);
+    expect(section).toHaveTextContent("Currency Ambiguous");
+    expect(section).toHaveTextContent("Not shown");
+    expect(section).not.toHaveTextContent("999");
+    const principalDeltaCells = [...section!.querySelectorAll("li")].filter((item) =>
+      item.textContent?.includes("Principal"));
+    expect(principalDeltaCells.some((item) => item.textContent?.includes("Not shown"))).toBe(true);
+  });
+
+  it("uses a generic insufficient explanation when currency states are established but codes are unavailable", () => {
+    const comparisons = positionComparisons([
+      comparison({
+        principal_comparison_state: "INSUFFICIENT_DATA",
+        principal_delta: "15",
+        earlier_principal_raw: "10",
+        later_principal_raw: "25",
+        earlier_principal_currency_state: "FROM_FILING",
+        later_principal_currency_state: "FROM_FILING",
+        fair_value_comparison_state: "INSUFFICIENT_DATA",
+        fair_value_delta: null,
+        earlier_fair_value_raw: "8",
+        later_fair_value_raw: "20",
+        earlier_fair_value_currency_state: "FROM_FILING",
+        later_fair_value_currency_state: "FROM_FILING",
+      }),
+    ], listings, ID);
+    expect(comparisons[0]?.fields.find((field) => field.label === "Principal")?.reviewNote)
+      .toBe(CHANGE_NOT_ESTABLISHED);
+    expect(comparisons[0]?.fields.find((field) => field.label === "Principal")?.reviewNote)
+      .not.toMatch(/incompatible|not established and compatible/i);
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+    expect(section).toHaveTextContent(CHANGE_NOT_ESTABLISHED);
+    expect(section).not.toHaveTextContent(/currency is not established and compatible/i);
+    expect(section).toHaveTextContent("Not shown");
+    expect(section).not.toHaveTextContent("Principal increased");
+    const amountPrincipal = [...section!.querySelectorAll("li")].find((item) =>
+      item.querySelector("p")?.textContent === "Principal");
+    expect(amountPrincipal?.textContent).toContain("Not shown");
+    expect(amountPrincipal?.textContent).not.toMatch(/\b15\b/);
+  });
+
+  it("explains a missing amount without inventing a period delta", () => {
+    const comparisons = positionComparisons([
+      comparison({
+        principal_comparison_state: "INSUFFICIENT_DATA",
+        principal_delta: "40",
+        earlier_principal_raw: "100",
+        later_principal_raw: null,
+        earlier_principal_currency_state: "FROM_FILING",
+        later_principal_currency_state: "FROM_FILING",
+        fair_value_comparison_state: "INSUFFICIENT_DATA",
+        fair_value_delta: null,
+        earlier_fair_value_raw: null,
+        later_fair_value_raw: "60",
+        earlier_fair_value_currency_state: "FROM_FILING",
+        later_fair_value_currency_state: "FROM_FILING",
+      }),
+    ], listings, ID);
+    expect(comparisons[0]?.fields.find((field) => field.label === "Principal")).toMatchObject({
+      earlier: "100",
+      later: "Unknown",
+      change: "Insufficient data",
+      reviewNote: CHANGE_NOT_ESTABLISHED_MISSING_AMOUNT,
+    });
+    expect(comparisons[0]?.fields.find((field) => field.label === "Fair value")).toMatchObject({
+      earlier: "Unknown",
+      later: "60",
+      reviewNote: CHANGE_NOT_ESTABLISHED_MISSING_AMOUNT,
+    });
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+    expect(section).toHaveTextContent(CHANGE_NOT_ESTABLISHED_MISSING_AMOUNT);
+    expect(section).toHaveTextContent("Not shown");
+    const amountPrincipal = [...section!.querySelectorAll("li")].find((item) =>
+      item.querySelector("p")?.textContent === "Principal");
+    expect(amountPrincipal?.textContent).toContain("Not shown");
+    expect(amountPrincipal?.textContent).not.toMatch(/\b40\b/);
+  });
+
+  it("keeps unavailable filing URLs explicit while retaining the accession and evidence id", () => {
+    const comparisons = positionComparisons([
+      comparison({
+        earlier_observation_evidence_id: null,
+        later_observation_evidence_id: "502",
+      }),
+    ], [], ID);
+    expect(comparisons[0]?.earlier.documentUrl).toBeNull();
+    expect(comparisons[0]?.later.documentUrl).toBeNull();
+    expect(comparisons[0]?.earlier.evidenceId).toBe("Unknown");
+    expect(comparisons[0]?.later.evidenceId).toBe("502");
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} comparisons={comparisons} />);
+    const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
+    expect(section).toHaveTextContent("Filing URL unavailable");
+    expect(section).toHaveTextContent("Observation evidence Unknown");
+    expect(section).toHaveTextContent("Observation evidence 502");
+    expect(section).toHaveTextContent("0000000000-99-000001");
+    expect(section!.querySelector('a[href*="sec.gov"]')).toBeNull();
   });
 
   it("labels stored principal, fair value, and maturity differences without inventing a change", () => {
@@ -854,6 +1055,38 @@ describe("what changed", () => {
     expect(items.every((item) => item.legalEntityName === "TEST BORROWER A")).toBe(true);
     expect(items.every((item) => item.earlierDate === "2099-03-31" && item.laterDate === "2099-06-30")).toBe(true);
     expect(new Set(items.map((item) => item.positionId)).size).toBe(5);
+  });
+
+  it("omits principal and fair value movements when currency compatibility failed", () => {
+    const comparisons = positionComparisons([
+      quietComparison({
+        principal_comparison_state: "INSUFFICIENT_DATA",
+        principal_delta: null,
+        earlier_principal_raw: "10",
+        later_principal_raw: "25",
+        earlier_principal_currency_state: "FROM_FILING",
+        later_principal_currency_state: "FROM_FILING",
+        fair_value_comparison_state: "INSUFFICIENT_DATA",
+        fair_value_delta: null,
+        earlier_fair_value_raw: "8",
+        later_fair_value_raw: "20",
+        earlier_fair_value_currency_state: "FROM_FILING",
+        later_fair_value_currency_state: "FROM_FILING",
+        maturity_changed: false,
+      }),
+    ], listings, ID);
+    const items = whatChanged(comparisons, [], "TEST BORROWER A");
+    expect(items).toEqual([]);
+    expect(comparisons[0]?.fields.find((field) => field.label === "Principal")).toMatchObject({
+      change: "Insufficient data",
+      state: "Insufficient data",
+      reviewNote: CHANGE_NOT_ESTABLISHED,
+    });
+    expect(comparisons[0]?.fields.find((field) => field.label === "Fair value")).toMatchObject({
+      change: "Insufficient data",
+      state: "Insufficient data",
+      reviewNote: CHANGE_NOT_ESTABLISHED,
+    });
   });
 
   it("omits comparable-but-unchanged values and insufficient cost", () => {

@@ -7,10 +7,24 @@ import { CURRENCY_NOTE, secUrl } from "@/lib/portfolios";
 
 export const COMPARISON_NOTE =
   "Observed changes between confirmed same-position observations across reporting periods. A matched observation is not itself a confirmed change. Changes are not classified as credit events.";
+export const CONTINUITY_SCOPE_NOTE =
+  "A matched legal-entity name is not a confirmed position. Confirmed changes require MATCHED position continuity between two observations, then a Comparable field comparison.";
+export const EVIDENCE_REVIEW_NOTE =
+  "Evidence & change review lists each stored amount with its reporting periods, SEC accession links, currency status, and comparison state. A stored delta appears only when the comparison is Comparable.";
 export const EMPTY_COMPARISONS =
   "Confirmed period-to-period changes are unavailable because no MATCHED position-continuity pair is stored for this legal entity. An unresolved continuity decision is not a confirmed change. A period with no stored observation is left absent.";
 export const ACQUISITION_LABEL = "Acquisition date";
 export const INSUFFICIENT = "Insufficient data";
+export const CURRENCY_AMBIGUOUS_NOTE = "Currency Ambiguous";
+export const COMPARABLE_CHANGE_NOTE =
+  "Prior value, current value, and the stored delta are shown because the comparison state is Comparable.";
+export const CHANGE_NOT_ESTABLISHED =
+  "Change cannot be established from the available evidence. No stored delta is shown.";
+export const CHANGE_NOT_ESTABLISHED_MISSING_AMOUNT =
+  "Change cannot be established: a reported amount is missing on one or both periods. No stored delta is shown.";
+export const CHANGE_NOT_ESTABLISHED_CURRENCY_UNKNOWN =
+  "Change cannot be established: currency is unknown or ambiguous on one or both observations. No stored delta is shown.";
+export const AMOUNT_REVIEW_LABELS = ["Principal", "Amortized cost", "Fair value"] as const;
 
 const FORBIDDEN_KEY = /origination|fvr|ratio|exit|repay|score|rank|similarity|refinanc|deteriorat|default|non_accrual|credit/i;
 
@@ -96,6 +110,8 @@ export type ComparisonField = {
   laterCurrency: string | null;
   change: string;
   state: string;
+  /** Explains whether a stored amount delta may be shown; never invents a numeric change. */
+  reviewNote: string | null;
 };
 
 export type PositionComparison = {
@@ -134,10 +150,31 @@ function datedText(raw: string | null, precision: string | null, dateText: strin
   return storedText(dateText);
 }
 
+function currencyUnresolved(currencyState: string | null): boolean {
+  return currencyState == null || currencyState.trim() === "" || currencyState === "UNKNOWN" || currencyState === "AMBIGUOUS";
+}
+
 function currencyNote(value: string, currencyState: string | null): string | null {
   if (value === "Unknown") return null;
-  if (currencyState == null || currencyState === "UNKNOWN" || currencyState.trim() === "") return CURRENCY_NOTE;
+  if (currencyState === "AMBIGUOUS") return CURRENCY_AMBIGUOUS_NOTE;
+  if (currencyUnresolved(currencyState)) return CURRENCY_NOTE;
   return null;
+}
+
+function amountReviewNote(
+  state: string,
+  earlier: string,
+  later: string,
+  earlierCurrencyState: string | null,
+  laterCurrencyState: string | null,
+): string {
+  if (state === "COMPARABLE") return COMPARABLE_CHANGE_NOTE;
+  if (earlier === "Unknown" || later === "Unknown") return CHANGE_NOT_ESTABLISHED_MISSING_AMOUNT;
+  if (currencyUnresolved(earlierCurrencyState) || currencyUnresolved(laterCurrencyState)) {
+    return CHANGE_NOT_ESTABLISHED_CURRENCY_UNKNOWN;
+  }
+  // ISO currency codes are not on this path; do not infer code incompatibility from INSUFFICIENT_DATA alone.
+  return CHANGE_NOT_ESTABLISHED;
 }
 
 function evidenceLabel(level: string | null): string {
@@ -176,31 +213,39 @@ function numericField(
   delta: string | null,
   earlierCurrency: string | null,
   laterCurrency: string | null,
+  moneyField: boolean,
 ): ComparisonField {
   const shown = comparisonState(state);
+  const earlier = storedText(earlierRaw);
+  const later = storedText(laterRaw);
+  const reviewNote = moneyField
+    ? amountReviewNote(state, earlier, later, earlierCurrency, laterCurrency)
+    : state === "COMPARABLE"
+      ? null
+      : earlier === "Unknown" || later === "Unknown"
+        ? CHANGE_NOT_ESTABLISHED_MISSING_AMOUNT
+        : CHANGE_NOT_ESTABLISHED;
   if (state !== "COMPARABLE") {
-    const earlier = storedText(earlierRaw);
-    const later = storedText(laterRaw);
     return {
       label,
       earlier,
       later,
-      earlierCurrency: currencyNote(earlier, earlierCurrency),
-      laterCurrency: currencyNote(later, laterCurrency),
+      earlierCurrency: moneyField ? currencyNote(earlier, earlierCurrency) : null,
+      laterCurrency: moneyField ? currencyNote(later, laterCurrency) : null,
       change: shown,
       state: shown,
+      reviewNote,
     };
   }
-  const earlier = storedText(earlierRaw);
-  const later = storedText(laterRaw);
   return {
     label,
     earlier,
     later,
-    earlierCurrency: currencyNote(earlier, earlierCurrency),
-    laterCurrency: currencyNote(later, laterCurrency),
+    earlierCurrency: moneyField ? currencyNote(earlier, earlierCurrency) : null,
+    laterCurrency: moneyField ? currencyNote(later, laterCurrency) : null,
     change: storedText(delta),
     state: shown,
+    reviewNote,
   };
 }
 
@@ -217,6 +262,7 @@ function maturityField(row: PositionComparisonRow): ComparisonField {
       laterCurrency: null,
       change: INSUFFICIENT,
       state: comparisonState(state),
+      reviewNote: CHANGE_NOT_ESTABLISHED,
     };
   }
   const change = row.maturity_changed === true ? "Yes" : row.maturity_changed === false ? "No" : "Unknown";
@@ -228,6 +274,7 @@ function maturityField(row: PositionComparisonRow): ComparisonField {
     laterCurrency: null,
     change,
     state: "Comparable",
+    reviewNote: null,
   };
 }
 
@@ -241,6 +288,7 @@ function acquisitionField(row: PositionComparisonRow): ComparisonField {
     laterCurrency: null,
     change: state === "COMPARABLE" ? "Comparable" : comparisonState(state),
     state: comparisonState(state),
+    reviewNote: state === "COMPARABLE" ? null : CHANGE_NOT_ESTABLISHED,
   };
 }
 
@@ -303,6 +351,7 @@ export function positionComparisons(
           row.principal_delta,
           row.earlier_principal_currency_state,
           row.later_principal_currency_state,
+          true,
         ),
         numericField(
           "Amortized cost",
@@ -312,6 +361,7 @@ export function positionComparisons(
           row.cost_delta,
           row.earlier_cost_currency_state,
           row.later_cost_currency_state,
+          true,
         ),
         numericField(
           "Fair value",
@@ -321,6 +371,7 @@ export function positionComparisons(
           row.fair_value_delta,
           row.earlier_fair_value_currency_state,
           row.later_fair_value_currency_state,
+          true,
         ),
         maturityField(row),
         acquisitionField(row),
@@ -332,6 +383,7 @@ export function positionComparisons(
           row.interest_rate_delta,
           null,
           null,
+          false,
         ),
         numericField(
           "Spread",
@@ -341,6 +393,7 @@ export function positionComparisons(
           row.spread_delta,
           null,
           null,
+          false,
         ),
         numericField(
           "Interest-rate floor",
@@ -350,9 +403,15 @@ export function positionComparisons(
           row.interest_rate_floor_delta,
           null,
           null,
+          false,
         ),
       ],
     });
   }
   return comparisons;
+}
+
+export function amountReviewFields(comparison: PositionComparison): ComparisonField[] {
+  return comparison.fields.filter((field) =>
+    (AMOUNT_REVIEW_LABELS as readonly string[]).includes(field.label));
 }
