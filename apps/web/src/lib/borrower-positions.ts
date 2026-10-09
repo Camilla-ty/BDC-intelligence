@@ -11,7 +11,7 @@ export const POSITION_VALUE_NOTE =
 export const RESEARCH_FIELD_NOTE =
   "Instrument type and industry are the stored values for that observation. A missing stored value stays Unknown.";
 export const TIMELINE_NOTE =
-  "Observations are listed by registrant and reporting period. A row stays separate when instrument identity or position continuity is unresolved.";
+  "Observations are listed by registrant and reporting period. A row stays separate when instrument identity or position continuity is unresolved. Matched means this observation is linked to a resolved position. Confirmed changes require comparable observations of the same position across reporting periods.";
 export const EVIDENCE_SCOPE_NOTE =
   "Instrument type and industry show field evidence when one stored head exists. The other fields on the row use the observation evidence and accession.";
 export const EMPTY_POSITIONS = "No stored position observation is linked to this legal entity.";

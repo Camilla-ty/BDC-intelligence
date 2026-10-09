@@ -6,7 +6,7 @@ import type { ObservationRow } from "@/lib/borrowers";
 import { CURRENCY_NOTE, secUrl } from "@/lib/portfolios";
 
 export const COMPARISON_NOTE =
-  "Observed changes between confirmed same-position observations. Changes are not classified as credit events.";
+  "Observed changes between confirmed same-position observations across reporting periods. A matched observation is not itself a confirmed change. Changes are not classified as credit events.";
 export const EMPTY_COMPARISONS =
   "Confirmed period-to-period changes are unavailable because no MATCHED position-continuity pair is stored for this legal entity. An unresolved continuity decision is not a confirmed change. A period with no stored observation is left absent.";
 export const ACQUISITION_LABEL = "Acquisition date";

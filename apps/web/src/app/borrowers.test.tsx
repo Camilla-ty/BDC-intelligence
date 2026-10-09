@@ -45,6 +45,7 @@ import { BorrowerIntelligence } from "@/components/BorrowerIntelligence";
 import {
   ACQUISITION_LABEL,
   EMPTY_POSITIONS,
+  TIMELINE_NOTE,
   historicalPositions,
   periodBands,
   type PositionObservationRow,
@@ -341,6 +342,10 @@ describe("historical position observations", () => {
     render(<BorrowerIntelligence borrower={detail!} positions={positions} />);
     const section = screen.getByRole("heading", { name: "Historical positions" }).closest("section");
     expect(section).toBeTruthy();
+    expect(section).toHaveTextContent(TIMELINE_NOTE);
+    expect(TIMELINE_NOTE).toMatch(/Matched means this observation is linked to a resolved position/);
+    expect(TIMELINE_NOTE).toMatch(/Confirmed changes require comparable observations of the same position/);
+    expect(TIMELINE_NOTE).not.toMatch(/same borrower|same legal entity implies/i);
     const renderedDates = [...section!.querySelectorAll("tbody tr")].map((tr) => tr.children[0]?.textContent);
     expect(renderedDates).toEqual(["2099-12-31", "2099-03-31"]);
     expect(section).toHaveTextContent("0000000001");
@@ -663,6 +668,8 @@ describe("confirmed position changes", () => {
     const section = screen.getByRole("heading", { name: "Confirmed Position Changes" }).closest("section");
     expect(section).toBeTruthy();
     expect(section).toHaveTextContent(COMPARISON_NOTE);
+    expect(COMPARISON_NOTE).toMatch(/across reporting periods/);
+    expect(COMPARISON_NOTE).toMatch(/matched observation is not itself a confirmed change/i);
     expect(section).toHaveTextContent("2099-03-31");
     expect(section).toHaveTextContent("2099-06-30");
     expect(section).toHaveTextContent("2099-09-30");
