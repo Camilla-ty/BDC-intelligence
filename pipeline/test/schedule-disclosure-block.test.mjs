@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import { tableRows } from "../normalize/ix-context-row.mjs";
 import { ingestFilingCompanyCell } from "../load/filing-cell.mjs";
@@ -14,6 +14,16 @@ import {
 const NMSLF = ".data/sec/raw/sha256/11/1198e53d4e4112e184f81b370b72d069d78995cd9c443c2e6b9dcf69819ad0c5";
 const NMG4 = ".data/sec/raw/sha256/c2/c20adec5bed72b1b59b706ea5396efb77888ee25bc1a40bda29c1518a6d6e05b";
 const INCOME = ".data/sec/raw/sha256/31/310d5cfeb4464a2546ca61fe4a4c68a02f611acf91fe88571cbc646b7600767a";
+
+function requireStoredFilings(t, ...files) {
+  for (const file of files) {
+    if (!existsSync(file)) {
+      t.skip("stored filing bytes are not present");
+      return false;
+    }
+  }
+  return true;
+}
 
 function td(text, colspan = 1) {
   return `<td colspan="${colspan}">${text}</td>`;
@@ -180,7 +190,8 @@ test("row ordinals follow the shared tr scan", () => {
   assert.equal(parsed.blocks.length, 0);
 });
 
-test("verified NMF filing: Geo Parent rows 534-535 and Nielsen starts the next block", () => {
+test("verified NMF filing: Geo Parent rows 534-535 and Nielsen starts the next block", (t) => {
+  if (!requireStoredFilings(t, NMSLF)) return;
   const html = readFileSync(NMSLF);
   const { blocks } = parseScheduleDisclosureBlocks(html);
   const geo = blocks.find((block) => block.startRowOrdinal === 534);
@@ -215,7 +226,8 @@ test("verified NMF filing: Geo Parent rows 534-535 and Nielsen starts the next b
   assert.ok(comparative.every((block) => block.headerRowOrdinal !== geo.headerRowOrdinal || block.startRowOrdinal !== geo.startRowOrdinal));
 });
 
-test("verified Guardian filing: First Lien 1, First Lien 2, and a total share one company cell", () => {
+test("verified Guardian filing: First Lien 1, First Lien 2, and a total share one company cell", (t) => {
+  if (!requireStoredFilings(t, NMG4)) return;
   const { blocks } = parseScheduleDisclosureBlocks(readFileSync(NMG4));
   const block = blocks.find((item) => item.rows.some((row) => row.lines.some((line) => line.domain === "Geo Parent Corporation, First Lien 1")));
   assert.ok(block);
@@ -227,7 +239,8 @@ test("verified Guardian filing: First Lien 1, First Lien 2, and a total share on
   assert.equal(block.rows.filter((row) => row.kind === ROW_KIND.INVESTMENT_LINE_WITH_IDENTIFIER).length, 2);
 });
 
-test("version 1 still ends Atlas at the following section totals", () => {
+test("version 1 still ends Atlas at the following section totals", (t) => {
+  if (!requireStoredFilings(t, NMSLF)) return;
   const { blocks } = parseScheduleDisclosureBlocksV1(readFileSync(NMSLF));
   const atlas = blocks.find((block) => block.startRowOrdinal === 757);
   assert.equal(atlas.endRowOrdinal, 762);
@@ -235,7 +248,8 @@ test("version 1 still ends Atlas at the following section totals", () => {
   assert.ok(atlas.rows.some((row) => row.rowOrdinal === 762));
 });
 
-test("version 2 ends Atlas before the section aggregate rows", () => {
+test("version 2 ends Atlas before the section aggregate rows", (t) => {
+  if (!requireStoredFilings(t, NMSLF)) return;
   const { blocks, excludedRows } = parseScheduleDisclosureBlocks(readFileSync(NMSLF));
   const atlas = blocks.find((block) => block.startRowOrdinal === 757);
   assert.equal(atlas.companyText, "Atlas AU Bidco Pty Ltd**");
@@ -250,7 +264,8 @@ test("version 2 ends Atlas before the section aggregate rows", () => {
   assert.ok(pioneer.startRowOrdinal > atlas.endRowOrdinal);
 });
 
-test("Guardian and Income Fund section totals stay outside the last company", () => {
+test("Guardian and Income Fund section totals stay outside the last company", (t) => {
+  if (!requireStoredFilings(t, NMG4, INCOME)) return;
   const guardian = parseScheduleDisclosureBlocks(readFileSync(NMG4));
   const guardianAtlas = guardian.blocks.find((block) => block.startRowOrdinal === 539);
   assert.equal(guardianAtlas.endRowOrdinal, 542);
@@ -265,7 +280,8 @@ test("Guardian and Income Fund section totals stay outside the last company", ()
   assert.equal(income.excludedRows.find((row) => row.rowOrdinal === 493).classification, ROW_KIND.SECTION_BOUNDARY);
 });
 
-test("an industry detail row stays inside and a section banner is not a company block", () => {
+test("an industry detail row stays inside and a section banner is not a company block", (t) => {
+  if (!requireStoredFilings(t, NMSLF)) return;
   const { blocks, excludedRows } = parseScheduleDisclosureBlocks(readFileSync(NMSLF));
   const geo = blocks.find((block) => block.startRowOrdinal === 534);
   const detail = geo.rows.find((row) => row.rowOrdinal === 535);
@@ -285,7 +301,8 @@ test("an industry detail row stays inside and a section banner is not a company 
   }
 });
 
-test("Pioneer Topco ordinary shares are an investment line without an identifier", () => {
+test("Pioneer Topco ordinary shares are an investment line without an identifier", (t) => {
+  if (!requireStoredFilings(t, NMSLF)) return;
   const { blocks } = parseScheduleDisclosureBlocks(readFileSync(NMSLF));
   const pioneer = blocks.find((block) => block.startRowOrdinal === 764);
   assert.equal(pioneer.endRowOrdinal, 765);
@@ -296,7 +313,8 @@ test("Pioneer Topco ordinary shares are an investment line without an identifier
   assert.ok(!pioneer.rows.some((row) => row.kind === ROW_KIND.TOTAL_OR_SUBTOTAL));
 });
 
-test("the filing-cell writer calls the company-cell check", () => {
+test("the filing-cell writer calls the company-cell check", (t) => {
+  if (!requireStoredFilings(t, NMSLF)) return;
   const html = readFileSync(NMSLF);
   const base = {
     html,
@@ -440,7 +458,8 @@ test("parser v2 definition hash matches Production rule 34", () => {
   assert.ok(!rule.files.includes("pipeline/load/filing-cell-outcome.mjs"));
 });
 
-test("a concentration-list Geo Parent row is not a schedule block", () => {
+test("a concentration-list Geo Parent row is not a schedule block", (t) => {
+  if (!requireStoredFilings(t, INCOME)) return;
   const { blocks } = parseScheduleDisclosureBlocks(readFileSync(INCOME));
   assert.ok(blocks.every((block) => block.rows[0].cells.every((cell) => cell.text !== "4.2")));
   assert.ok(blocks.filter((block) => block.companyText === "Geo Parent Corporation").every((block) => (

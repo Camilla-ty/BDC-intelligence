@@ -25,7 +25,7 @@ import { ensureAndLinkRuleForRun } from "./load/rules.mjs";
 
 export const RESOLUTION_RULES = [
   { code: "norm.borrower_name", version: "1" },
-  { code: "resolution.entity_exact_company_cell_name", version: "1" },
+  { code: "resolution.entity_exact_company_cell_name", version: "2" },
   { code: "norm.instrument_type_footnote_ref", version: "1" },
   { code: "resolution.instrument_exact_identifier_and_type", version: "2" },
   { code: "resolution.instrument_unknown_attributes", version: "2" },
