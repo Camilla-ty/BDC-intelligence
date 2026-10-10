@@ -14,6 +14,10 @@ export const EVENT_SCOPE_NOTE =
 export const ENTITY_NOTE = "A matched legal entity is not a matched instrument.";
 export const COUNT_NOTE =
   "The stored-observation count is the number of stored name rows. Linked registrants and observed dates are counted inside those rows. They are not exposure, coverage, or active holdings.";
+export const COMPARISON_LIST_NOTE =
+  "Period comparisons count stored confirmed same-position pairs for the legal entity. Zero means none are stored. Unavailable means the comparison read failed. A latest later period is shown only when one is present in those stored rows.";
+export const COMPARISON_UNAVAILABLE = "Unavailable";
+export const COMPARISON_NONE = "None";
 export const SEARCH_NOTE =
   "Results are stored names that contain this text. A partial name is not a resolved entity match.";
 export const EMPTY_SEARCH = "No stored borrower name contains this text.";
@@ -54,6 +58,21 @@ export type BorrowerSummary = {
   linkedRegistrants: string;
   observedDates: string;
   storedObservations: string;
+  /** Null when comparison availability could not be read. Zero is a successful empty result. */
+  comparisonSeriesCount: number | null;
+  /** Max later_reported_date from stored comparisons; omitted when count is zero or unavailable. */
+  latestComparisonPeriod: string | null;
+};
+
+export type ComparisonAvailabilityRow = {
+  legal_entity_id: string;
+  series_count: number;
+  latest_later_reported_date: string | null;
+};
+
+export type ComparisonAvailabilityResult = {
+  rows: ComparisonAvailabilityRow[];
+  error: string | null;
 };
 
 export type HistoryRow = {
@@ -190,10 +209,56 @@ export function listBorrowers(rows: ObservationRow[], query: string): BorrowerSu
       linkedRegistrants: countLabel(ciks.size),
       observedDates: countLabel(dates.size),
       storedObservations: countLabel(group.length),
+      comparisonSeriesCount: null,
+      latestComparisonPeriod: null,
     });
   }
   summaries.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   return summaries;
+}
+
+/** Merge one batched comparison-availability read onto list summaries. Failed reads stay null, not zero. */
+export function attachComparisonAvailability(
+  borrowers: BorrowerSummary[],
+  availability: ComparisonAvailabilityResult,
+): BorrowerSummary[] {
+  if (availability.error != null) {
+    return borrowers.map((borrower) => ({
+      ...borrower,
+      comparisonSeriesCount: null,
+      latestComparisonPeriod: null,
+    }));
+  }
+  const byId = new Map(availability.rows.map((row) => [row.legal_entity_id, row]));
+  return borrowers.map((borrower) => {
+    const row = byId.get(borrower.id);
+    if (row == null) {
+      return {
+        ...borrower,
+        comparisonSeriesCount: 0,
+        latestComparisonPeriod: null,
+      };
+    }
+    const seriesCount = row.series_count;
+    const latest =
+      seriesCount > 0 && row.latest_later_reported_date != null && row.latest_later_reported_date.trim() !== ""
+        ? row.latest_later_reported_date
+        : null;
+    return {
+      ...borrower,
+      comparisonSeriesCount: seriesCount,
+      latestComparisonPeriod: latest,
+    };
+  });
+}
+
+export function comparisonAvailabilityLabel(borrower: BorrowerSummary): string {
+  if (borrower.comparisonSeriesCount == null) return COMPARISON_UNAVAILABLE;
+  if (borrower.comparisonSeriesCount === 0) return COMPARISON_NONE;
+  if (borrower.latestComparisonPeriod != null) {
+    return `${borrower.comparisonSeriesCount} · latest ${borrower.latestComparisonPeriod}`;
+  }
+  return String(borrower.comparisonSeriesCount);
 }
 
 export function borrowerDetail(rows: ObservationRow[], id: string): BorrowerDetail | null {

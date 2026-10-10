@@ -68,13 +68,18 @@ import { BorrowerList } from "@/components/BorrowerList";
 import { BorrowerSources } from "@/components/BorrowerSources";
 import { AppShell } from "@/components/AppShell";
 import {
+  COMPARISON_LIST_NOTE,
+  COMPARISON_NONE,
+  COMPARISON_UNAVAILABLE,
   COUNT_NOTE,
   EDGAR_DOCUMENT_PREFIX,
   EMPTY_SEARCH,
   ENTITY_NOTE,
   SEARCH_NOTE,
   VALUATION_NOTE,
+  attachComparisonAvailability,
   borrowerDetail,
+  comparisonAvailabilityLabel,
   listBorrowers,
   sourceRows,
   type BorrowerSummary,
@@ -526,7 +531,10 @@ describe("historical position observations", () => {
   });
 });
 
-function summary(storedObservations: string): BorrowerSummary {
+function summary(
+  storedObservations: string,
+  overrides: Partial<BorrowerSummary> = {},
+): BorrowerSummary {
   return {
     id: ID,
     name: "TEST BORROWER A",
@@ -537,6 +545,9 @@ function summary(storedObservations: string): BorrowerSummary {
     linkedRegistrants: "24",
     observedDates: "16",
     storedObservations,
+    comparisonSeriesCount: null,
+    latestComparisonPeriod: null,
+    ...overrides,
   };
 }
 
@@ -556,6 +567,106 @@ describe("stored observation labels", () => {
     const headers = screen.getAllByRole("columnheader").map((header) => header.textContent ?? "").join(" ");
     expect(headers).not.toMatch(/exposure|coverage|active holdings|positions/i);
     expect(document.querySelector(".overflow-x-auto")).toBeTruthy();
+  });
+});
+
+describe("borrower list period-comparison availability", () => {
+  const OTHER_ID = "00000000-0000-4000-8000-000000000002";
+
+  it("attaches series counts and latest later period only for the matching legal entity", () => {
+    const listed = listBorrowers(
+      [
+        row(),
+        row({
+          legal_entity_id: OTHER_ID,
+          alias_text: "TEST BORROWER B",
+          accession_number: "0000000000-99-000002",
+        }),
+      ],
+      "",
+    );
+    const attached = attachComparisonAvailability(listed, {
+      rows: [
+        {
+          legal_entity_id: ID,
+          series_count: 2,
+          latest_later_reported_date: "2099-09-30",
+        },
+        {
+          legal_entity_id: OTHER_ID,
+          series_count: 0,
+          latest_later_reported_date: null,
+        },
+      ],
+      error: null,
+    });
+    expect(attached.find((item) => item.id === ID)).toMatchObject({
+      comparisonSeriesCount: 2,
+      latestComparisonPeriod: "2099-09-30",
+    });
+    expect(attached.find((item) => item.id === OTHER_ID)).toMatchObject({
+      comparisonSeriesCount: 0,
+      latestComparisonPeriod: null,
+    });
+    expect(comparisonAvailabilityLabel(attached.find((item) => item.id === ID)!)).toBe(
+      "2 · latest 2099-09-30",
+    );
+    expect(comparisonAvailabilityLabel(attached.find((item) => item.id === OTHER_ID)!)).toBe(
+      COMPARISON_NONE,
+    );
+  });
+
+  it("does not treat a failed comparison read as zero available series", () => {
+    const listed = listBorrowers([row()], "");
+    const attached = attachComparisonAvailability(listed, {
+      rows: [],
+      error: "Period-comparison availability could not be read.",
+    });
+    expect(attached[0]?.comparisonSeriesCount).toBeNull();
+    expect(attached[0]?.latestComparisonPeriod).toBeNull();
+    expect(comparisonAvailabilityLabel(attached[0]!)).toBe(COMPARISON_UNAVAILABLE);
+    expect(comparisonAvailabilityLabel(attached[0]!)).not.toBe(COMPARISON_NONE);
+    expect(comparisonAvailabilityLabel(attached[0]!)).not.toMatch(/^0/);
+  });
+
+  it("renders available, none, and unavailable comparison states distinctly", () => {
+    render(
+      <BorrowerList
+        borrowers={[
+          summary("1", {
+            id: ID,
+            name: "TEST BORROWER A",
+            comparisonSeriesCount: 2,
+            latestComparisonPeriod: "2099-09-30",
+          }),
+          summary("1", {
+            id: OTHER_ID,
+            name: "TEST BORROWER B",
+            comparisonSeriesCount: 0,
+            latestComparisonPeriod: null,
+          }),
+          summary("1", {
+            id: "00000000-0000-4000-8000-000000000003",
+            name: "TEST BORROWER C",
+            comparisonSeriesCount: null,
+            latestComparisonPeriod: null,
+          }),
+        ]}
+        query=""
+        error={null}
+        comparisonError="Period-comparison availability could not be read."
+      />,
+    );
+    expect(screen.getByRole("columnheader", { name: "Period comparisons" })).toBeInTheDocument();
+    expect(screen.getByText(COMPARISON_LIST_NOTE)).toBeInTheDocument();
+    expect(screen.getByText("Period-comparison availability could not be read.")).toBeInTheDocument();
+    expect(screen.getByText("2 · latest 2099-09-30")).toBeInTheDocument();
+    expect(screen.getByText(COMPARISON_NONE)).toBeInTheDocument();
+    expect(screen.getByText(COMPARISON_UNAVAILABLE)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "TEST BORROWER A" })).toHaveAttribute(
+      "href",
+      `/borrowers/${ID}`,
+    );
   });
 });
 

@@ -4,7 +4,12 @@ import { assertMaturityFields, type MaturityObservationRow, type MaturitySummary
 import { assertRefinancingFields, type RefinancingOutcomeRow } from "@/lib/borrower-refinancing";
 import { assertValuationFields, type ValuationRow } from "@/lib/borrower-valuation";
 import { assertPositionFields, type PositionObservationRow, type ResearchFieldRow } from "@/lib/borrower-positions";
-import { assertListingFields, type ObservationRow } from "@/lib/borrowers";
+import {
+  assertListingFields,
+  type ComparisonAvailabilityResult,
+  type ComparisonAvailabilityRow,
+  type ObservationRow,
+} from "@/lib/borrowers";
 import { executeSql } from "@/server/sql-text";
 
 // Reads registry.borrower_observation_listing as bdc_reader.
@@ -105,6 +110,74 @@ export async function loadBorrowerObservationsForEntity(legalEntityId: string): 
   // Invalid ids are unobserved, not a read failure (matches filtering an empty group).
   if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: null };
   return readListingRows(listingForEntitySql(legalEntityId));
+}
+
+// One round-trip for the borrower list: aggregate entity-scoped comparison series
+// via registry.borrower_position_comparisons (same MATCHED legal-entity semantics as
+// the detail page). Legal-entity UUID is the only scope key. Counts stored rows;
+// latest later_reported_date is max of that stored field when any row exists.
+const COMPARISON_AVAILABILITY_ERROR = "Period-comparison availability could not be read.";
+
+function comparisonAvailabilitySql(legalEntityIds: string[]): string {
+  const arrayLiteral = legalEntityIds.map((id) => `'${id}'`).join(", ");
+  return `
+SET ROLE bdc_reader;
+SET statement_timeout = '30s';
+SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+  SELECT e.legal_entity_id::text AS legal_entity_id,
+         count(c.later_position_observation_id)::integer AS series_count,
+         max(c.later_reported_date)::text AS latest_later_reported_date
+  FROM unnest(ARRAY[${arrayLiteral}]::uuid[]) AS e(legal_entity_id)
+  LEFT JOIN LATERAL (
+    SELECT later_position_observation_id, later_reported_date
+    FROM registry.borrower_position_comparisons(e.legal_entity_id)
+  ) c ON true
+  GROUP BY e.legal_entity_id
+) t;
+RESET ROLE;
+`;
+}
+
+export async function loadBorrowerComparisonAvailability(
+  legalEntityIds: string[],
+): Promise<ComparisonAvailabilityResult> {
+  const ids = [...new Set(legalEntityIds.filter((id) => ENTITY_ID.test(id)))];
+  if (ids.length === 0) return { rows: [], error: null };
+  const executed = await executeSql(comparisonAvailabilitySql(ids));
+  if (!executed.ok) return { rows: [], error: COMPARISON_AVAILABILITY_ERROR };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(executed.text === "" ? "[]" : executed.text);
+  } catch {
+    return { rows: [], error: COMPARISON_AVAILABILITY_ERROR };
+  }
+  if (!Array.isArray(parsed)) return { rows: [], error: COMPARISON_AVAILABILITY_ERROR };
+  const rows: ComparisonAvailabilityRow[] = [];
+  for (const item of parsed) {
+    if (item == null || typeof item !== "object") {
+      return { rows: [], error: COMPARISON_AVAILABILITY_ERROR };
+    }
+    const record = item as Record<string, unknown>;
+    const legalEntityId = record.legal_entity_id;
+    const seriesCount = record.series_count;
+    const latest = record.latest_later_reported_date;
+    if (typeof legalEntityId !== "string" || !ENTITY_ID.test(legalEntityId)) {
+      return { rows: [], error: COMPARISON_AVAILABILITY_ERROR };
+    }
+    if (typeof seriesCount !== "number" || !Number.isInteger(seriesCount) || seriesCount < 0) {
+      return { rows: [], error: COMPARISON_AVAILABILITY_ERROR };
+    }
+    if (latest != null && typeof latest !== "string") {
+      return { rows: [], error: COMPARISON_AVAILABILITY_ERROR };
+    }
+    rows.push({
+      legal_entity_id: legalEntityId,
+      series_count: seriesCount,
+      latest_later_reported_date: latest ?? null,
+    });
+  }
+  return { rows, error: null };
 }
 
 const POSITION_SQL = (legalEntityId: string) => `

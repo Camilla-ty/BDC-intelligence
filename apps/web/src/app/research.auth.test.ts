@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
     requireAuthenticatedUser: vi.fn(),
     loadBorrowerObservations: vi.fn(),
     loadBorrowerObservationsForEntity: vi.fn(),
+    loadBorrowerComparisonAvailability: vi.fn(),
     loadPortfolioDirectory: vi.fn(),
     loadEmptyPeriods: vi.fn(),
     loadMarketDirectory: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("@/server/auth/access", () => ({
 vi.mock("@/server/load-borrowers", () => ({
   loadBorrowerObservations: mocks.loadBorrowerObservations,
   loadBorrowerObservationsForEntity: mocks.loadBorrowerObservationsForEntity,
+  loadBorrowerComparisonAvailability: mocks.loadBorrowerComparisonAvailability,
   loadBorrowerPositionObservations: vi.fn(),
   loadBorrowerComparisonsAndRefinancing: vi.fn(),
   loadBorrowerPositionComparisons: vi.fn(),
@@ -89,6 +91,7 @@ describe("research route authentication", () => {
     expect(mocks.requireAuthenticatedUser).toHaveBeenCalledTimes(5);
     expect(mocks.loadBorrowerObservations).not.toHaveBeenCalled();
     expect(mocks.loadBorrowerObservationsForEntity).not.toHaveBeenCalled();
+    expect(mocks.loadBorrowerComparisonAvailability).not.toHaveBeenCalled();
     expect(mocks.loadPortfolioDirectory).not.toHaveBeenCalled();
     expect(mocks.loadMarketDirectory).not.toHaveBeenCalled();
   });
@@ -102,6 +105,7 @@ describe("research route authentication", () => {
         isPro: role === "PRO" || role === "ADMIN",
       });
       mocks.loadBorrowerObservations.mockResolvedValue({ rows: [], error: null });
+      mocks.loadBorrowerComparisonAvailability.mockResolvedValue({ rows: [], error: null });
       mocks.loadPortfolioDirectory.mockResolvedValue({ rows: [], error: null });
       mocks.loadEmptyPeriods.mockResolvedValue({ labels: [], error: null });
       mocks.loadMarketDirectory.mockResolvedValue({
