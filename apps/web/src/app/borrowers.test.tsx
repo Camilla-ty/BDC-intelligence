@@ -691,6 +691,9 @@ describe("confirmed position changes", () => {
     expect(section).toHaveTextContent("Evidence & change review");
     expect(section).toHaveTextContent("Observation evidence 501");
     expect(section).toHaveTextContent("Observation evidence 502");
+    expect(section).toHaveTextContent("Position observation");
+    expect(section).toHaveTextContent("9100000001");
+    expect(section).toHaveTextContent("9100000002");
     const principalChanges = [...section!.querySelectorAll("tbody tr")]
       .filter((tr) => tr.querySelector("th")?.textContent === "Principal")
       .map((tr) => tr.children[3]?.textContent?.replace(/\s+/g, " ").trim());
@@ -1434,9 +1437,9 @@ describe("what changed", () => {
     expect(page.match(/loadBorrowerComparisonsAndRefinancing/g)).toHaveLength(2);
     expect(page).not.toMatch(/loadBorrowerPositionComparisons/);
     expect(page).not.toMatch(/loadBorrowerRefinancingOutcomes/);
-    expect(loader).toMatch(/borrower_comparisons_and_refinancing/);
-    expect(loader).not.toMatch(/FROM registry\.borrower_position_comparisons/);
-    expect(loader).not.toMatch(/registry\.borrower_refinancing_outcomes/);
+    expect(loader).toMatch(/registry\.borrower_position_comparisons/);
+    expect(loader).toMatch(/registry\.borrower_refinancing_outcomes/);
+    expect(loader).not.toMatch(/borrower_comparisons_and_refinancing/);
     expect(loader).not.toMatch(/tsv_cell|TSV_CELL/);
   });
 });

@@ -256,6 +256,10 @@ function ObservationSource({
           <dd>{observation.reportedDate}</dd>
         </div>
         <div>
+          <dt className="text-xs text-muted">Position observation</dt>
+          <dd className="break-all"><StateText text={observation.observationId} /></dd>
+        </div>
+        <div>
           <dt className="text-xs text-muted">SEC accession</dt>
           <dd>
             <SecLink href={observation.documentUrl} missing={observation.accessionNumber}>

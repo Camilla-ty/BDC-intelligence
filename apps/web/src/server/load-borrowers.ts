@@ -324,16 +324,24 @@ RESET ROLE;
   return { rows, error: null };
 }
 
-// One DB round-trip: MATERIALIZED comparisons feed both JSON arrays (migration 0055).
-// json_build_object keeps a single cell for executeSql's first-column contract.
+// One DB round-trip over the established entity-scoped readers.
+// Comparisons come from registry.borrower_position_comparisons (same-legal-entity
+// MATCHED endpoints; stored deltas only). Refinancing comes from
+// registry.borrower_refinancing_outcomes. json_build_object keeps a single cell
+// for executeSql's first-column contract. Legal-entity id is the only scope key.
 const COMPARISONS_AND_REFINANCING_SQL = (legalEntityId: string) => `
 SET ROLE bdc_reader;
 SET statement_timeout = '30s';
 SELECT json_build_object(
-  'comparisons', comparisons,
-  'refinancing', refinancing
-)
-FROM registry.borrower_comparisons_and_refinancing('${legalEntityId}');
+  'comparisons', coalesce((
+    SELECT json_agg(row_to_json(c))
+    FROM registry.borrower_position_comparisons('${legalEntityId}'::uuid) c
+  ), '[]'::json),
+  'refinancing', coalesce((
+    SELECT json_agg(row_to_json(r))
+    FROM registry.borrower_refinancing_outcomes('${legalEntityId}'::uuid) r
+  ), '[]'::json)
+);
 RESET ROLE;
 `;
 

@@ -124,7 +124,7 @@ afterEach(() => {
 });
 
 describe("loadBorrowerComparisonsAndRefinancing", () => {
-  it("calls registry.borrower_comparisons_and_refinancing once and returns both arrays", async () => {
+  it("reads entity-scoped comparisons and refinancing through the established readers once", async () => {
     mocks.executeSql.mockResolvedValue({
       ok: true,
       text: JSON.stringify({
@@ -137,17 +137,26 @@ describe("loadBorrowerComparisonsAndRefinancing", () => {
 
     expect(mocks.executeSql).toHaveBeenCalledTimes(1);
     const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
-    expect(sql).toMatch(/registry\.borrower_comparisons_and_refinancing\('/);
+    expect(sql).toMatch(/registry\.borrower_position_comparisons\('/);
+    expect(sql).toMatch(/registry\.borrower_refinancing_outcomes\('/);
     expect(sql).toContain(ENTITY);
-    expect(sql).not.toMatch(/borrower_position_comparisons/);
-    expect(sql).not.toMatch(/borrower_refinancing_outcomes/);
+    expect(sql).toMatch(/::uuid/);
     expect(sql).toMatch(/json_build_object/);
+    expect(sql).not.toMatch(/borrower_comparisons_and_refinancing/);
 
     expect(result.comparisons.error).toBeNull();
     expect(result.refinancing.error).toBeNull();
     expect(result.comparisons.rows).toHaveLength(1);
     expect(result.refinancing.rows).toHaveLength(1);
     expect(result.comparisons.rows[0]?.maturity_changed).toBe(true);
+    expect(result.comparisons.rows[0]).toMatchObject({
+      legal_entity_id: ENTITY,
+      principal_comparison_state: "COMPARABLE",
+      principal_delta: "20",
+      cost_comparison_state: "INSUFFICIENT_DATA",
+      earlier_accession_number: "0000000000-99-000001",
+      later_observation_evidence_id: "502",
+    });
     expect(result.refinancing.rows[0]).toMatchObject({
       event_type: "MATURITY_CHANGED",
       refinancing_outcome_state: "UNKNOWN",
@@ -177,7 +186,7 @@ describe("loadBorrowerComparisonsAndRefinancing", () => {
     expect(result.refinancing.rows).toEqual([]);
   });
 
-  it("compat wrappers reuse the combined read path", async () => {
+  it("compat wrappers reuse the entity-scoped combined read path", async () => {
     mocks.executeSql.mockResolvedValue({
       ok: true,
       text: JSON.stringify({ comparisons: [COMPARISON_ROW], refinancing: [] }),
@@ -186,7 +195,7 @@ describe("loadBorrowerComparisonsAndRefinancing", () => {
     expect(comparisons.rows).toHaveLength(1);
     expect(mocks.executeSql).toHaveBeenCalledTimes(1);
     const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
-    expect(sql).toMatch(/borrower_comparisons_and_refinancing/);
+    expect(sql).toMatch(/borrower_position_comparisons/);
 
     mocks.executeSql.mockClear();
     mocks.executeSql.mockResolvedValue({
@@ -198,10 +207,41 @@ describe("loadBorrowerComparisonsAndRefinancing", () => {
     expect(refinancing.rows[0]?.event_type).toBe("MATURITY_CHANGED");
     expect(mocks.executeSql).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps COMPARABLE and INSUFFICIENT_DATA principal outcomes without inventing deltas", async () => {
+    mocks.executeSql.mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({
+        comparisons: [
+          COMPARISON_ROW,
+          {
+            ...COMPARISON_ROW,
+            later_position_observation_id: "9100000003",
+            principal_comparison_state: "INSUFFICIENT_DATA",
+            principal_delta: null,
+            earlier_principal_raw: "100",
+            later_principal_raw: null,
+          },
+        ],
+        refinancing: [],
+      }),
+    });
+    const result = await loadBorrowerComparisonsAndRefinancing(ENTITY);
+    expect(result.comparisons.rows).toHaveLength(2);
+    expect(result.comparisons.rows[0]).toMatchObject({
+      principal_comparison_state: "COMPARABLE",
+      principal_delta: "20",
+    });
+    expect(result.comparisons.rows[1]).toMatchObject({
+      principal_comparison_state: "INSUFFICIENT_DATA",
+      principal_delta: null,
+      later_principal_raw: null,
+    });
+  });
 });
 
-describe("borrower detail combined read wiring", () => {
-  it("uses the combined loader once and does not call the old pair separately", () => {
+describe("borrower detail entity-scoped comparison wiring", () => {
+  it("uses the combined loader once against the established entity-scoped readers", () => {
     const page = readFileSync(join(process.cwd(), "src/app/borrowers/[id]/page.tsx"), "utf8");
     const loader = readFileSync(join(process.cwd(), "src/server/load-borrowers.ts"), "utf8");
 
@@ -209,8 +249,8 @@ describe("borrower detail combined read wiring", () => {
     expect(page).not.toMatch(/loadBorrowerPositionComparisons/);
     expect(page).not.toMatch(/loadBorrowerRefinancingOutcomes/);
 
-    expect(loader.match(/borrower_comparisons_and_refinancing/g)?.length).toBeGreaterThanOrEqual(1);
-    expect(loader).not.toMatch(/FROM registry\.borrower_position_comparisons/);
-    expect(loader).not.toMatch(/registry\.borrower_refinancing_outcomes/);
+    expect(loader).toMatch(/registry\.borrower_position_comparisons/);
+    expect(loader).toMatch(/registry\.borrower_refinancing_outcomes/);
+    expect(loader).not.toMatch(/borrower_comparisons_and_refinancing/);
   });
 });
