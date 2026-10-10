@@ -38,11 +38,19 @@ function finish(rules, runId, outcome, detail) {
 }
 
 export function registryZipStatus(database, entry, registryLoadRuleId) {
-  const rows = queryRows(database, `SELECT a.id::text, coalesce(p.outcome, '')
+  const rows = queryRows(database, `SELECT a.id::text,
+       CASE WHEN EXISTS (
+         SELECT 1
+         FROM ops.artifact_processing p
+         JOIN ops.rule_version rv ON rv.id = p.rule_version_id
+         JOIN ops.rule_version cur ON cur.id = ${num(registryLoadRuleId)}
+         WHERE p.artifact_id = a.id
+           AND rv.rule_code = cur.rule_code
+           AND p.outcome = 'LOADED'
+       ) THEN 'LOADED' ELSE '' END
 FROM raw.artifact a
-LEFT JOIN ops.artifact_processing p ON p.artifact_id = a.id AND p.rule_version_id = ${num(registryLoadRuleId)}
 WHERE a.source_url = ${lit(entry.url)} AND a.sha256 = ${lit(entry.sha256)}
-ORDER BY p.id DESC NULLS LAST LIMIT 1;`);
+LIMIT 1;`);
   if (!rows.length) return { artifactId: null, outcome: null };
   return { artifactId: Number(rows[0][0]), outcome: rows[0][1] || null };
 }
@@ -160,7 +168,9 @@ FROM raw.tabular_row r
 WHERE r.table_load_id = pg_temp.ctx('load') AND r.parse_status = 'OK';
 SELECT pg_temp.fail('SOI adsh cell is not an accession number') FROM _ok WHERE cells[${ADSH}] !~ '^[0-9]{10}-[0-9]{2}-[0-9]{6}$' LIMIT 1;
 SELECT pg_temp.fail('SOI cik cell is not a CIK') FROM _ok WHERE cells[${CIK}] !~ '^[0-9]{1,10}$' LIMIT 1;
-SELECT pg_temp.strict_date(cells[${DDATE}], 'YYYY-MM-DD', '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') FROM _ok;
+DO $soi_date$ BEGIN
+  PERFORM pg_temp.strict_date(cells[${DDATE}], 'YYYY-MM-DD', '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') FROM _ok;
+END $soi_date$;
 SELECT pg_temp.fail('SOI qtrs is not a non-negative integer') FROM _ok WHERE cells[${QTRS}] !~ '^[0-9]+$' LIMIT 1;
 
 CREATE TEMP TABLE _maps ON COMMIT DROP AS
@@ -173,9 +183,11 @@ WHERE tl.id = pg_temp.ctx('load') AND array_position(tl.header, m.column_label) 
 SELECT pg_temp.fail('SOI monetary cell is not a decimal')
 FROM _ok r JOIN _maps m ON m.value_type = 'NUMERIC' AND m.unit_kind = 'MONETARY'
 WHERE r.cells[${IDENT}] <> '' AND r.cells[m.pos] <> '' AND r.cells[m.pos] !~ '^-?[0-9]+(\\.[0-9]+)?$' LIMIT 1;
-SELECT pg_temp.strict_date(r.cells[m.pos], 'YYYY-MM-DD', '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-FROM _ok r JOIN _maps m ON m.value_type = 'DATE'
-WHERE r.cells[${IDENT}] <> '' AND r.cells[m.pos] <> '';
+DO $soi_field_date$ BEGIN
+  PERFORM pg_temp.strict_date(r.cells[m.pos], 'YYYY-MM-DD', '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+  FROM _ok r JOIN _maps m ON m.value_type = 'DATE'
+  WHERE r.cells[${IDENT}] <> '' AND r.cells[m.pos] <> '';
+END $soi_field_date$;
 
 CREATE TEMP TABLE _orphan (${LOCATION_COLUMNS}) ON COMMIT DROP;
 INSERT INTO _orphan

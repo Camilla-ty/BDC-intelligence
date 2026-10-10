@@ -10,7 +10,7 @@ import { migrate } from "../../scripts/db/migrate.mjs";
 import { runLoad } from "../load/run.mjs";
 import { runSoiLoad } from "../load/soi-run.mjs";
 import {
-  FAKE, defaultFilledZip, defaultSources, subTsv, writeSyntheticTree,
+  FAKE, defaultFilledZip, defaultSources, defaultSubRows, soiTsv, subTsv, writeSyntheticTree,
 } from "./synthetic.mjs";
 import { reconcileSoi } from "../soi-reconcile.mjs";
 import { createStore } from "../lib/store.mjs";
@@ -27,6 +27,37 @@ function scalar(sql) {
   const found = rows(sql);
   assert.equal(found.length, 1, `expected one row from: ${sql}`);
   return found[0];
+}
+
+function testSoiRow(extra = {}) {
+  return {
+    adsh: FAKE.acc,
+    cik: String(FAKE.cik1),
+    name: FAKE.name1,
+    ddate: "2099-12-31",
+    qtrs: "0",
+    form: "10-K",
+    filed: "2099-12-31",
+    period: "2099-12-31",
+    inlineurl: `https://www.sec.gov/ix?doc=/Archives/edgar/data/${FAKE.cik1}/000000000000000001/test-only.htm`,
+    cstm: "0",
+    "Investment, Identifier Axis": FAKE.ident,
+    "Investment Owned, Balance, Principal Amount": "100",
+    "Adjusted cost basis": "90",
+    "Initial fair value of Investment": "80",
+    "Investment Maturity Date": "",
+    ...extra,
+  };
+}
+
+function sourcesWithSoi(rows) {
+  const sources = defaultSources();
+  sources.zipFilled = buildStoredZip({
+    "datasets/sub.tsv": subTsv(defaultSubRows()),
+    "soi.tsv": soiTsv(rows),
+    "readme.htm": "<html>TEST ONLY</html>",
+  });
+  return sources;
 }
 
 function withDb(fn) {
@@ -181,4 +212,41 @@ test("soi:load requires registry:load and stops on preset-header drift and missi
   } finally {
     rmSync(missDir, { recursive: true, force: true });
   }
+}));
+
+test("soi:load still loads valid ddate and mapped maturity dates", withDb(async (dataDir) => {
+  writeSyntheticTree(dataDir, sourcesWithSoi([
+    testSoiRow({ "Investment Maturity Date": "2099-06-30" }),
+  ]));
+  await runLoad({ dataDir, database: dbName, log: () => {} });
+  await runSoiLoad({ dataDir, database: dbName, log: () => {} });
+  assert.equal(scalar("SELECT count(*) FROM obs.soi_row_observation"), "1");
+  assert.equal(scalar("SELECT reported_date::text FROM obs.soi_row_observation"), "2099-12-31");
+  assert.equal(scalar("SELECT count(*) FROM obs.position_field_value WHERE field_code = 'MATURITY_DATE' AND raw_value = '2099-06-30' AND normalized_date = '2099-06-30'"), "1");
+  assert.equal(scalar("SELECT outcome FROM ops.artifact_processing p JOIN ops.rule_version r ON r.id = p.rule_version_id WHERE r.rule_code = 'pipeline.soi_load' AND p.detail LIKE '%2099_12%'"), "LOADED");
+}));
+
+test("soi:load still raises on an invalid ddate and rolls the ZIP back", withDb(async (dataDir) => {
+  writeSyntheticTree(dataDir, sourcesWithSoi([testSoiRow({ ddate: "not-a-date" })]));
+  await runLoad({ dataDir, database: dbName, log: () => {} });
+  await assert.rejects(
+    () => runSoiLoad({ dataDir, database: dbName, log: () => {} }),
+    /unexpected date format \(expected YYYY-MM-DD\)/,
+  );
+  assert.equal(scalar("SELECT count(*) FROM obs.soi_row_observation"), "0");
+  assert.equal(scalar("SELECT count(*) FROM ops.artifact_processing p JOIN ops.rule_version r ON r.id = p.rule_version_id WHERE r.rule_code = 'pipeline.soi_load'"), "0");
+}));
+
+test("soi:load still raises on an invalid mapped maturity date and rolls the ZIP back", withDb(async (dataDir) => {
+  writeSyntheticTree(dataDir, sourcesWithSoi([
+    testSoiRow({ "Investment Maturity Date": "not-a-date" }),
+  ]));
+  await runLoad({ dataDir, database: dbName, log: () => {} });
+  await assert.rejects(
+    () => runSoiLoad({ dataDir, database: dbName, log: () => {} }),
+    /unexpected date format \(expected YYYY-MM-DD\)/,
+  );
+  assert.equal(scalar("SELECT count(*) FROM obs.soi_row_observation"), "0");
+  assert.equal(scalar("SELECT count(*) FROM obs.position_field_value WHERE field_code = 'MATURITY_DATE'"), "0");
+  assert.equal(scalar("SELECT count(*) FROM ops.artifact_processing p JOIN ops.rule_version r ON r.id = p.rule_version_id WHERE r.rule_code = 'pipeline.soi_load'"), "0");
 }));

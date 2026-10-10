@@ -87,7 +87,6 @@ test("hosted script keeps SET ROLE and the same COPY payload", () => {
   assert.equal(pipelineScript("SELECT 1;", { asWriter: false }), "SELECT 1;");
 });
 
-
 test("hosted script sets a bounded session statement_timeout before SET ROLE", () => {
   assert.equal(HOSTED_STATEMENT_TIMEOUT, "60min");
   const sql = hostedPipelineScript(`SELECT 1;\n${copyBlock("_t", ["n"], [["1"]])}\nSELECT 2;`);
@@ -168,4 +167,14 @@ test("hosted client collects SQL result rows without an argument spread", () => 
   assert.doesNotMatch(hosted, /\.push\(\.\.\./);
   assert.doesNotMatch(hosted, /\.apply\s*\(/);
   assert.doesNotMatch(src, /lines\.push\(\.\.\.\s*rowsToLines/);
+});
+
+test("SOI date checks validate every row on the server without a client result set", () => {
+  const src = readFileSync(new URL("../load/units/dataset-soi.mjs", import.meta.url), "utf8");
+  assert.match(src, /PERFORM pg_temp\.strict_date\(cells\[\$\{DDATE\}\]/);
+  assert.match(src, /PERFORM pg_temp\.strict_date\(r\.cells\[m\.pos\]/);
+  assert.match(src, /DO \$soi_date\$ BEGIN/);
+  assert.match(src, /DO \$soi_field_date\$ BEGIN/);
+  assert.doesNotMatch(src, /SELECT pg_temp\.strict_date\(cells\[\$\{DDATE\}\][\s\S]*?FROM _ok;/);
+  assert.doesNotMatch(src, /SELECT pg_temp\.strict_date\(r\.cells\[m\.pos\][\s\S]*?FROM _ok r JOIN _maps m/);
 });

@@ -37,9 +37,21 @@ export function pipelineCodeVersion() {
 
 export function alreadyProcessed(database, entry, loaderRuleId) {
   if (!entry.sha256) return false;
+  const ruleId = Number(loaderRuleId);
+  if (!Number.isSafeInteger(ruleId)) throw new Error("loader rule id is not a safe integer");
+  const url = entry.url.replace(/'/g, "''");
+  const sha = String(entry.sha256).replace(/'/g, "''");
+  // LOADED on any version of this rule_code counts. A row for the current version
+  // also counts, so a same-version NOT_IN_SCOPE or SCHEMA_DRIFT rerun stays a no-op.
+  // A non-LOADED row on an older version does not.
   const rows = queryRows(database, `SELECT 1 FROM raw.artifact a
-JOIN ops.artifact_processing p ON p.artifact_id = a.id AND p.rule_version_id = ${loaderRuleId}
-WHERE a.source_url = '${entry.url.replace(/'/g, "''")}' AND a.sha256 = '${entry.sha256}' LIMIT 1;`);
+JOIN ops.artifact_processing p ON p.artifact_id = a.id
+JOIN ops.rule_version rv ON rv.id = p.rule_version_id
+JOIN ops.rule_version cur ON cur.id = ${ruleId}
+WHERE a.source_url = '${url}' AND a.sha256 = '${sha}'
+  AND rv.rule_code = cur.rule_code
+  AND (p.outcome = 'LOADED' OR p.rule_version_id = cur.id)
+LIMIT 1;`);
   return rows.length > 0;
 }
 
