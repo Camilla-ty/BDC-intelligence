@@ -3,10 +3,12 @@
 // that already have a SOI identifier and a reported instrument type.
 //
 //   node pipeline/resolve-eligible-instruments.mjs [-- --db NAME] [--dry-run] [--allow-hosted] [--data-dir DIR]
+//   node pipeline/resolve-eligible-instruments.mjs [-- --db NAME] --unique-dates [--limit N] [--dry-run] [--allow-hosted] [--data-dir DIR]
 //
-// A hosted database is refused unless --allow-hosted is passed. --dry-run only
+// A hosted database is refused unless --allow-hosted is passed. Bounded --dry-run only
 // reads and prints the selection, the planned legal-entity outcomes, the instrument-type
-// footnote normalization, and the planned instrument and continuity outcomes.
+// footnote normalization, and the planned instrument and continuity outcomes. Unique-date
+// --dry-run only reads and prints selection and batch counters (no writes).
 
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -15,7 +17,9 @@ import { DEFAULT_DATA_DIR, DEFAULT_DATABASE } from "./lib/config.mjs";
 import { lit, num, pipelineConnectionTarget, queryRows } from "./lib/db.mjs";
 import {
   loadEligibleInstrumentObservations,
+  planUniqueDateBatches,
   selectBoundedEligibleObservations,
+  selectUniqueDateEligibleObservations,
 } from "./load/eligible-instrument-scope.mjs";
 import { applyP4Min, snapshotP4Min } from "./load/p4-min.mjs";
 import { applyP6CompanyCell, planP6CompanyCell } from "./load/p6-company-cell.mjs";
@@ -47,12 +51,15 @@ function groupsOf(rows) {
   return [...groups.entries()].sort((left, right) => Math.min(...left[1]) - Math.min(...right[1]));
 }
 
-export function assertResolutionDatabase(database, { allowHosted = false } = {}) {
+export function assertResolutionDatabase(database, {
+  allowHosted = false,
+  allowNonDefaultLocalDatabase = false,
+} = {}) {
   if (pipelineConnectionTarget().mode !== "local") {
     if (!allowHosted) throw new Error("eligible instrument resolution refuses a hosted database");
     return;
   }
-  if (database !== DEFAULT_DATABASE) {
+  if (database !== DEFAULT_DATABASE && !allowNonDefaultLocalDatabase) {
     throw new Error("eligible instrument resolution refuses a database other than the local database");
   }
 }
@@ -147,10 +154,38 @@ function dryRunSummary(eligible, selected, entityPlan, groupPlans) {
   };
 }
 
+function decidedInstrumentIds(database, ids) {
+  if (ids.length === 0) return [];
+  const rows = queryRows(database, `
+SELECT d.position_observation_id::text
+FROM resolution.current_instrument_resolution d
+WHERE d.position_observation_id IN (${ids.join(",")});`);
+  return rows.map((row) => Number(row[0]));
+}
+
+function multiPeriodSeriesCount(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = `${row.registrantId}\u0000${row.identifierRaw}\u0000${row.instrumentType}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row.reportedDate);
+  }
+  let count = 0;
+  for (const dates of groups.values()) {
+    if (new Set(dates).size === dates.length && new Set(dates).size >= 2) count += 1;
+  }
+  return count;
+}
+
 export function resolveBoundedEligibleInstruments({
-  database, allowHosted = false, dryRun = false, dataDir = DEFAULT_DATA_DIR, log: logFn = console.log,
+  database,
+  allowHosted = false,
+  allowNonDefaultLocalDatabase = false,
+  dryRun = false,
+  dataDir = DEFAULT_DATA_DIR,
+  log: logFn = console.log,
 }) {
-  assertResolutionDatabase(database, { allowHosted });
+  assertResolutionDatabase(database, { allowHosted, allowNonDefaultLocalDatabase });
   const eligible = loadEligibleInstrumentObservations(database);
   const selected = selectBoundedEligibleObservations(eligible);
   if (selected.length === 0) throw new Error("no eligible instrument observations are stored");
@@ -215,13 +250,110 @@ VALUES (${num(runId)}, 'SUCCEEDED', now(), ${lit(JSON.stringify({
   return summary;
 }
 
+export function resolveUniqueDateEligibleInstruments({
+  database,
+  limit = null,
+  allowHosted = false,
+  allowNonDefaultLocalDatabase = false,
+  dryRun = false,
+  dataDir = DEFAULT_DATA_DIR,
+  log: logFn = console.log,
+}) {
+  assertResolutionDatabase(database, { allowHosted, allowNonDefaultLocalDatabase });
+  const eligible = loadEligibleInstrumentObservations(database);
+  const unique = selectUniqueDateEligibleObservations(eligible);
+  const uniqueIds = new Set(unique.map((row) => row.id));
+  const decided = decidedInstrumentIds(database, unique.map((row) => row.id));
+  const planned = planUniqueDateBatches(eligible, { alreadyDecidedIds: decided, limit });
+  const plannedRows = planned.flat();
+  const crossRegistrant = planned.filter((group) => {
+    const byType = new Map();
+    for (const row of group) {
+      if (!byType.has(row.instrumentType)) byType.set(row.instrumentType, new Set());
+      byType.get(row.instrumentType).add(row.registrantId);
+    }
+    return [...byType.values()].some((registrants) => registrants.size > 1);
+  }).length;
+  const summary = {
+    mode: dryRun ? "unique-date-dry-run" : "unique-date",
+    n_eligible: eligible.length,
+    n_unique_date: unique.length,
+    n_duplicate_date_excluded: eligible.filter((row) => !uniqueIds.has(row.id)).length,
+    n_already_decided: decided.length,
+    n_groups: planned.length,
+    n_selected: plannedRows.length,
+    n_multi_period_series: multiPeriodSeriesCount(plannedRows),
+    n_cross_registrant_type_groups: crossRegistrant,
+    selected_ids: plannedRows.map((row) => row.id),
+  };
+  if (dryRun || planned.length === 0) {
+    logFn(JSON.stringify(summary));
+    return summary;
+  }
+  const ids = summary.selected_ids;
+  const beforeNames = snapshotP4Min(database, ids);
+  const codeVersion = pipelineCodeVersion();
+  const runRows = queryRows(database, `INSERT INTO ops.run (run_kind, code_version, parameters, started_at)
+VALUES ('ELIGIBLE_INSTRUMENT_RESOLUTION', ${lit(codeVersion)},
+        jsonb_build_object('mode', 'unique-date', 'n_eligible', ${num(eligible.length)},
+          'n_selected', ${num(ids.length)}, 'n_groups', ${num(planned.length)}),
+        now())
+RETURNING id;`);
+  const runId = Number(runRows[0][0]);
+  const rules = linkResolutionRules(database, runId);
+  const groups = [];
+  for (const group of planned) {
+    const identifierRaw = group[0].identifierRaw;
+    const groupIds = group.map((row) => row.id);
+    const identifierSha256 = createHash("sha256").update(identifierRaw, "utf8").digest("hex");
+    const names = applyP4Min({
+      database, positionObservationIds: groupIds, runId, rules, identifierSha256,
+    });
+    const entity = applyP6CompanyCell({
+      database, positionObservationIds: groupIds, runId, rules,
+    });
+    const instrument = applyP7Min({
+      database, positionObservationIds: groupIds, runId, rules, identifierSha256, dataDir,
+    });
+    groups.push({
+      n: groupIds.length,
+      names,
+      entity,
+      instrument,
+    });
+  }
+  const afterNames = snapshotP4Min(database, ids);
+  if (afterNames.non_golden_borrower_name_count !== beforeNames.non_golden_borrower_name_count) {
+    throw new Error("eligible instrument resolution changed borrower names outside the selected observations");
+  }
+  summary.run_id = runId;
+  summary.groups = groups;
+  summary.non_selected_names_unchanged = true;
+  queryRows(database, `INSERT INTO ops.run_outcome (run_id, status, finished_at, counts)
+VALUES (${num(runId)}, 'SUCCEEDED', now(), ${lit(JSON.stringify({
+    n_eligible: eligible.length,
+    n_selected: ids.length,
+    n_groups: groups.length,
+    mode: "unique-date",
+  }))}::jsonb);`);
+  logFn(JSON.stringify(summary));
+  return summary;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const database = opt(args, "--db") ?? DEFAULT_DATABASE;
-  resolveBoundedEligibleInstruments({
+  const shared = {
     database,
     allowHosted: args.includes("--allow-hosted"),
     dryRun: args.includes("--dry-run"),
     dataDir: opt(args, "--data-dir") ?? DEFAULT_DATA_DIR,
-  });
+  };
+  if (args.includes("--unique-dates")) {
+    const limitText = opt(args, "--limit");
+    const limit = limitText == null ? null : Number(limitText);
+    resolveUniqueDateEligibleInstruments({ ...shared, limit });
+  } else {
+    resolveBoundedEligibleInstruments(shared);
+  }
 }

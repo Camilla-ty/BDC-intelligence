@@ -19,6 +19,47 @@ function addGroup(chosen, rows) {
   for (const row of rows) chosen.set(row.id, row);
 }
 
+// One observation per reporting date for one registrant, exact identifier, and exact type.
+// A repeated date stays out. The match rule is unchanged; this only chooses what may run.
+export function selectUniqueDateEligibleObservations(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const groups = new Map();
+  for (const row of list) {
+    if (row.registrantLinkStatus !== "LINKED") continue;
+    if (row.registrantId == null || row.reportedDate == null || row.reportedDate === "") continue;
+    if (typeof row.identifierRaw !== "string" || row.identifierRaw === "") continue;
+    if (typeof row.instrumentType !== "string" || row.instrumentType === "") continue;
+    const key = `${row.registrantId}\u0000${row.identifierRaw}\u0000${row.instrumentType}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  const chosen = [];
+  for (const group of groups.values()) {
+    const dates = group.map((row) => row.reportedDate);
+    if (new Set(dates).size !== group.length) continue;
+    chosen.push(...group);
+  }
+  return chosen.sort((left, right) => left.id - right.id);
+}
+
+export function planUniqueDateBatches(rows, { alreadyDecidedIds = [], limit = null } = {}) {
+  const decided = new Set((alreadyDecidedIds ?? []).map((id) => Number(id)));
+  const groups = new Map();
+  for (const row of selectUniqueDateEligibleObservations(rows)) {
+    if (!groups.has(row.identifierRaw)) groups.set(row.identifierRaw, []);
+    groups.get(row.identifierRaw).push(row);
+  }
+  const pending = [...groups.values()]
+    .map((group) => [...group].sort((left, right) => left.id - right.id))
+    .filter((group) => group.some((row) => !decided.has(row.id)));
+  pending.sort((left, right) => left[0].id - right[0].id || left[0].identifierRaw.localeCompare(right[0].identifierRaw));
+  if (limit == null) return pending;
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new Error("unique-date batch limit must be a positive integer");
+  }
+  return pending.slice(0, limit);
+}
+
 function multiPeriodSeries(rows) {
   const groups = new Map();
   for (const row of rows) {
