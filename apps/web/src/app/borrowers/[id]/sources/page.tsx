@@ -3,7 +3,7 @@ import { MissingRecord } from "@/components/MissingRecord";
 import { borrowerDetail, sourceRows } from "@/lib/borrowers";
 import { UNOBSERVED_BORROWER } from "@/lib/states";
 import { requireAuthenticatedUser } from "@/server/auth/access";
-import { loadBorrowerObservations } from "@/server/load-borrowers";
+import { loadBorrowerObservationsForEntity } from "@/server/load-borrowers";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export default async function SourcesPage({
 }) {
   await requireAuthenticatedUser();
   const { id } = await params;
-  const { rows, error } = await loadBorrowerObservations();
+  const { rows, error } = await loadBorrowerObservationsForEntity(id);
   if (error) return <p className="text-sm">{error}</p>;
   const borrower = borrowerDetail(rows, id);
   if (!borrower) return <MissingRecord message={UNOBSERVED_BORROWER} href="/borrowers" label="Borrowers" />;

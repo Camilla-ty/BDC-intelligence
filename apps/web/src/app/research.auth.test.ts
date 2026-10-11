@@ -64,6 +64,7 @@ vi.mock("@/server/load-maturity", () => ({
 
 import BorrowersPage from "@/app/borrowers/page";
 import BorrowerPage from "@/app/borrowers/[id]/page";
+import SourcesPage from "@/app/borrowers/[id]/sources/page";
 import PortfoliosPage from "@/app/portfolios/page";
 import MaturityPage from "@/app/maturity/page";
 import MarketPage from "@/app/market/page";
@@ -84,11 +85,12 @@ describe("research route authentication", () => {
 
     await expect(BorrowersPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(mocks.RedirectSignal);
     await expect(BorrowerPage({ params: Promise.resolve({ id: "test-id" }) })).rejects.toBeInstanceOf(mocks.RedirectSignal);
+    await expect(SourcesPage({ params: Promise.resolve({ id: "test-id" }) })).rejects.toBeInstanceOf(mocks.RedirectSignal);
     await expect(PortfoliosPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(mocks.RedirectSignal);
     await expect(MaturityPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(mocks.RedirectSignal);
     await expect(MarketPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(mocks.RedirectSignal);
 
-    expect(mocks.requireAuthenticatedUser).toHaveBeenCalledTimes(5);
+    expect(mocks.requireAuthenticatedUser).toHaveBeenCalledTimes(6);
     expect(mocks.loadBorrowerObservations).not.toHaveBeenCalled();
     expect(mocks.loadBorrowerObservationsForEntity).not.toHaveBeenCalled();
     expect(mocks.loadBorrowerComparisonAvailability).not.toHaveBeenCalled();

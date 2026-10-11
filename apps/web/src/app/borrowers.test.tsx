@@ -241,6 +241,29 @@ describe("source linkage", () => {
     expect(screen.queryByRole("link", { name: "0000000000-99-000001" })).not.toBeInTheDocument();
     expect(screen.queryByText(ID)).not.toBeInTheDocument();
   });
+
+  it("excludes observations that belong to another legal entity", () => {
+    const otherId = "00000000-0000-4000-8000-000000000002";
+    const sources = sourceRows(
+      [
+        row(),
+        row({
+          legal_entity_id: otherId,
+          alias_text: "TEST BORROWER B",
+          accession_number: "0000000000-99-000099",
+          document_name: "other-entity.htm",
+        }),
+      ],
+      ID,
+    );
+    expect(sources).toHaveLength(1);
+    expect(sources[0]?.accessionNumber).toBe("0000000000-99-000001");
+    expect(sources.map((item) => item.accessionNumber)).not.toContain("0000000000-99-000099");
+    render(<BorrowerSources id={ID} name="TEST BORROWER A" sources={sources} />);
+    expect(screen.getByRole("link", { name: "0000000000-99-000001" })).toBeInTheDocument();
+    expect(screen.queryByText("0000000000-99-000099")).not.toBeInTheDocument();
+    expect(screen.queryByText("other-entity.htm")).not.toBeInTheDocument();
+  });
 });
 
 describe("no fabricated valuation or instrument facts", () => {
@@ -1812,11 +1835,13 @@ describe("borrower detail listing scope", () => {
     expect(loader).toMatch(/WHERE legal_entity_id = '\$\{legalEntityId\}'/);
     expect(loader).toMatch(/FROM registry\.borrower_observation_listing/);
 
-    // Directory and sources keep the full listing until those pages are optimized separately.
+    expect(sourcesPage).toMatch(/loadBorrowerObservationsForEntity\s*\(\s*id\s*\)/);
+    expect(sourcesPage).not.toMatch(/loadBorrowerObservations\s*\(/);
+    expect(sourcesPage).not.toMatch(/loadBorrowerObservations\s*,/);
+
+    // Directory keeps the full listing until that page is optimized separately.
     expect(listPage).toMatch(/loadBorrowerObservations\s*\(/);
     expect(listPage).not.toMatch(/loadBorrowerObservationsForEntity/);
-    expect(sourcesPage).toMatch(/loadBorrowerObservations\s*\(/);
-    expect(sourcesPage).not.toMatch(/loadBorrowerObservationsForEntity/);
   });
 });
 
