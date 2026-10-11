@@ -546,15 +546,33 @@ describe("historical position observations", () => {
       { label: "Identified BDCs", value: "1" },
       { label: "Observations with matched instrument identity", value: "1" },
       { label: "Observations with matched position continuity", value: "1" },
-      { label: "Confirmed position changes", value: "0" },
+      { label: "Stored period-comparison pairs", value: "0" },
       { label: "Observations with unresolved instrument identity or position continuity", value: "2" },
     ]);
+    const withPairs = observedActivity(
+      positions,
+      positionComparisons([
+        comparison(),
+        comparison({
+          earlier_position_observation_id: "9100000003",
+          later_position_observation_id: "9100000004",
+          earlier_reported_date: "2099-06-30",
+          later_reported_date: "2099-09-30",
+        }),
+      ], listings, ID),
+    );
+    expect(withPairs.facts).toContainEqual({
+      label: "Stored period-comparison pairs",
+      value: "2",
+    });
     const detail = borrowerDetail([row()], ID);
     render(<BorrowerIntelligence borrower={detail!} positions={positions} />);
     const summary = screen.getByRole("heading", { name: "Observed activity" }).closest("section");
     expect(summary).toHaveTextContent("Historical observations");
     expect(summary).toHaveTextContent("3");
     expect(summary).toHaveTextContent("Identified BDCs");
+    expect(summary).toHaveTextContent("Stored period-comparison pairs");
+    expect(summary).not.toHaveTextContent("Confirmed position changes");
     expect(summary).not.toHaveTextContent(/score|rank|health/i);
   });
 });

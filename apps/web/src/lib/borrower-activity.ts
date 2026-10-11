@@ -57,7 +57,7 @@ export function observedActivity(
       { label: "Identified BDCs", value: String(identifiedBdcs.size) },
       { label: "Observations with matched instrument identity", value: String(matchedInstruments) },
       { label: "Observations with matched position continuity", value: String(matchedContinuity) },
-      { label: "Confirmed position changes", value: String(comparisons.length) },
+      { label: "Stored period-comparison pairs", value: String(comparisons.length) },
       {
         label: "Observations with unresolved instrument identity or position continuity",
         value: String(unresolved),
