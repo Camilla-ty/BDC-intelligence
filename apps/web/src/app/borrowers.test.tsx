@@ -68,11 +68,13 @@ import { BorrowerList } from "@/components/BorrowerList";
 import { BorrowerSources } from "@/components/BorrowerSources";
 import { AppShell } from "@/components/AppShell";
 import {
+  COMPARISON_FILTER_NOTE,
   COMPARISON_LIST_NOTE,
   COMPARISON_NONE,
   COMPARISON_UNAVAILABLE,
   COUNT_NOTE,
   EDGAR_DOCUMENT_PREFIX,
+  EMPTY_COMPARISON_FILTER,
   EMPTY_SEARCH,
   ENTITY_NOTE,
   SEARCH_NOTE,
@@ -80,7 +82,10 @@ import {
   attachComparisonAvailability,
   borrowerDetail,
   comparisonAvailabilityLabel,
+  filterAndSortBorrowers,
   listBorrowers,
+  parseBorrowerListSort,
+  parseComparisonAvailabilityFilter,
   sourceRows,
   type BorrowerSummary,
   type ObservationRow,
@@ -667,6 +672,243 @@ describe("borrower list period-comparison availability", () => {
       "href",
       `/borrowers/${ID}`,
     );
+  });
+});
+
+describe("borrower list comparison filter and sort", () => {
+  const UNAVAILABLE_ID = "00000000-0000-4000-8000-000000000003";
+  const DATE_ID = "00000000-0000-4000-8000-000000000004";
+
+  function roster(): BorrowerSummary[] {
+    return [
+      summary("1", {
+        id: ID,
+        name: "TEST BORROWER A",
+        comparisonSeriesCount: 2,
+        latestComparisonPeriod: "2099-06-30",
+      }),
+      summary("1", {
+        id: "00000000-0000-4000-8000-000000000002",
+        name: "TEST BORROWER B",
+        comparisonSeriesCount: 0,
+        latestComparisonPeriod: null,
+      }),
+      summary("1", {
+        id: UNAVAILABLE_ID,
+        name: "TEST BORROWER C",
+        comparisonSeriesCount: null,
+        latestComparisonPeriod: null,
+      }),
+      summary("1", {
+        id: DATE_ID,
+        name: "TEST BORROWER D",
+        comparisonSeriesCount: 5,
+        latestComparisonPeriod: "2099-09-30",
+      }),
+    ];
+  }
+
+  it("parses comparison filter and sort query values with safe defaults", () => {
+    expect(parseComparisonAvailabilityFilter(undefined)).toBe("all");
+    expect(parseComparisonAvailabilityFilter("has")).toBe("has");
+    expect(parseComparisonAvailabilityFilter("none")).toBe("none");
+    expect(parseComparisonAvailabilityFilter("bogus")).toBe("all");
+    expect(parseBorrowerListSort(undefined)).toBe("name");
+    expect(parseBorrowerListSort("comparisons_desc")).toBe("comparisons_desc");
+    expect(parseBorrowerListSort("comparisons_asc")).toBe("comparisons_asc");
+    expect(parseBorrowerListSort("latest_desc")).toBe("latest_desc");
+    expect(parseBorrowerListSort("latest_asc")).toBe("latest_asc");
+    expect(parseBorrowerListSort("score")).toBe("name");
+  });
+
+  it("filters all, has, and none without classifying Unavailable as no comparisons", () => {
+    const rows = roster();
+    expect(filterAndSortBorrowers(rows, { comparisonFilter: "all" }).map((item) => item.name)).toEqual([
+      "TEST BORROWER A",
+      "TEST BORROWER B",
+      "TEST BORROWER C",
+      "TEST BORROWER D",
+    ]);
+    expect(filterAndSortBorrowers(rows, { comparisonFilter: "has" }).map((item) => item.name)).toEqual([
+      "TEST BORROWER A",
+      "TEST BORROWER D",
+    ]);
+    expect(filterAndSortBorrowers(rows, { comparisonFilter: "none" }).map((item) => item.name)).toEqual([
+      "TEST BORROWER B",
+    ]);
+    expect(
+      filterAndSortBorrowers(rows, { comparisonFilter: "none" }).every(
+        (item) => item.comparisonSeriesCount === 0,
+      ),
+    ).toBe(true);
+    expect(
+      filterAndSortBorrowers(rows, { comparisonFilter: "has" }).every(
+        (item) => item.comparisonSeriesCount != null && item.comparisonSeriesCount > 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("sorts by comparison count ascending and descending with Unavailable last", () => {
+    const rows = roster();
+    expect(
+      filterAndSortBorrowers(rows, { sort: "comparisons_desc" }).map((item) => [
+        item.name,
+        item.comparisonSeriesCount,
+      ]),
+    ).toEqual([
+      ["TEST BORROWER D", 5],
+      ["TEST BORROWER A", 2],
+      ["TEST BORROWER B", 0],
+      ["TEST BORROWER C", null],
+    ]);
+    expect(
+      filterAndSortBorrowers(rows, { sort: "comparisons_asc" }).map((item) => [
+        item.name,
+        item.comparisonSeriesCount,
+      ]),
+    ).toEqual([
+      ["TEST BORROWER B", 0],
+      ["TEST BORROWER A", 2],
+      ["TEST BORROWER D", 5],
+      ["TEST BORROWER C", null],
+    ]);
+  });
+
+  it("sorts by latest comparison period newest and oldest with missing dates last", () => {
+    const rows = roster();
+    expect(
+      filterAndSortBorrowers(rows, { sort: "latest_desc" }).map((item) => [
+        item.name,
+        item.latestComparisonPeriod,
+      ]),
+    ).toEqual([
+      ["TEST BORROWER D", "2099-09-30"],
+      ["TEST BORROWER A", "2099-06-30"],
+      ["TEST BORROWER B", null],
+      ["TEST BORROWER C", null],
+    ]);
+    expect(
+      filterAndSortBorrowers(rows, { sort: "latest_asc" }).map((item) => [
+        item.name,
+        item.latestComparisonPeriod,
+      ]),
+    ).toEqual([
+      ["TEST BORROWER A", "2099-06-30"],
+      ["TEST BORROWER D", "2099-09-30"],
+      ["TEST BORROWER B", null],
+      ["TEST BORROWER C", null],
+    ]);
+  });
+
+  it("combines stored-name search with comparison filter and sort", () => {
+    const listed = listBorrowers(
+      [
+        row({ alias_text: "TEST HOLDINGS A", legal_entity_id: ID }),
+        row({
+          alias_text: "TEST HOLDINGS B",
+          legal_entity_id: "00000000-0000-4000-8000-000000000002",
+          accession_number: "0000000000-99-000002",
+        }),
+        row({
+          alias_text: "TEST OTHER",
+          legal_entity_id: DATE_ID,
+          accession_number: "0000000000-99-000003",
+        }),
+      ],
+      "holdings",
+    );
+    const attached = attachComparisonAvailability(listed, {
+      rows: [
+        { legal_entity_id: ID, series_count: 1, latest_later_reported_date: "2099-03-31" },
+        {
+          legal_entity_id: "00000000-0000-4000-8000-000000000002",
+          series_count: 0,
+          latest_later_reported_date: null,
+        },
+      ],
+      error: null,
+    });
+    const presented = filterAndSortBorrowers(attached, {
+      comparisonFilter: "has",
+      sort: "comparisons_desc",
+    });
+    expect(presented.map((item) => item.name)).toEqual(["TEST HOLDINGS A"]);
+    expect(presented[0]?.comparisonSeriesCount).toBe(1);
+  });
+
+  it("excludes Unavailable from has/none when the comparison read fails", () => {
+    const attached = attachComparisonAvailability(listBorrowers([row()], ""), {
+      rows: [],
+      error: "Period-comparison availability could not be read.",
+    });
+    expect(attached[0]?.comparisonSeriesCount).toBeNull();
+    expect(filterAndSortBorrowers(attached, { comparisonFilter: "has" })).toEqual([]);
+    expect(filterAndSortBorrowers(attached, { comparisonFilter: "none" })).toEqual([]);
+    expect(filterAndSortBorrowers(attached, { comparisonFilter: "all" })).toHaveLength(1);
+    expect(comparisonAvailabilityLabel(attached[0]!)).toBe(COMPARISON_UNAVAILABLE);
+  });
+
+  it("shows availability error without a false empty-filter message for has when availability fails", () => {
+    render(
+      <BorrowerList
+        borrowers={[]}
+        query=""
+        comparisonFilter="has"
+        sort="name"
+        error={null}
+        comparisonError="Period-comparison availability could not be read."
+        matchedBeforeComparisonFilter={2}
+      />,
+    );
+    expect(screen.getByText("Period-comparison availability could not be read.")).toBeInTheDocument();
+    expect(screen.queryByText(EMPTY_COMPARISON_FILTER)).not.toBeInTheDocument();
+    expect(screen.queryByText(COMPARISON_NONE)).not.toBeInTheDocument();
+  });
+
+  it("shows availability error without a false empty-filter message for none when availability fails", () => {
+    render(
+      <BorrowerList
+        borrowers={[]}
+        query=""
+        comparisonFilter="none"
+        sort="name"
+        error={null}
+        comparisonError="Period-comparison availability could not be read."
+        matchedBeforeComparisonFilter={2}
+      />,
+    );
+    expect(screen.getByText("Period-comparison availability could not be read.")).toBeInTheDocument();
+    expect(screen.queryByText(EMPTY_COMPARISON_FILTER)).not.toBeInTheDocument();
+    expect(screen.queryByText(COMPARISON_NONE)).not.toBeInTheDocument();
+  });
+
+  it("renders filter and sort controls and an empty comparison-filter state", () => {
+    render(
+      <BorrowerList
+        borrowers={[]}
+        query="holdings"
+        comparisonFilter="has"
+        sort="comparisons_desc"
+        error={null}
+        matchedBeforeComparisonFilter={3}
+      />,
+    );
+    expect(screen.getByLabelText("Comparisons")).toHaveValue("has");
+    expect(screen.getByLabelText("Sort")).toHaveValue("comparisons_desc");
+    expect(screen.getByText(COMPARISON_FILTER_NOTE)).toBeInTheDocument();
+    expect(screen.getByText(EMPTY_COMPARISON_FILTER)).toBeInTheDocument();
+    expect(screen.getByText(SEARCH_NOTE)).toBeInTheDocument();
+    expect(screen.queryByText(EMPTY_SEARCH)).not.toBeInTheDocument();
+  });
+
+  it("wires list-page search params through filter and sort helpers", () => {
+    const page = readFileSync(join(process.cwd(), "src/app/borrowers/page.tsx"), "utf8");
+    expect(page).toMatch(/parseComparisonAvailabilityFilter/);
+    expect(page).toMatch(/parseBorrowerListSort/);
+    expect(page).toMatch(/filterAndSortBorrowers/);
+    expect(page).toMatch(/attachComparisonAvailability/);
+    expect(page).toMatch(/loadBorrowerComparisonAvailability/);
+    expect(page.indexOf("attachComparisonAvailability")).toBeLessThan(page.indexOf("filterAndSortBorrowers"));
   });
 });
 

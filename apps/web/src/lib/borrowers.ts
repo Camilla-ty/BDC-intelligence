@@ -16,14 +16,33 @@ export const COUNT_NOTE =
   "The stored-observation count is the number of stored name rows. Linked registrants and observed dates are counted inside those rows. They are not exposure, coverage, or active holdings.";
 export const COMPARISON_LIST_NOTE =
   "Period comparisons count stored confirmed same-position pairs for the legal entity. Zero means none are stored. Unavailable means the comparison read failed. A latest later period is shown only when one is present in those stored rows.";
+export const COMPARISON_FILTER_NOTE =
+  "Has comparisons and No comparisons use only known availability. Unavailable rows are excluded from both filters and sort after known values.";
 export const COMPARISON_UNAVAILABLE = "Unavailable";
 export const COMPARISON_NONE = "None";
 export const SEARCH_NOTE =
   "Results are stored names that contain this text. A partial name is not a resolved entity match.";
 export const EMPTY_SEARCH = "No stored borrower name contains this text.";
 export const EMPTY_LIST = "No stored borrowers are available.";
+export const EMPTY_COMPARISON_FILTER =
+  "No stored borrowers match this comparison-availability filter.";
 export const CIK_NOTE = "CIK identifies the filing registrant, not the borrower.";
 export const DOCUMENT_URL_UNKNOWN = "Document URL Unknown";
+
+export const COMPARISON_FILTERS = ["all", "has", "none"] as const;
+export type ComparisonAvailabilityFilter = (typeof COMPARISON_FILTERS)[number];
+
+export const BORROWER_LIST_SORTS = [
+  "name",
+  "comparisons_desc",
+  "comparisons_asc",
+  "latest_desc",
+  "latest_asc",
+] as const;
+export type BorrowerListSort = (typeof BORROWER_LIST_SORTS)[number];
+
+export const DEFAULT_COMPARISON_FILTER: ComparisonAvailabilityFilter = "all";
+export const DEFAULT_BORROWER_LIST_SORT: BorrowerListSort = "name";
 
 const FORBIDDEN_FIELD = /cost|fair|principal|amount|ebitda|leverage|rating|sponsor|ownership/i;
 
@@ -259,6 +278,83 @@ export function comparisonAvailabilityLabel(borrower: BorrowerSummary): string {
     return `${borrower.comparisonSeriesCount} · latest ${borrower.latestComparisonPeriod}`;
   }
   return String(borrower.comparisonSeriesCount);
+}
+
+export function parseComparisonAvailabilityFilter(
+  value: string | undefined | null,
+): ComparisonAvailabilityFilter {
+  if (value === "has" || value === "none" || value === "all") return value;
+  return DEFAULT_COMPARISON_FILTER;
+}
+
+export function parseBorrowerListSort(value: string | undefined | null): BorrowerListSort {
+  if (
+    value === "name"
+    || value === "comparisons_desc"
+    || value === "comparisons_asc"
+    || value === "latest_desc"
+    || value === "latest_asc"
+  ) {
+    return value;
+  }
+  return DEFAULT_BORROWER_LIST_SORT;
+}
+
+function nameIdCompare(a: BorrowerSummary, b: BorrowerSummary): number {
+  return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+}
+
+/**
+ * Filter and sort after comparison availability is attached.
+ * Unavailable (null count) is never treated as No comparisons; those rows are
+ * excluded from has/none and sort after known comparison values.
+ */
+export function filterAndSortBorrowers(
+  borrowers: BorrowerSummary[],
+  options: {
+    comparisonFilter?: ComparisonAvailabilityFilter;
+    sort?: BorrowerListSort;
+  } = {},
+): BorrowerSummary[] {
+  const comparisonFilter = options.comparisonFilter ?? DEFAULT_COMPARISON_FILTER;
+  const sort = options.sort ?? DEFAULT_BORROWER_LIST_SORT;
+  const filtered = borrowers.filter((borrower) => {
+    if (comparisonFilter === "all") return true;
+    if (borrower.comparisonSeriesCount == null) return false;
+    if (comparisonFilter === "has") return borrower.comparisonSeriesCount > 0;
+    return borrower.comparisonSeriesCount === 0;
+  });
+  const ordered = [...filtered];
+  ordered.sort((a, b) => {
+    if (sort === "comparisons_desc" || sort === "comparisons_asc") {
+      const aUnknown = a.comparisonSeriesCount == null;
+      const bUnknown = b.comparisonSeriesCount == null;
+      if (aUnknown !== bUnknown) return aUnknown ? 1 : -1;
+      if (!aUnknown && !bUnknown) {
+        const delta =
+          sort === "comparisons_desc"
+            ? (b.comparisonSeriesCount as number) - (a.comparisonSeriesCount as number)
+            : (a.comparisonSeriesCount as number) - (b.comparisonSeriesCount as number);
+        if (delta !== 0) return delta;
+      }
+      return nameIdCompare(a, b);
+    }
+    if (sort === "latest_desc" || sort === "latest_asc") {
+      const aDate = a.latestComparisonPeriod;
+      const bDate = b.latestComparisonPeriod;
+      const aMissing = aDate == null || aDate.trim() === "";
+      const bMissing = bDate == null || bDate.trim() === "";
+      if (aMissing !== bMissing) return aMissing ? 1 : -1;
+      if (!aMissing && !bMissing) {
+        const delta =
+          sort === "latest_desc" ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate);
+        if (delta !== 0) return delta;
+      }
+      return nameIdCompare(a, b);
+    }
+    return nameIdCompare(a, b);
+  });
+  return ordered;
 }
 
 export function borrowerDetail(rows: ObservationRow[], id: string): BorrowerDetail | null {
