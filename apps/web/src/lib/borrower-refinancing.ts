@@ -110,10 +110,9 @@ function evidenceLabel(level: string | null): string {
   return "Unknown";
 }
 
-function documentByAccession(listings: ObservationRow[], legalEntityId: string): Map<string, string | null> {
+function documentByAccession(listings: ObservationRow[]): Map<string, string | null> {
   const docs = new Map<string, string | null>();
   for (const listing of listings) {
-    if (listing.legal_entity_id !== legalEntityId) continue;
     const url = secUrl(listing.document_url);
     const current = docs.get(listing.accession_number);
     if (current === undefined) docs.set(listing.accession_number, url);
@@ -127,11 +126,13 @@ export function refinancingOutcomes(
   listings: ObservationRow[],
   legalEntityId: string,
 ): RefinancingDisplay[] {
-  const documents = documentByAccession(listings, legalEntityId);
+  const allowedEntityIds = new Set(listings.map((listing) => listing.legal_entity_id));
+  allowedEntityIds.add(legalEntityId);
+  const documents = documentByAccession(listings);
   const displays: RefinancingDisplay[] = [];
   for (const row of rows) {
     assertRefinancingFields(row);
-    if (row.legal_entity_id !== legalEntityId) continue;
+    if (!allowedEntityIds.has(row.legal_entity_id)) continue;
     // registry.borrower_refinancing_outcomes emits only MATURITY_CHANGED.
     if (row.event_type !== "MATURITY_CHANGED") continue;
     const linked = row.registrant_link_status === "LINKED" && Boolean(row.registrant_cik);

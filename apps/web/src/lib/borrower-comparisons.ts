@@ -197,10 +197,9 @@ function sideRegistrant(cik: string | null, status: string | null): string {
   return "Unknown";
 }
 
-function documentByAccession(listings: ObservationRow[], legalEntityId: string): Map<string, string | null> {
+function documentByAccession(listings: ObservationRow[]): Map<string, string | null> {
   const docs = new Map<string, string | null>();
   for (const listing of listings) {
-    if (listing.legal_entity_id !== legalEntityId) continue;
     const url = secUrl(listing.document_url);
     const current = docs.get(listing.accession_number);
     if (current === undefined) docs.set(listing.accession_number, url);
@@ -306,10 +305,12 @@ export function positionComparisons(
   listings: ObservationRow[],
   legalEntityId: string,
 ): PositionComparison[] {
-  const documents = documentByAccession(listings, legalEntityId);
+  const allowedEntityIds = new Set(listings.map((listing) => listing.legal_entity_id));
+  allowedEntityIds.add(legalEntityId);
+  const documents = documentByAccession(listings);
   const eligible = rows.filter((row) => {
     assertComparisonFields(row);
-    return row.legal_entity_id === legalEntityId;
+    return allowedEntityIds.has(row.legal_entity_id);
   });
   eligible.sort((a, b) =>
     b.later_reported_date.localeCompare(a.later_reported_date)

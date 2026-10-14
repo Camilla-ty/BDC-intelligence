@@ -35,12 +35,40 @@ SELECT pg_temp.expect_ok('reader can read integrity views, including computed au
   'SELECT count(*) FROM obs.soi_load_reconciliation',
   'RESET ROLE']);
 
-SELECT pg_temp.check('writer has INSERT on every history table except ref, the ledger, and rule activation', NOT EXISTS (
+SELECT pg_temp.check('writer has INSERT on every history table except ref, the ledger, rule activation, and helper-only consolidations', NOT EXISTS (
   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE c.relkind = 'r'
     AND n.nspname IN ('ops', 'raw', 'registry', 'evidence', 'obs', 'identity', 'resolution', 'validation', 'derived')
-    AND (n.nspname, c.relname) NOT IN (('ops', 'schema_migration'), ('ops', 'rule_activation'))
+    AND (n.nspname, c.relname) NOT IN (
+      ('ops', 'schema_migration'),
+      ('ops', 'rule_activation'),
+      ('resolution', 'legal_entity_consolidation_decision')
+    )
     AND NOT has_table_privilege('bdc_pipeline_writer', c.oid, 'INSERT')));
+
+SELECT pg_temp.check('pipeline writer cannot INSERT consolidation decisions (helper-only)',
+  NOT has_table_privilege('bdc_pipeline_writer', 'resolution.legal_entity_consolidation_decision', 'INSERT')
+  AND has_table_privilege('resolution_writer', 'resolution.legal_entity_consolidation_decision', 'INSERT'));
+
+SELECT pg_temp.check('pipeline writer has no USAGE on consolidation decision sequence',
+  NOT has_sequence_privilege('bdc_pipeline_writer',
+    'resolution.legal_entity_consolidation_decision_id_seq', 'USAGE')
+  AND has_sequence_privilege('resolution_writer',
+    'resolution.legal_entity_consolidation_decision_id_seq', 'USAGE'));
+
+SELECT pg_temp.check('consolidation preview and pending list are Admin-only (not bdc_reader)',
+  NOT has_function_privilege('bdc_reader',
+    'registry.legal_entity_consolidation_preview(uuid)', 'EXECUTE')
+  AND NOT has_function_privilege('bdc_reader',
+    'registry.list_pending_legal_entity_consolidations()', 'EXECUTE')
+  AND has_function_privilege('admin_reader',
+    'registry.legal_entity_consolidation_preview(uuid)', 'EXECUTE')
+  AND has_function_privilege('admin_reader',
+    'registry.list_pending_legal_entity_consolidations()', 'EXECUTE')
+  AND NOT has_function_privilege('resolution_writer',
+    'registry.legal_entity_consolidation_preview(uuid)', 'EXECUTE')
+  AND NOT has_function_privilege('resolution_writer',
+    'registry.list_pending_legal_entity_consolidations()', 'EXECUTE'));
 
 SELECT pg_temp.check('no application role has UPDATE, DELETE, or TRUNCATE on any layer table', NOT EXISTS (
   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

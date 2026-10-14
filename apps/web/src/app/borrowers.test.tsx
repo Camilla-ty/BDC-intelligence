@@ -242,7 +242,133 @@ describe("source linkage", () => {
     expect(screen.queryByText(ID)).not.toBeInTheDocument();
   });
 
-  it("excludes observations that belong to another legal entity", () => {
+  it("folds matched legal entities under the approved canonical directory id", () => {
+    const matchedOther = "00000000-0000-4000-8000-000000000002";
+    const listed = listBorrowers(
+      [
+        row({
+          legal_entity_id: matchedOther,
+          canonical_legal_entity_id: ID,
+          alias_text: "TEST ALIAS MATCHED",
+          accession_number: "0000000000-99-000010",
+        }),
+        row({
+          legal_entity_id: ID,
+          canonical_legal_entity_id: ID,
+          alias_text: "TEST SURVIVOR ALIAS",
+          accession_number: "0000000000-99-000011",
+        }),
+      ],
+      "",
+    );
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.id).toBe(ID);
+    expect(listed[0]?.name).toBe("TEST SURVIVOR ALIAS");
+    expect(listed[0]?.storedObservations).toBe("2");
+  });
+
+  it("search on one consolidated alias keeps the full canonical observation count", () => {
+    const matchedOther = "00000000-0000-4000-8000-000000000002";
+    const unrelated = "00000000-0000-4000-8000-000000000003";
+    const rows = [
+      row({
+        legal_entity_id: matchedOther,
+        canonical_legal_entity_id: ID,
+        alias_text: "TEST SEARCHABLE ALIAS ONLY",
+        accession_number: "0000000000-99-000010",
+        reported_date: "2099-03-31",
+      }),
+      row({
+        legal_entity_id: matchedOther,
+        canonical_legal_entity_id: ID,
+        alias_text: "TEST SEARCHABLE ALIAS ONLY",
+        accession_number: "0000000000-99-000012",
+        reported_date: "2099-06-30",
+      }),
+      row({
+        legal_entity_id: ID,
+        canonical_legal_entity_id: ID,
+        alias_text: "TEST SURVIVOR ALIAS",
+        accession_number: "0000000000-99-000011",
+        reported_date: "2099-09-30",
+      }),
+      row({
+        legal_entity_id: unrelated,
+        canonical_legal_entity_id: unrelated,
+        alias_text: "TEST UNRELATED BORROWER",
+        accession_number: "0000000000-99-000099",
+      }),
+    ];
+    const listed = listBorrowers(rows, "searchable alias");
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.id).toBe(ID);
+    expect(listed[0]?.name).toBe("TEST SURVIVOR ALIAS");
+    // Full group: two matched-other rows + one survivor row; not undercounted to 2.
+    expect(listed[0]?.storedObservations).toBe("3");
+    expect(listed[0]?.observedDates).toBe("3");
+    // No double-count from consolidation: still one directory row, one count per listing row.
+    expect(listBorrowers(rows, "").map((item) => item.storedObservations)).toEqual(["3", "1"]);
+  });
+
+  it("pending or rejected consolidation shape does not fold distinct canonical ids", () => {
+    const pendingSource = "00000000-0000-4000-8000-000000000002";
+    // Loader only emits approved canonical ids; a pending/rejected proposal leaves each
+    // matched UUID resolving to itself until MATCHED approval.
+    const listed = listBorrowers(
+      [
+        row({
+          legal_entity_id: pendingSource,
+          canonical_legal_entity_id: pendingSource,
+          alias_text: "TEST PENDING SOURCE",
+          accession_number: "0000000000-99-000010",
+        }),
+        row({
+          legal_entity_id: ID,
+          canonical_legal_entity_id: ID,
+          alias_text: "TEST SURVIVOR ALIAS",
+          accession_number: "0000000000-99-000011",
+        }),
+      ],
+      "",
+    );
+    expect(listed).toHaveLength(2);
+    expect(listed.map((item) => item.id).sort()).toEqual([ID, pendingSource].sort());
+    expect(listed.every((item) => item.storedObservations === "1")).toBe(true);
+  });
+
+  it("canonical search results sort stably by display name then id", () => {
+    const matchedOther = "00000000-0000-4000-8000-000000000002";
+    const otherCanonical = "00000000-0000-4000-8000-000000000003";
+    const listed = listBorrowers(
+      [
+        row({
+          legal_entity_id: matchedOther,
+          canonical_legal_entity_id: ID,
+          alias_text: "ZZZ SEARCH HIT",
+          accession_number: "0000000000-99-000010",
+        }),
+        row({
+          legal_entity_id: ID,
+          canonical_legal_entity_id: ID,
+          alias_text: "BETA SURVIVOR",
+          accession_number: "0000000000-99-000011",
+        }),
+        row({
+          legal_entity_id: otherCanonical,
+          canonical_legal_entity_id: otherCanonical,
+          alias_text: "ALPHA OTHER",
+          accession_number: "0000000000-99-000020",
+        }),
+      ],
+      "a",
+    );
+    // Both groups match ("BETA"/"ALPHA" via "a", and ZZZ via search? "a" matches BETA, ALPHA, and searchable? ZZZ SEARCH HIT has 'a' in SEARCH).
+    expect(listed.map((item) => item.name)).toEqual(["ALPHA OTHER", "BETA SURVIVOR"]);
+    expect(listed.map((item) => item.id)).toEqual([otherCanonical, ID]);
+    expect(listed[1]?.storedObservations).toBe("2");
+  });
+
+  it("keeps loader-scoped rows including consolidated matched legal entities", () => {
     const otherId = "00000000-0000-4000-8000-000000000002";
     const sources = sourceRows(
       [
@@ -256,10 +382,13 @@ describe("source linkage", () => {
       ],
       ID,
     );
-    expect(sources).toHaveLength(1);
-    expect(sources[0]?.accessionNumber).toBe("0000000000-99-000001");
-    expect(sources.map((item) => item.accessionNumber)).not.toContain("0000000000-99-000099");
-    render(<BorrowerSources id={ID} name="TEST BORROWER A" sources={sources} />);
+    // Entity filtering is the loader's job (canonical scope). sourceRows preserves provenance rows.
+    expect(sources).toHaveLength(2);
+    expect(sources.map((item) => item.accessionNumber)).toEqual([
+      "0000000000-99-000001",
+      "0000000000-99-000099",
+    ]);
+    render(<BorrowerSources id={ID} name="TEST BORROWER A" sources={sources.filter((s) => s.accessionNumber === "0000000000-99-000001")} />);
     expect(screen.getByRole("link", { name: "0000000000-99-000001" })).toBeInTheDocument();
     expect(screen.queryByText("0000000000-99-000099")).not.toBeInTheDocument();
     expect(screen.queryByText("other-entity.htm")).not.toBeInTheDocument();
@@ -1845,15 +1974,17 @@ describe("borrower detail listing scope", () => {
     const listPage = readFileSync(join(process.cwd(), "src/app/borrowers/page.tsx"), "utf8");
     const sourcesPage = readFileSync(join(process.cwd(), "src/app/borrowers/[id]/sources/page.tsx"), "utf8");
 
-    expect(page).toMatch(/loadBorrowerObservationsForEntity\s*\(\s*id\s*\)/);
+    expect(page).toMatch(/loadCanonicalLegalEntityId/);
+    expect(page).toMatch(/loadBorrowerObservationsForEntity\s*\(\s*scopedId\s*\)/);
     expect(page).not.toMatch(/loadBorrowerObservations\s*\(/);
     expect(page).not.toMatch(/loadBorrowerObservations\s*,/);
 
     expect(loader).toMatch(/export async function loadBorrowerObservationsForEntity/);
-    expect(loader).toMatch(/WHERE legal_entity_id = '\$\{legalEntityId\}'/);
+    expect(loader).toMatch(/legal_entities_with_canonical/);
     expect(loader).toMatch(/FROM registry\.borrower_observation_listing/);
 
-    expect(sourcesPage).toMatch(/loadBorrowerObservationsForEntity\s*\(\s*id\s*\)/);
+    expect(sourcesPage).toMatch(/loadCanonicalLegalEntityId/);
+    expect(sourcesPage).toMatch(/loadBorrowerObservationsForEntity\s*\(\s*scopedId\s*\)/);
     expect(sourcesPage).not.toMatch(/loadBorrowerObservations\s*\(/);
     expect(sourcesPage).not.toMatch(/loadBorrowerObservations\s*,/);
 

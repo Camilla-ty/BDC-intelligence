@@ -21,6 +21,7 @@ const ENTITY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
 const LISTING_SELECT = `
   SELECT legal_entity_id::text,
+         resolution.canonical_legal_entity(legal_entity_id)::text AS canonical_legal_entity_id,
          alias_text,
          verification_state,
          entity_resolution_state,
@@ -53,6 +54,8 @@ RESET ROLE;
 `;
 
 function listingForEntitySql(legalEntityId: string): string {
+  // Scope includes every matched LE whose approved canonical identity equals the page id.
+  // Pending consolidation proposals do not expand or redirect this set.
   return `
 SET ROLE bdc_reader;
 SET statement_timeout = '30s';
@@ -60,7 +63,9 @@ SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
 FROM (
 ${LISTING_SELECT}
   FROM registry.borrower_observation_listing
-  WHERE legal_entity_id = '${legalEntityId}'
+  WHERE legal_entity_id IN (
+    SELECT legal_entity_id FROM resolution.legal_entities_with_canonical('${legalEntityId}'::uuid)
+  )
   ORDER BY alias_text, reported_date, accession_number
 ) t;
 RESET ROLE;
@@ -119,21 +124,24 @@ export async function loadBorrowerObservationsForEntity(legalEntityId: string): 
 const COMPARISON_AVAILABILITY_ERROR = "Period-comparison availability could not be read.";
 
 function comparisonAvailabilitySql(legalEntityIds: string[]): string {
+  // legalEntityIds are canonical Borrower directory ids. Expand to matched LEs under each
+  // canonical UUID so availability is not split across duplicate matched entries.
   const arrayLiteral = legalEntityIds.map((id) => `'${id}'`).join(", ");
   return `
 SET ROLE bdc_reader;
 SET statement_timeout = '30s';
 SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
 FROM (
-  SELECT e.legal_entity_id::text AS legal_entity_id,
+  SELECT e.canonical_legal_entity_id::text AS legal_entity_id,
          count(c.later_position_observation_id)::integer AS series_count,
          max(c.later_reported_date)::text AS latest_later_reported_date
-  FROM unnest(ARRAY[${arrayLiteral}]::uuid[]) AS e(legal_entity_id)
+  FROM unnest(ARRAY[${arrayLiteral}]::uuid[]) AS e(canonical_legal_entity_id)
+  LEFT JOIN resolution.legal_entities_with_canonical(e.canonical_legal_entity_id) m ON true
   LEFT JOIN LATERAL (
     SELECT later_position_observation_id, later_reported_date
-    FROM registry.borrower_position_comparisons(e.legal_entity_id)
+    FROM registry.borrower_position_comparisons(m.legal_entity_id)
   ) c ON true
-  GROUP BY e.legal_entity_id
+  GROUP BY e.canonical_legal_entity_id
 ) t;
 RESET ROLE;
 `;
@@ -185,42 +193,10 @@ SET ROLE bdc_reader;
 SET statement_timeout = '30s';
 SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
 FROM (
-  SELECT legal_entity_id,
-         position_observation_id,
-         reported_date,
-         accession_number,
-         registrant_cik,
-         registrant_link_status,
-         entity_resolution_state,
-         instrument_resolution_state,
-         continuity_state,
-         economic_group_state,
-         principal_state,
-         principal_raw,
-         principal_currency_state,
-         cost_state,
-         cost_raw,
-         cost_currency_state,
-         fair_value_state,
-         fair_value_raw,
-         fair_value_currency_state,
-         acquisition_state,
-         acquisition_raw,
-         acquisition_precision,
-         interest_rate_state,
-         interest_rate_raw,
-         spread_state,
-         spread_raw,
-         interest_rate_floor_state,
-         interest_rate_floor_raw,
-         maturity_source,
-         maturity_raw,
-         maturity_precision,
-         maturity_filing_verified,
-         maturity_document_url,
-         observation_evidence_level
-  FROM registry.borrower_position_observations('${legalEntityId}')
-  ORDER BY reported_date DESC, registrant_cik ASC NULLS LAST, accession_number ASC, position_observation_id ASC
+  SELECT obs.*
+  FROM resolution.legal_entities_with_canonical('${legalEntityId}'::uuid) m
+  CROSS JOIN LATERAL registry.borrower_position_observations(m.legal_entity_id) obs
+  ORDER BY obs.reported_date DESC, obs.registrant_cik ASC NULLS LAST, obs.accession_number ASC, obs.position_observation_id ASC
 ) t;
 RESET ROLE;
 `;
@@ -408,11 +384,13 @@ SET statement_timeout = '30s';
 SELECT json_build_object(
   'comparisons', coalesce((
     SELECT json_agg(row_to_json(c))
-    FROM registry.borrower_position_comparisons('${legalEntityId}'::uuid) c
+    FROM resolution.legal_entities_with_canonical('${legalEntityId}'::uuid) m
+    CROSS JOIN LATERAL registry.borrower_position_comparisons(m.legal_entity_id) c
   ), '[]'::json),
   'refinancing', coalesce((
     SELECT json_agg(row_to_json(r))
-    FROM registry.borrower_refinancing_outcomes('${legalEntityId}'::uuid) r
+    FROM resolution.legal_entities_with_canonical('${legalEntityId}'::uuid) m
+    CROSS JOIN LATERAL registry.borrower_refinancing_outcomes(m.legal_entity_id) r
   ), '[]'::json)
 );
 RESET ROLE;
@@ -710,8 +688,9 @@ SET ROLE bdc_reader;
 SET statement_timeout = '30s';
 SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
 FROM (
-  SELECT *
-  FROM registry.borrower_position_valuation('${legalEntityId}')
+  SELECT v.*
+  FROM resolution.legal_entities_with_canonical('${legalEntityId}'::uuid) m
+  CROSS JOIN LATERAL registry.borrower_position_valuation(m.legal_entity_id) v
 ) t;
 RESET ROLE;
 `;
@@ -854,8 +833,9 @@ SET ROLE bdc_reader;
 SET statement_timeout = '30s';
 SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
 FROM (
-  SELECT *
-  FROM ${source}('${legalEntityId}')
+  SELECT s.*
+  FROM resolution.legal_entities_with_canonical('${legalEntityId}'::uuid) m
+  CROSS JOIN LATERAL ${source}(m.legal_entity_id) s
 ) t;
 RESET ROLE;
 `;

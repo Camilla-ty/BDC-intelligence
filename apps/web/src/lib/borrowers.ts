@@ -48,6 +48,8 @@ const FORBIDDEN_FIELD = /cost|fair|principal|amount|ebitda|leverage|rating|spons
 
 export type ObservationRow = {
   legal_entity_id: string;
+  /** Approved canonical Borrower UUID; equals legal_entity_id when unconsolidated. */
+  canonical_legal_entity_id?: string | null;
   alias_text: string;
   verification_state: string;
   entity_resolution_state: string;
@@ -199,18 +201,41 @@ function instrumentFields(group: ObservationRow[]) {
   };
 }
 
+function directoryCanonicalId(row: ObservationRow): string {
+  const canonical = row.canonical_legal_entity_id?.trim();
+  if (canonical != null && canonical !== "") return canonical;
+  return row.legal_entity_id;
+}
+
+function directoryDisplayName(canonicalId: string, group: ObservationRow[]): string {
+  // Prefer an alias from the survivor UUID itself; otherwise the lexicographically first alias.
+  const survivor = group.find((row) => row.legal_entity_id === canonicalId);
+  if (survivor != null && survivor.alias_text.trim() !== "") return survivor.alias_text;
+  const aliases = group.map((row) => row.alias_text).filter((name) => name.trim() !== "").sort((a, b) => a.localeCompare(b));
+  return aliases[0] ?? "Unknown";
+}
+
 export function listBorrowers(rows: ObservationRow[], query: string): BorrowerSummary[] {
   for (const row of rows) assertListingFields(row);
   const needle = query.trim().toLowerCase();
+  // Group by approved canonical first so a search hit on any alias still counts the
+  // full consolidated observation set. Pending/rejected proposals never appear in
+  // canonical_legal_entity_id (loader uses resolution.canonical_legal_entity).
   const byId = new Map<string, ObservationRow[]>();
   for (const row of rows) {
-    if (needle !== "" && !row.alias_text.toLowerCase().includes(needle)) continue;
-    const group = byId.get(row.legal_entity_id) ?? [];
+    const canonicalId = directoryCanonicalId(row);
+    const group = byId.get(canonicalId) ?? [];
     group.push(row);
-    byId.set(row.legal_entity_id, group);
+    byId.set(canonicalId, group);
   }
   const summaries: BorrowerSummary[] = [];
   for (const [id, group] of byId) {
+    if (
+      needle !== ""
+      && !group.some((row) => row.alias_text.toLowerCase().includes(needle))
+    ) {
+      continue;
+    }
     const ciks = new Set(
       group
         .filter((row) => row.registrant_link_status === "LINKED" && row.registrant_cik)
@@ -221,12 +246,13 @@ export function listBorrowers(rows: ObservationRow[], query: string): BorrowerSu
     const entityMethod = oneValue(group.map((row) => row.entity_resolution_method));
     summaries.push({
       id,
-      name: group[0].alias_text,
+      name: directoryDisplayName(id, group),
       entityState: displayState(entityState ?? "UNRESOLVED"),
       entityMethod: entityMethod ?? "Unknown",
       ...instrumentFields(group),
       linkedRegistrants: countLabel(ciks.size),
       observedDates: countLabel(dates.size),
+      // One listing row per observation; consolidated matched UUIDs do not invent duplicates.
       storedObservations: countLabel(group.length),
       comparisonSeriesCount: null,
       latestComparisonPeriod: null,
@@ -358,7 +384,9 @@ export function filterAndSortBorrowers(
 }
 
 export function borrowerDetail(rows: ObservationRow[], id: string): BorrowerDetail | null {
-  const group = rows.filter((row) => row.legal_entity_id === id);
+  // Caller scopes rows to the canonical Borrower UUID (including consolidated matched LEs).
+  // Keep matched legal_entity_id on each row for provenance; page id is the canonical UUID.
+  const group = rows;
   if (group.length === 0) return null;
   for (const row of group) assertListingFields(row);
   const history = group
@@ -383,9 +411,10 @@ export function borrowerDetail(rows: ObservationRow[], id: string): BorrowerDeta
   }
   const entityState = oneValue(group.map((row) => row.entity_resolution_state));
   const entityMethod = oneValue(group.map((row) => row.entity_resolution_method));
+  const survivorAlias = group.find((row) => row.legal_entity_id === id)?.alias_text ?? group[0].alias_text;
   return {
     id,
-    name: group[0].alias_text,
+    name: survivorAlias,
     entityState: displayState(entityState ?? "UNRESOLVED"),
     entityMethod: entityMethod ?? "Unknown",
     ...instrumentFields(group),
@@ -396,8 +425,10 @@ export function borrowerDetail(rows: ObservationRow[], id: string): BorrowerDeta
 }
 
 export function sourceRows(rows: ObservationRow[], id: string): SourceRow[] {
+  // Rows must already be scoped by the loader (canonical page may include consolidated
+  // matched LEs). The id is the page canonical UUID for call-site clarity.
+  void id;
   return rows
-    .filter((row) => row.legal_entity_id === id)
     .map((row, index) => {
       assertListingFields(row);
       return {

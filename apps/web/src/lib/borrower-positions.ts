@@ -144,10 +144,10 @@ function fieldsFor(research: ResearchFieldRow[], positionId: string, fieldCode: 
   return research.filter((row) => row.position_observation_id === positionId && row.field_code === fieldCode);
 }
 
-function documentByAccession(listings: ObservationRow[], legalEntityId: string): Map<string, string | null> {
+function documentByAccession(listings: ObservationRow[]): Map<string, string | null> {
+  // listings are already scoped to the canonical Borrower page (including consolidated matched LEs).
   const docs = new Map<string, string | null>();
   for (const listing of listings) {
-    if (listing.legal_entity_id !== legalEntityId) continue;
     const url = secUrl(listing.document_url);
     const current = docs.get(listing.accession_number);
     if (current === undefined) docs.set(listing.accession_number, url);
@@ -169,11 +169,14 @@ export function historicalPositions(
   for (const field of research) {
     if (FORBIDDEN_KEY.test(field.field_code)) throw new Error(`position observation field is not displayable: ${field.field_code}`);
   }
-  const documents = documentByAccession(listings, legalEntityId);
+  const allowedEntityIds = new Set(listings.map((listing) => listing.legal_entity_id));
+  allowedEntityIds.add(legalEntityId);
+  const documents = documentByAccession(listings);
   const positions: HistoricalPosition[] = [];
   for (const row of rows) {
     assertPositionFields(row);
-    if (row.legal_entity_id !== legalEntityId || row.entity_resolution_state !== "MATCHED") continue;
+    // Page id is canonical; listings may include consolidated matched LEs.
+    if (!allowedEntityIds.has(row.legal_entity_id) || row.entity_resolution_state !== "MATCHED") continue;
     const linked = row.registrant_link_status === "LINKED" && Boolean(row.registrant_cik);
     positions.push({
       id: row.position_observation_id,

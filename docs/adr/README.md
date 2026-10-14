@@ -27,6 +27,7 @@ authentication, and similar) are recorded in the phase in which they are decided
 | [0013](0013-supabase-auth-email-otp.md) | Supabase Auth with email one-time codes | Superseded by 0015 |
 | [0014](0014-application-authorization.md) | Application authorization ledger | Accepted |
 | [0015](0015-supabase-auth-email-otp-and-microsoft-oauth.md) | Supabase Auth with email OTP and Microsoft OAuth | Accepted |
+| [0017](0017-legal-entity-consolidation.md) | Legal-entity consolidation for canonical Borrower ID | Accepted |
 
 ## Template
 

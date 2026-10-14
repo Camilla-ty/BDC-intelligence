@@ -45,7 +45,7 @@ ingestion), and [ADR 0012](adr/0012-soi-ingestion.md) (SOI ingestion). Source fa
 | `evidence` | Evidence locators and supplementary (corroborating or contradicting) evidence |
 | `obs` | SOI row observations and classifications, NUM facts, position observations and sources, groups, field values, corroborations, borrower-name observations, cross-artifact equivalence |
 | `identity` | Legal entities and aliases, economic groups, instruments and attribute assertions, positions |
-| `resolution` | Match candidates with per-attribute comparisons (no scores) and the four decision tables |
+| `resolution` | Match candidates with per-attribute comparisons (no scores), the four decision tables, and append-only legal-entity consolidation decisions (ADR 0017) |
 | `validation` | Validation results and evidence-status assertions |
 | `derived` | Derived values, their inputs, and P9-min observation events |
 | `ref` | Enums, reference vocabularies, and versioned source-column mappings |
@@ -272,6 +272,17 @@ states are the stored states, including `UNKNOWN`.
 that view for one legal entity. It filters `legal_entity_id` and
 `entity_resolution_state = 'MATCHED'`. It does not match a raw borrower name,
 and it does not add a row for a period that has no observation.
+
+## 12b. Legal-entity consolidation (canonical Borrower ID)
+
+`resolution.legal_entity_consolidation_decision` is append-only. The current head
+per `from_legal_entity_id` is `resolution.current_legal_entity_consolidation`.
+`PROBABLE` proposals do not change identity. `MATCHED` approvals are followed by
+`resolution.canonical_legal_entity(uuid)`. Reversal inserts `REJECTED` with a
+null target. Legal-entity rows are never deleted. See ADR 0017. Borrower detail
+loaders may expand scope with `resolution.legal_entities_with_canonical(uuid)`
+so a canonical page includes matched observations from consolidated source UUIDs
+without rewriting stored entity-resolution decisions.
 
 ## 13. Confirmed position period comparison
 

@@ -41,7 +41,8 @@ describe("loadBorrowerComparisonAvailability", () => {
 
     expect(mocks.executeSql).toHaveBeenCalledTimes(1);
     const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
-    expect(sql).toMatch(/registry\.borrower_position_comparisons\(e\.legal_entity_id\)/);
+    expect(sql).toMatch(/legal_entities_with_canonical\(e\.canonical_legal_entity_id\)/);
+    expect(sql).toMatch(/registry\.borrower_position_comparisons\(m\.legal_entity_id\)/);
     expect(sql).toMatch(/unnest\(ARRAY\[/);
     expect(sql).toContain(ENTITY_A);
     expect(sql).toContain(ENTITY_B);
@@ -113,7 +114,7 @@ describe("loadBorrowerComparisonAvailability", () => {
     const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
     expect(sql).toContain(ENTITY_A);
     expect(sql).not.toContain("not-a-uuid");
-    expect(sql).toMatch(/borrower_position_comparisons\(e\.legal_entity_id\)/);
+    expect(sql).toMatch(/borrower_position_comparisons\(m\.legal_entity_id\)/);
     expect(sql).not.toMatch(/WHERE\s+position_id|alias_text\s*=/i);
     expect(result.error).toBeNull();
     expect(result.rows).toHaveLength(1);
@@ -150,6 +151,7 @@ describe("borrower list comparison availability wiring", () => {
     expect(page).toMatch(/attachComparisonAvailability/);
     expect(page).toMatch(/loadBorrowerObservations\s*\(/);
     expect(loader).toMatch(/export async function loadBorrowerComparisonAvailability/);
-    expect(loader).toMatch(/registry\.borrower_position_comparisons\(e\.legal_entity_id\)/);
+    expect(loader).toMatch(/legal_entities_with_canonical/);
+    expect(loader).toMatch(/registry\.borrower_position_comparisons\(m\.legal_entity_id\)/);
   });
 });

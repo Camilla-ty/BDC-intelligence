@@ -134,10 +134,9 @@ function sufficiency(state: string, value: string | null): string {
   return "Insufficient data";
 }
 
-function documentByAccession(listings: ObservationRow[], legalEntityId: string): Map<string, string | null> {
+function documentByAccession(listings: ObservationRow[]): Map<string, string | null> {
   const docs = new Map<string, string | null>();
   for (const listing of listings) {
-    if (listing.legal_entity_id !== legalEntityId) continue;
     const url = secUrl(listing.document_url);
     const current = docs.get(listing.accession_number);
     if (current === undefined) docs.set(listing.accession_number, url);
@@ -155,14 +154,16 @@ export function valuationHistory(
   listings: ObservationRow[],
   legalEntityId: string,
 ): ValuationHistory {
-  const documents = documentByAccession(listings, legalEntityId);
+  const allowedEntityIds = new Set(listings.map((listing) => listing.legal_entity_id));
+  allowedEntityIds.add(legalEntityId);
+  const documents = documentByAccession(listings);
   const timeline: ValuationPoint[] = [];
   const derived: DerivedMetric[] = [];
   let omittedUnresolved = false;
   let definition = VALUATION_DEFINITION;
   for (const row of rows) {
     assertValuationFields(row);
-    if (row.legal_entity_id !== legalEntityId || row.entity_resolution_state !== "MATCHED") continue;
+    if (!allowedEntityIds.has(row.legal_entity_id) || row.entity_resolution_state !== "MATCHED") continue;
     if (row.valuation_definition.trim() !== "") definition = row.valuation_definition;
     if (!resolvedPosition(row)) {
       omittedUnresolved = true;

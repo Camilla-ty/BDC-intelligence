@@ -28,6 +28,9 @@ export function AdminDashboard({
         <Link href="/admin/coverage/arcc" className="text-sm font-semibold text-accent">
           ARCC SEC coverage
         </Link>
+        <Link href="/admin/consolidations" className="text-sm font-semibold text-accent">
+          Legal-entity consolidations
+        </Link>
       </p>
       {error ? <p className="mt-6 text-sm text-foreground">{error}</p> : null}
       {!error && summary == null ? (
