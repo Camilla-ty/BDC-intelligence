@@ -72,7 +72,7 @@ describe("Admin route authorization", () => {
       },
       error: null,
     });
-    mocks.loadAdminFilingInventory.mockResolvedValue({ rows: [], error: null });
+    mocks.loadAdminFilingInventory.mockResolvedValue({ rows: [], total: 0, error: null });
     mocks.loadAdminFilingDetail.mockResolvedValue({
       detail: null,
       error: null,
@@ -86,8 +86,28 @@ describe("Admin route authorization", () => {
     );
 
     expect(mocks.loadAdminDashboard).toHaveBeenCalled();
-    expect(mocks.loadAdminFilingInventory).toHaveBeenCalled();
+    expect(mocks.loadAdminFilingInventory).toHaveBeenCalledWith("", 50, 0);
     expect(mocks.loadAdminFilingDetail).toHaveBeenCalledWith("999");
     expect(mocks.notFound).toHaveBeenCalled();
+  });
+
+  it("maps invalid inventory page params to page 1 and preserves search across pages", async () => {
+    mocks.requireAdmin.mockResolvedValue({ isAdmin: true, effectiveRole: "ADMIN" });
+    mocks.loadAdminFilingInventory.mockResolvedValue({
+      rows: [{ filing_id: 1, accession_number: "0000000000-99-000001" }],
+      total: 51,
+      error: null,
+    });
+
+    await expect(
+      AdminFilingsPage({ searchParams: Promise.resolve({ q: "ARCC", page: "not-a-page" }) }),
+    ).resolves.toBeTruthy();
+    expect(mocks.loadAdminFilingInventory).toHaveBeenCalledWith("ARCC", 50, 0);
+
+    mocks.loadAdminFilingInventory.mockClear();
+    await expect(
+      AdminFilingsPage({ searchParams: Promise.resolve({ q: "ARCC", page: "2" }) }),
+    ).resolves.toBeTruthy();
+    expect(mocks.loadAdminFilingInventory).toHaveBeenCalledWith("ARCC", 50, 50);
   });
 });

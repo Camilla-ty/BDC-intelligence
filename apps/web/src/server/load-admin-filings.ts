@@ -1,5 +1,9 @@
 import {
+  asCount,
+  clampInventoryPageSize,
+  isInventoryListRow,
   isInventoryRow,
+  normalizeInventoryListRow,
   normalizeInventoryRow,
   parseFilingRef,
   type AdminDashboardSummary,
@@ -7,6 +11,7 @@ import {
   type AdminFilingAttributeRow,
   type AdminFilingDetail,
   type AdminFilingDocumentRow,
+  type AdminFilingInventoryListRow,
   type AdminFilingInventoryRow,
   type AdminFilingProcessingRow,
   type AdminFilingRegistrantRow,
@@ -45,11 +50,40 @@ const INVENTORY_COLUMNS = `
   soi_row_observation_count, position_observation_count, num_fact_observation_count
 `;
 
+/** Inventory table columns only; search still filters on form_raw_values / registrant_ciks. */
+const INVENTORY_LIST_COLUMNS = `
+  filing_id, accession_number, filing_recorded_at,
+  registrant_name_state, registrant_name_raw,
+  forms, filed_dates, report_periods,
+  document_count, artifact_count, processing_outcomes,
+  soi_row_observation_count, position_observation_count, num_fact_observation_count
+`;
+
 const INVENTORY_ORDER = `
   ORDER BY (SELECT max(d) FROM unnest(filed_dates) AS d) DESC NULLS LAST,
            accession_number DESC,
            filing_id DESC
 `;
+
+function inventorySearchFilter(queryText: string): string {
+  const q = queryText.trim().slice(0, 80);
+  if (q === "") return "";
+  return `WHERE accession_number ILIKE '%${escapeLiteral(q)}%'
+          OR coalesce(registrant_name_raw, '') ILIKE '%${escapeLiteral(q)}%'
+          OR registrant_name_state ILIKE '%${escapeLiteral(q)}%'
+          OR EXISTS (
+               SELECT 1 FROM unnest(coalesce(forms, ARRAY[]::text[])) AS form
+               WHERE form ILIKE '%${escapeLiteral(q)}%'
+             )
+          OR EXISTS (
+               SELECT 1 FROM unnest(coalesce(form_raw_values, ARRAY[]::text[])) AS form_raw
+               WHERE form_raw ILIKE '%${escapeLiteral(q)}%'
+             )
+          OR EXISTS (
+               SELECT 1 FROM unnest(coalesce(registrant_ciks, ARRAY[]::bigint[])) AS cik
+               WHERE lpad(cik::text, 10, '0') ILIKE '%${escapeLiteral(q)}%'
+             )`;
+}
 
 function parseInventoryRows(json: unknown): AdminFilingInventoryRow[] | null {
   if (!Array.isArray(json)) return null;
@@ -57,6 +91,16 @@ function parseInventoryRows(json: unknown): AdminFilingInventoryRow[] | null {
   for (const item of json) {
     if (!isInventoryRow(item)) return null;
     rows.push(normalizeInventoryRow(item));
+  }
+  return rows;
+}
+
+function parseInventoryListRows(json: unknown): AdminFilingInventoryListRow[] | null {
+  if (!Array.isArray(json)) return null;
+  const rows: AdminFilingInventoryListRow[] = [];
+  for (const item of json) {
+    if (!isInventoryListRow(item)) return null;
+    rows.push(normalizeInventoryListRow(item));
   }
   return rows;
 }
@@ -115,42 +159,47 @@ FROM admin.filing_inventory;`));
   };
 }
 
-export async function loadAdminFilingInventory(queryText = ""): Promise<{
-  rows: AdminFilingInventoryRow[];
+export async function loadAdminFilingInventory(
+  queryText = "",
+  limit = clampInventoryPageSize(undefined),
+  offset = 0,
+): Promise<{
+  rows: AdminFilingInventoryListRow[];
+  total: number | null;
   error: string | null;
 }> {
   await requireAdmin();
-  const q = queryText.trim().slice(0, 80);
-  const filter =
-    q === ""
-      ? ""
-      : `WHERE accession_number ILIKE '%${escapeLiteral(q)}%'
-          OR coalesce(registrant_name_raw, '') ILIKE '%${escapeLiteral(q)}%'
-          OR registrant_name_state ILIKE '%${escapeLiteral(q)}%'
-          OR EXISTS (
-               SELECT 1 FROM unnest(coalesce(forms, ARRAY[]::text[])) AS form
-               WHERE form ILIKE '%${escapeLiteral(q)}%'
-             )
-          OR EXISTS (
-               SELECT 1 FROM unnest(coalesce(form_raw_values, ARRAY[]::text[])) AS form_raw
-               WHERE form_raw ILIKE '%${escapeLiteral(q)}%'
-             )
-          OR EXISTS (
-               SELECT 1 FROM unnest(coalesce(registrant_ciks, ARRAY[]::bigint[])) AS cik
-               WHERE lpad(cik::text, 10, '0') ILIKE '%${escapeLiteral(q)}%'
-             )`;
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    return { rows: [], total: null, error: null };
+  }
+  const safeLimit = clampInventoryPageSize(limit);
+  const filter = inventorySearchFilter(queryText);
   const { json, error } = await query(adminSql(`
-SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
-FROM (
-  SELECT ${INVENTORY_COLUMNS}
-  FROM admin.filing_inventory
-  ${filter}
-  ${INVENTORY_ORDER}
-) t;`));
-  if (error) return { rows: [], error };
-  const rows = parseInventoryRows(json);
-  if (rows == null) return { rows: [], error: READ_ERROR };
-  return { rows, error: null };
+SELECT json_build_object(
+  'total', (
+    SELECT count(*)::integer
+    FROM admin.filing_inventory
+    ${filter}
+  ),
+  'rows', (
+    SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+    FROM (
+      SELECT ${INVENTORY_LIST_COLUMNS}
+      FROM admin.filing_inventory
+      ${filter}
+      ${INVENTORY_ORDER}
+      LIMIT ${safeLimit} OFFSET ${offset}
+    ) t)
+);`));
+  if (error || json == null || typeof json !== "object" || Array.isArray(json)) {
+    return { rows: [], total: null, error: error ?? READ_ERROR };
+  }
+  const payload = json as { total?: unknown; rows?: unknown };
+  const total = asCount(payload.total);
+  if (total == null) return { rows: [], total: null, error: READ_ERROR };
+  const rows = parseInventoryListRows(payload.rows);
+  if (rows == null) return { rows: [], total: null, error: READ_ERROR };
+  return { rows, total, error: null };
 }
 
 export async function loadAdminFilingDetail(ref: string): Promise<{

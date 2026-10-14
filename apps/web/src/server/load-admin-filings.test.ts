@@ -31,36 +31,44 @@ vi.mock("@/server/auth/access", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/server/sql-text", () => ({ executeSql: mocks.executeSql }));
 
 import {
+  ADMIN_FILING_INVENTORY_DEFAULT_LIMIT,
+  ADMIN_FILING_INVENTORY_MAX_LIMIT,
+} from "@/lib/admin-filings";
+import {
   loadAdminDashboard,
   loadAdminFilingDetail,
   loadAdminFilingInventory,
 } from "@/server/load-admin-filings";
 
-const INVENTORY_ROW = {
+const LIST_ROW = {
   filing_id: 1,
   accession_number: "0000000000-99-000001",
-  filing_run_id: 9,
   filing_recorded_at: "2099-01-01T00:00:00Z",
-  registrant_link_status: "LINKED",
-  registrant_ids: [2],
-  registrant_ciks: [9999999901],
   registrant_name_state: "UNKNOWN",
   registrant_name_raw: null,
   forms: null,
-  form_raw_values: null,
   filed_dates: ["2099-05-01"],
-  filed_date_raw_values: ["20990501"],
   report_periods: null,
-  report_period_raw_values: null,
   document_count: 0,
   artifact_count: 0,
-  documents_available: false,
-  artifacts_available: false,
   processing_outcomes: null,
-  processing_row_count: 0,
   soi_row_observation_count: 0,
   position_observation_count: 0,
   num_fact_observation_count: 0,
+};
+
+const INVENTORY_ROW = {
+  ...LIST_ROW,
+  filing_run_id: 9,
+  registrant_link_status: "LINKED",
+  registrant_ids: [2],
+  registrant_ciks: [9999999901],
+  form_raw_values: null,
+  filed_date_raw_values: ["20990501"],
+  report_period_raw_values: null,
+  documents_available: false,
+  artifacts_available: false,
+  processing_row_count: 0,
 };
 
 afterEach(() => {
@@ -97,19 +105,72 @@ describe("admin filing loaders", () => {
     expect(sql).not.toMatch(/grant_event|bdc_reader/i);
   });
 
-  it("loads inventory ordered deterministically and preserves null processing outcomes", async () => {
+  it("loads a bounded inventory page with LIMIT/OFFSET and preserves null processing outcomes", async () => {
     mocks.requireAdmin.mockResolvedValue({ isAdmin: true });
-    mocks.executeSql.mockResolvedValue({ ok: true, text: JSON.stringify([INVENTORY_ROW]) });
-    const { rows, error } = await loadAdminFilingInventory();
+    mocks.executeSql.mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({ total: 1, rows: [LIST_ROW] }),
+    });
+    const { rows, total, error } = await loadAdminFilingInventory("", 50, 0);
     expect(error).toBeNull();
+    expect(total).toBe(1);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.processing_outcomes).toBeNull();
     expect(rows[0]?.registrant_name_state).toBe("UNKNOWN");
     const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
+    expect(sql).toMatch(/SET ROLE admin_reader/);
+    expect(sql).toMatch(/SET statement_timeout = '30s'/);
     expect(sql).toMatch(/admin\.filing_inventory/);
+    expect(sql).toMatch(/LIMIT 50 OFFSET 0/);
     expect(sql).toMatch(/ORDER BY \(SELECT max\(d\) FROM unnest\(filed_dates\) AS d\) DESC NULLS LAST/);
-    expect(sql).toMatch(/accession_number DESC/);
-    expect(sql).toMatch(/filing_id DESC/);
+    expect(sql).not.toMatch(/form_raw_values|registrant_ciks|documents_available/);
+    expect(sql).toMatch(/SELECT count\(\*\)::integer/);
+  });
+
+  it("clamps page size to the server maximum and rejects invalid offsets", async () => {
+    mocks.requireAdmin.mockResolvedValue({ isAdmin: true });
+    mocks.executeSql.mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({ total: 0, rows: [] }),
+    });
+    await loadAdminFilingInventory("", ADMIN_FILING_INVENTORY_MAX_LIMIT + 50, 100);
+    const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
+    expect(sql).toMatch(new RegExp(`LIMIT ${ADMIN_FILING_INVENTORY_MAX_LIMIT} OFFSET 100`));
+    expect(sql).not.toMatch(new RegExp(`LIMIT ${ADMIN_FILING_INVENTORY_MAX_LIMIT + 50}`));
+
+    mocks.executeSql.mockClear();
+    const invalid = await loadAdminFilingInventory("", ADMIN_FILING_INVENTORY_DEFAULT_LIMIT, -1);
+    expect(invalid).toEqual({ rows: [], total: null, error: null });
+    expect(mocks.executeSql).not.toHaveBeenCalled();
+  });
+
+  it("preserves accession/registrant/form/CIK search filters on paged queries", async () => {
+    mocks.requireAdmin.mockResolvedValue({ isAdmin: true });
+    mocks.executeSql.mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({ total: 0, rows: [] }),
+    });
+    await loadAdminFilingInventory("ARCC", 50, 50);
+    const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
+    expect(sql).toMatch(/accession_number ILIKE '%ARCC%'/);
+    expect(sql).toMatch(/registrant_name_raw/);
+    expect(sql).toMatch(/registrant_name_state ILIKE '%ARCC%'/);
+    expect(sql).toMatch(/unnest\(coalesce\(forms/);
+    expect(sql).toMatch(/unnest\(coalesce\(form_raw_values/);
+    expect(sql).toMatch(/unnest\(coalesce\(registrant_ciks/);
+    expect(sql).toMatch(/LIMIT 50 OFFSET 50/);
+  });
+
+  it("returns empty inventory rows without inventing filings", async () => {
+    mocks.requireAdmin.mockResolvedValue({ isAdmin: true });
+    mocks.executeSql.mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({ total: 0, rows: [] }),
+    });
+    const { rows, total, error } = await loadAdminFilingInventory();
+    expect(error).toBeNull();
+    expect(total).toBe(0);
+    expect(rows).toEqual([]);
   });
 
   it("loads filing detail from admin child views and reports missing filings", async () => {

@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { AdminDashboard } from "@/components/AdminDashboard";
 import { AdminFilingDetailView } from "@/components/AdminFilingDetail";
 import { AdminFilingInventory } from "@/components/AdminFilingInventory";
-import type { AdminFilingDetail, AdminFilingInventoryRow } from "@/lib/admin-filings";
+import type {
+  AdminFilingDetail,
+  AdminFilingInventoryListRow,
+  AdminFilingInventoryRow,
+} from "@/lib/admin-filings";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin",
@@ -84,17 +88,75 @@ describe("Admin Phase A UI", () => {
   });
 
   it("renders inventory Unknown and MULTIPLE states without inventing processing success", () => {
-    const multiple: AdminFilingInventoryRow = {
-      ...EMPTY_INVENTORY,
+    const multiple: AdminFilingInventoryListRow = {
+      filing_id: EMPTY_INVENTORY.filing_id,
+      accession_number: EMPTY_INVENTORY.accession_number,
+      filing_recorded_at: EMPTY_INVENTORY.filing_recorded_at,
       registrant_name_state: "MULTIPLE_VALUES",
+      registrant_name_raw: null,
       forms: ["10-K", "10-Q"],
+      filed_dates: null,
+      report_periods: null,
+      document_count: 0,
+      artifact_count: 0,
+      processing_outcomes: null,
+      soi_row_observation_count: 0,
+      position_observation_count: 0,
+      num_fact_observation_count: 0,
     };
-    render(<AdminFilingInventory rows={[multiple]} query="" error={null} />);
+    render(
+      <AdminFilingInventory
+        rows={[multiple]}
+        query=""
+        error={null}
+        page={1}
+        hasPrevious={false}
+        hasNext={false}
+        pastEnd={false}
+      />,
+    );
     expect(screen.getByRole("heading", { name: "Filing inventory" })).toBeTruthy();
     expect(screen.getAllByText("MULTIPLE_VALUES").length).toBeGreaterThan(0);
     expect(screen.getByText("10-K, 10-Q")).toBeTruthy();
     expect(screen.getByText("No linked processing rows")).toBeTruthy();
     expect(screen.queryByText(/successfully processed|health|quality/i)).toBeNull();
+    expect(screen.getByText(/Page 1/)).toBeTruthy();
+  });
+
+  it("keeps search query on next/previous inventory links and handles past-end pages", () => {
+    render(
+      <AdminFilingInventory
+        rows={[]}
+        query="ARCC"
+        error={null}
+        page={2}
+        hasPrevious={true}
+        hasNext={true}
+        pastEnd={false}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "Previous" }).getAttribute("href")).toBe(
+      "/admin/filings?q=ARCC",
+    );
+    expect(screen.getByRole("link", { name: "Next" }).getAttribute("href")).toBe(
+      "/admin/filings?q=ARCC&page=3",
+    );
+
+    render(
+      <AdminFilingInventory
+        rows={[]}
+        query="ARCC"
+        error={null}
+        page={9}
+        hasPrevious={false}
+        hasNext={false}
+        pastEnd={true}
+      />,
+    );
+    expect(screen.getByText(/past the filing inventory/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "First page" }).getAttribute("href")).toBe(
+      "/admin/filings?q=ARCC",
+    );
   });
 
   it("shows filing detail chain with explicit absence for documents, artifacts, and processing", () => {

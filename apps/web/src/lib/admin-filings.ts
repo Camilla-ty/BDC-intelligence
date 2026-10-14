@@ -4,6 +4,11 @@
 export const ACCESSION_PATTERN = /^[0-9]{10}-[0-9]{2}-[0-9]{6}$/;
 export const FILING_ID_PATTERN = /^[0-9]+$/;
 
+/** Default inventory page size; matches portfolio/maturity PAGE_SIZE. */
+export const ADMIN_FILING_INVENTORY_DEFAULT_LIMIT = 50;
+/** Hard server-side cap; never aggregate unbounded inventory JSON. */
+export const ADMIN_FILING_INVENTORY_MAX_LIMIT = 100;
+
 export type AdminFilingInventoryRow = {
   filing_id: number;
   accession_number: string;
@@ -26,6 +31,24 @@ export type AdminFilingInventoryRow = {
   artifacts_available: boolean;
   processing_outcomes: string[] | null;
   processing_row_count: number;
+  soi_row_observation_count: number;
+  position_observation_count: number;
+  num_fact_observation_count: number;
+};
+
+/** Columns shown on the inventory table only; detail stays on the filing detail page. */
+export type AdminFilingInventoryListRow = {
+  filing_id: number;
+  accession_number: string;
+  filing_recorded_at: string | null;
+  registrant_name_state: string;
+  registrant_name_raw: string | null;
+  forms: string[] | null;
+  filed_dates: string[] | null;
+  report_periods: string[] | null;
+  document_count: number;
+  artifact_count: number;
+  processing_outcomes: string[] | null;
   soi_row_observation_count: number;
   position_observation_count: number;
   num_fact_observation_count: number;
@@ -151,6 +174,24 @@ export function asCount(value: unknown): number | null {
   return null;
 }
 
+export function clampInventoryPageSize(value: unknown): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1) {
+    return Math.min(value, ADMIN_FILING_INVENTORY_MAX_LIMIT);
+  }
+  return ADMIN_FILING_INVENTORY_DEFAULT_LIMIT;
+}
+
+/** Preserve search `q` across pagination; omit page=1 from the URL. */
+export function inventoryListHref(query: string, page: number): string {
+  const params = new URLSearchParams();
+  const q = query.trim();
+  if (q !== "") params.set("q", q);
+  const safePage = Number.isSafeInteger(page) && page >= 1 ? page : 1;
+  if (safePage > 1) params.set("page", String(safePage));
+  const encoded = params.toString();
+  return encoded === "" ? "/admin/filings" : `/admin/filings?${encoded}`;
+}
+
 export function isInventoryRow(value: unknown): value is AdminFilingInventoryRow {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
@@ -178,6 +219,26 @@ export function isInventoryRow(value: unknown): value is AdminFilingInventoryRow
   );
 }
 
+export function isInventoryListRow(value: unknown): value is AdminFilingInventoryListRow {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  if (asCount(row.filing_id) == null || typeof row.accession_number !== "string") return false;
+  if (typeof row.registrant_name_state !== "string") return false;
+  if (row.registrant_name_raw != null && typeof row.registrant_name_raw !== "string") return false;
+  if (row.filing_recorded_at != null && typeof row.filing_recorded_at !== "string") return false;
+  if (row.forms != null && !isStringArray(row.forms)) return false;
+  if (row.filed_dates != null && !isStringArray(row.filed_dates)) return false;
+  if (row.report_periods != null && !isStringArray(row.report_periods)) return false;
+  if (row.processing_outcomes != null && !isStringArray(row.processing_outcomes)) return false;
+  return (
+    asCount(row.document_count) != null &&
+    asCount(row.artifact_count) != null &&
+    asCount(row.soi_row_observation_count) != null &&
+    asCount(row.position_observation_count) != null &&
+    asCount(row.num_fact_observation_count) != null
+  );
+}
+
 export function normalizeInventoryRow(value: AdminFilingInventoryRow): AdminFilingInventoryRow {
   const ciks = rowNumberArray(value.registrant_ciks);
   return {
@@ -189,6 +250,25 @@ export function normalizeInventoryRow(value: AdminFilingInventoryRow): AdminFili
     document_count: asCount(value.document_count) ?? 0,
     artifact_count: asCount(value.artifact_count) ?? 0,
     processing_row_count: asCount(value.processing_row_count) ?? 0,
+    soi_row_observation_count: asCount(value.soi_row_observation_count) ?? 0,
+    position_observation_count: asCount(value.position_observation_count) ?? 0,
+    num_fact_observation_count: asCount(value.num_fact_observation_count) ?? 0,
+  };
+}
+
+export function normalizeInventoryListRow(value: AdminFilingInventoryListRow): AdminFilingInventoryListRow {
+  return {
+    filing_id: asCount(value.filing_id) ?? value.filing_id,
+    accession_number: value.accession_number,
+    filing_recorded_at: value.filing_recorded_at,
+    registrant_name_state: value.registrant_name_state,
+    registrant_name_raw: value.registrant_name_raw,
+    forms: value.forms,
+    filed_dates: value.filed_dates,
+    report_periods: value.report_periods,
+    document_count: asCount(value.document_count) ?? 0,
+    artifact_count: asCount(value.artifact_count) ?? 0,
+    processing_outcomes: value.processing_outcomes,
     soi_row_observation_count: asCount(value.soi_row_observation_count) ?? 0,
     position_observation_count: asCount(value.position_observation_count) ?? 0,
     num_fact_observation_count: asCount(value.num_fact_observation_count) ?? 0,

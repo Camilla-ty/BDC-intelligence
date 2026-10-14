@@ -2,23 +2,36 @@ import Link from "next/link";
 import { StateText } from "@/components/StateText";
 import {
   countText,
+  inventoryListHref,
   listText,
   optionalText,
   processingOutcomesText,
   registrantNameText,
-  type AdminFilingInventoryRow,
+  type AdminFilingInventoryListRow,
 } from "@/lib/admin-filings";
+import { PAGE_SIZE } from "@/lib/portfolios";
 
 export function AdminFilingInventory({
   rows,
   query,
   error,
+  page,
+  hasPrevious,
+  hasNext,
+  pastEnd,
 }: {
-  rows: AdminFilingInventoryRow[];
+  rows: AdminFilingInventoryListRow[];
   query: string;
   error: string | null;
+  page: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  pastEnd: boolean;
 }) {
   const searching = query.trim() !== "";
+  const previous = inventoryListHref(query, page - 1);
+  const next = inventoryListHref(query, page + 1);
+  const first = inventoryListHref(query, 1);
   return (
     <section>
       <p className="text-sm">
@@ -45,7 +58,12 @@ export function AdminFilingInventory({
         </button>
       </form>
       {error ? <p className="mt-6 text-sm text-foreground">{error}</p> : null}
-      {!error && rows.length === 0 ? (
+      {pastEnd ? (
+        <p className="mt-6 text-sm">
+          This page is past the filing inventory. <Link href={first} className="text-accent">First page</Link>
+        </p>
+      ) : null}
+      {!error && !pastEnd && rows.length === 0 ? (
         <p className="mt-6 text-sm">{searching ? "No filings match this search." : "No filings in the admin inventory."}</p>
       ) : null}
       {rows.length > 0 ? (
@@ -102,6 +120,18 @@ export function AdminFilingInventory({
               ))}
             </tbody>
           </table>
+        </div>
+      ) : null}
+      {!error ? (
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <p className="text-muted">Page {page}. {PAGE_SIZE} filings per page.</p>
+          {hasPrevious || hasNext ? (
+            <p>
+              {hasPrevious ? <Link href={previous} className="text-accent">Previous</Link> : <span className="text-muted">Previous</span>}
+              {" · "}
+              {hasNext ? <Link href={next} className="text-accent">Next</Link> : <span className="text-muted">Next</span>}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </section>
