@@ -16,6 +16,25 @@ const HOSTED_CONNECT_MS = 30_000;
 
 export type SqlText = { ok: true; text: string } | { ok: false };
 
+const SQLSTATE = /^[0-9A-Z]{5}$/;
+
+type SqlFailureCategory = "connect" | "query" | "reset_role" | "docker";
+
+/** SQLSTATE only. Driver messages can contain SQL, roles, hosts, or URIs. */
+function diagnosticSqlState(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) return "unknown";
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && SQLSTATE.test(code) ? code : "unknown";
+}
+
+function logSqlFailure(category: SqlFailureCategory, error?: unknown): void {
+  console.error(JSON.stringify({
+    source: "executeSql",
+    category,
+    sqlstate: diagnosticSqlState(error),
+  }));
+}
+
 type PoolFactory = (connectionString: string) => Pool;
 
 type GlobalPoolState = {
@@ -83,7 +102,10 @@ function executeDocker(sql: string): SqlText {
     ["exec", "-i", CONTAINER, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", DATABASE, "-At"],
     { input: sql, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
-  if (result.status !== 0) return { ok: false };
+  if (result.status !== 0) {
+    logSqlFailure("docker");
+    return { ok: false };
+  }
   return { ok: true, text: (result.stdout ?? "").trim() };
 }
 
@@ -92,7 +114,8 @@ async function executeHosted(connectionString: string, sql: string): Promise<Sql
   let client: PoolClient;
   try {
     client = await pool.connect();
-  } catch {
+  } catch (error) {
+    logSqlFailure("connect", error);
     return { ok: false };
   }
 
@@ -100,7 +123,8 @@ async function executeHosted(connectionString: string, sql: string): Promise<Sql
   try {
     const result = await client.query({ text: sql, queryMode: "simple", rowMode: "array" });
     return { ok: true, text: scriptText(result) };
-  } catch {
+  } catch (error) {
+    logSqlFailure("query", error);
     destroyOnRelease = true;
     return { ok: false };
   } finally {
@@ -109,7 +133,8 @@ async function executeHosted(connectionString: string, sql: string): Promise<Sql
     try {
       await client.query("RESET ROLE");
       destroyOnRelease = false;
-    } catch {
+    } catch (error) {
+      logSqlFailure("reset_role", error);
       destroyOnRelease = true;
     }
     client.release(destroyOnRelease);

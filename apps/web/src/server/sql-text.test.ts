@@ -1,11 +1,22 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const spawnMocks = vi.hoisted(() => ({
+  spawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "" })),
+}));
+
+vi.mock("node:child_process", () => ({
+  spawnSync: spawnMocks.spawnSync,
+}));
+
 const mocks = vi.hoisted(() => {
   const released: Array<{ destroy: boolean }> = [];
   const queries: Array<{ sql: string; mode?: string }> = [];
   let failNextQuery = false;
   let failResetRole = false;
+  let nextQueryError: unknown = null;
+  let connectError: unknown = null;
+  let resetRoleError: unknown = null;
   let connectCount = 0;
   let poolConstructCount = 0;
   let poolEndCount = 0;
@@ -19,8 +30,18 @@ const mocks = vi.hoisted(() => {
       const mode = typeof arg === "string" ? undefined : arg.queryMode;
       queries.push({ sql: text, mode });
       if (text === "RESET ROLE") {
+        if (resetRoleError) {
+          const error = resetRoleError;
+          resetRoleError = null;
+          throw error;
+        }
         if (failResetRole) throw new Error("reset failed");
         return { rows: [], command: "RESET" };
+      }
+      if (nextQueryError) {
+        const error = nextQueryError;
+        nextQueryError = null;
+        throw error;
       }
       if (failNextQuery) {
         failNextQuery = false;
@@ -37,6 +58,11 @@ const mocks = vi.hoisted(() => {
     }
     async connect() {
       connectCount += 1;
+      if (connectError) {
+        const error = connectError;
+        connectError = null;
+        throw error;
+      }
       const client = new MockPoolClient();
       this.clients.push(client);
       return client;
@@ -55,6 +81,9 @@ const mocks = vi.hoisted(() => {
       queries.length = 0;
       failNextQuery = false;
       failResetRole = false;
+      nextQueryError = null;
+      connectError = null;
+      resetRoleError = null;
       connectCount = 0;
       poolConstructCount = 0;
       poolEndCount = 0;
@@ -64,6 +93,15 @@ const mocks = vi.hoisted(() => {
     },
     setFailResetRole(value: boolean) {
       failResetRole = value;
+    },
+    setNextQueryError(error: unknown) {
+      nextQueryError = error;
+    },
+    setConnectError(error: unknown) {
+      connectError = error;
+    },
+    setResetRoleError(error: unknown) {
+      resetRoleError = error;
     },
     counts: () => ({ connectCount, poolConstructCount, poolEndCount }),
   };
@@ -85,6 +123,8 @@ const URL = "postgresql://user:pass@db.example.test:5432/bdc?sslmode=require";
 
 beforeEach(() => {
   mocks.reset();
+  spawnMocks.spawnSync.mockReset();
+  spawnMocks.spawnSync.mockReturnValue({ status: 1, stdout: "", stderr: "" });
   resetHostedPoolCacheForTests();
   setHostedPoolFactoryForTests((connectionString) => {
     expect(connectionString).toBe(URL);
@@ -156,11 +196,101 @@ describe("hosted executeSql connection reuse", () => {
   });
 });
 
+describe("executeSql failure diagnostics", () => {
+  const secretUri = "postgresql://app_login:s3cret-token@db.internal.example:5432/postgres?sslmode=require";
+  const secretSql = "SET ROLE bdc_reader;\nSELECT secret_marker FROM registry.borrower_observation_listing;\n";
+
+  function loggedDiagnostics(): unknown[] {
+    return vi.mocked(console.error).mock.calls.map((call) => {
+      expect(call).toHaveLength(1);
+      expect(typeof call[0]).toBe("string");
+      return JSON.parse(String(call[0]));
+    });
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  it("logs query SQLSTATE without the driver message, SQL, or connection string", async () => {
+    mocks.setNextQueryError(Object.assign(new Error(`query failed for ${secretUri} running ${secretSql}`), {
+      code: "42501",
+      detail: secretUri,
+      where: secretSql,
+    }));
+    const result = await executeSql(secretSql);
+    expect(result).toEqual({ ok: false });
+    const logged = loggedDiagnostics();
+    expect(logged).toEqual([{ source: "executeSql", category: "query", sqlstate: "42501" }]);
+    const serialized = JSON.stringify(logged);
+    expect(serialized).not.toContain("s3cret-token");
+    expect(serialized).not.toContain("app_login");
+    expect(serialized).not.toContain("db.internal.example");
+    expect(serialized).not.toContain("postgresql://");
+    expect(serialized).not.toContain("secret_marker");
+    expect(serialized).not.toContain("borrower_observation_listing");
+    expect(serialized).not.toContain("SET ROLE");
+  });
+
+  it("does not treat a non-SQLSTATE code or a connect message as loggable detail", async () => {
+    mocks.setConnectError(Object.assign(new Error(`connect failed ${secretUri}`), { code: "ENOTFOUND" }));
+    const result = await executeSql(secretSql);
+    expect(result).toEqual({ ok: false });
+    const logged = loggedDiagnostics();
+    expect(logged).toEqual([{ source: "executeSql", category: "connect", sqlstate: "unknown" }]);
+    expect(JSON.stringify(logged)).not.toContain("s3cret-token");
+    expect(JSON.stringify(logged)).not.toContain("ENOTFOUND");
+    expect(JSON.stringify(logged)).not.toContain(secretSql);
+  });
+
+  it("drops a code field that is not a five-character SQLSTATE", async () => {
+    mocks.setNextQueryError(Object.assign(new Error("query failed"), { code: secretUri }));
+    await executeSql("SELECT 1;");
+    expect(loggedDiagnostics()).toEqual([
+      { source: "executeSql", category: "query", sqlstate: "unknown" },
+    ]);
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("s3cret-token");
+  });
+
+  it("logs a reset-role failure without its message", async () => {
+    mocks.setResetRoleError(Object.assign(new Error(`reset failed ${secretUri}`), { code: "42501" }));
+    const result = await executeSql("SELECT 1;");
+    expect(result).toEqual({ ok: true, text: "result-cell" });
+    expect(loggedDiagnostics()).toEqual([
+      { source: "executeSql", category: "reset_role", sqlstate: "42501" },
+    ]);
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("s3cret-token");
+  });
+});
+
 describe("executeSql without DATABASE_URL", () => {
   it("does not construct a hosted Pool when falling back to Docker psql", async () => {
     vi.stubEnv("DATABASE_URL", "");
     await executeSql("SELECT 1;");
     expect(mocks.counts().poolConstructCount).toBe(0);
     expect(mocks.counts().connectCount).toBe(0);
+  });
+
+  it("logs a docker failure without psql stderr, SQL, or a connection string", async () => {
+    const secretUri = "postgresql://app_login:s3cret-token@db.internal.example:5432/postgres";
+    const secretSql = "SET ROLE bdc_reader;\nSELECT secret_marker;\n";
+    vi.stubEnv("DATABASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    spawnMocks.spawnSync.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `ERROR: ${secretUri}\n${secretSql}`,
+    });
+    const result = await executeSql(secretSql);
+    expect(result).toEqual({ ok: false });
+    expect(vi.mocked(console.error).mock.calls).toEqual([
+      [JSON.stringify({ source: "executeSql", category: "docker", sqlstate: "unknown" })],
+    ]);
+    const serialized = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(serialized).not.toContain("s3cret-token");
+    expect(serialized).not.toContain("app_login");
+    expect(serialized).not.toContain("db.internal.example");
+    expect(serialized).not.toContain("secret_marker");
+    expect(serialized).not.toContain("SET ROLE");
   });
 });
