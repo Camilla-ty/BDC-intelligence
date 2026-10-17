@@ -76,6 +76,7 @@ describe("getCurrentAccess", () => {
       isAdmin: false,
       isPro: false,
     });
+    expect(mocks.executeSql).toHaveBeenCalledWith(expect.stringContaining("SET ROLE access_reader"), "access-lookup");
   });
 
   it("returns PRO and ADMIN from the ledger, not from email", async () => {

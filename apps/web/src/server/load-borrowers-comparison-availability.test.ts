@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/sql-text", () => ({ executeSql: mocks.executeSql }));
 
-import { loadBorrowerComparisonAvailability } from "@/server/load-borrowers";
+import { loadBorrowerComparisonAvailability, loadBorrowerObservations } from "@/server/load-borrowers";
 
 const ENTITY_A = "111eedd6-56f2-482c-a1c0-b96cd86a86e4";
 const ENTITY_B = "222eedd6-56f2-482c-a1c0-b96cd86a86e4";
@@ -17,6 +17,16 @@ const ENTITY_C = "333eedd6-56f2-482c-a1c0-b96cd86a86e4";
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+describe("loadBorrowerObservations diagnostics", () => {
+  it("labels the listing read borrower-listing", async () => {
+    mocks.executeSql.mockResolvedValue({ ok: false });
+    await loadBorrowerObservations();
+    expect(mocks.executeSql).toHaveBeenCalledTimes(1);
+    expect(mocks.executeSql.mock.calls[0]?.[1]).toBe("borrower-listing");
+    expect(String(mocks.executeSql.mock.calls[0]?.[0])).toContain("resolution.canonical_legal_entity");
+  });
 });
 
 describe("loadBorrowerComparisonAvailability", () => {

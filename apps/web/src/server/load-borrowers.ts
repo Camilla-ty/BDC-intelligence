@@ -75,7 +75,7 @@ RESET ROLE;
 export type ListingResult = { rows: ObservationRow[]; error: string | null };
 
 async function readListingRows(sql: string): Promise<ListingResult> {
-  const executed = await executeSql(sql);
+  const executed = await executeSql(sql, "borrower-listing");
   if (!executed.ok) {
     return { rows: [], error: "The borrower listing could not be read." };
   }

@@ -117,6 +117,7 @@ import {
   getHostedPool,
   resetHostedPoolCacheForTests,
   setHostedPoolFactoryForTests,
+  type SqlOperation,
 } from "@/server/sql-text";
 
 const URL = "postgresql://user:pass@db.example.test:5432/bdc?sslmode=require";
@@ -221,7 +222,12 @@ describe("executeSql failure diagnostics", () => {
     const result = await executeSql(secretSql);
     expect(result).toEqual({ ok: false });
     const logged = loggedDiagnostics();
-    expect(logged).toEqual([{ source: "executeSql", category: "query", sqlstate: "42501" }]);
+    expect(logged).toEqual([{
+      source: "executeSql",
+      operation: "unspecified",
+      category: "query",
+      sqlstate: "42501",
+    }]);
     const serialized = JSON.stringify(logged);
     expect(serialized).not.toContain("s3cret-token");
     expect(serialized).not.toContain("app_login");
@@ -237,7 +243,12 @@ describe("executeSql failure diagnostics", () => {
     const result = await executeSql(secretSql);
     expect(result).toEqual({ ok: false });
     const logged = loggedDiagnostics();
-    expect(logged).toEqual([{ source: "executeSql", category: "connect", sqlstate: "unknown" }]);
+    expect(logged).toEqual([{
+      source: "executeSql",
+      operation: "unspecified",
+      category: "connect",
+      sqlstate: "unknown",
+    }]);
     expect(JSON.stringify(logged)).not.toContain("s3cret-token");
     expect(JSON.stringify(logged)).not.toContain("ENOTFOUND");
     expect(JSON.stringify(logged)).not.toContain(secretSql);
@@ -247,9 +258,51 @@ describe("executeSql failure diagnostics", () => {
     mocks.setNextQueryError(Object.assign(new Error("query failed"), { code: secretUri }));
     await executeSql("SELECT 1;");
     expect(loggedDiagnostics()).toEqual([
-      { source: "executeSql", category: "query", sqlstate: "unknown" },
+      { source: "executeSql", operation: "unspecified", category: "query", sqlstate: "unknown" },
     ]);
     expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("s3cret-token");
+  });
+
+  it("logs the caller operation and drops any other operation text", async () => {
+    const secretUri = "postgresql://app_login:s3cret-token@db.internal.example:5432/postgres";
+    const userId = "00000000-0000-4000-8000-000000000099";
+    mocks.setNextQueryError(Object.assign(new Error(`query failed ${secretUri} ${userId}`), { code: "42501" }));
+    await executeSql("SELECT secret_marker;", "borrower-listing");
+    expect(loggedDiagnostics()).toEqual([{
+      source: "executeSql",
+      operation: "borrower-listing",
+      category: "query",
+      sqlstate: "42501",
+    }]);
+
+    mocks.setNextQueryError(Object.assign(new Error("access failed"), { code: "42501" }));
+    await executeSql("SELECT secret_marker;", "access-lookup");
+    expect(loggedDiagnostics()[1]).toEqual({
+      source: "executeSql",
+      operation: "access-lookup",
+      category: "query",
+      sqlstate: "42501",
+    });
+
+    mocks.setNextQueryError(Object.assign(new Error("rejected label"), { code: "42501" }));
+    await executeSql(
+      "SELECT secret_marker;",
+      `${secretUri} ${userId} SET ROLE bdc_reader` as SqlOperation,
+    );
+    const rejected = loggedDiagnostics()[2];
+    expect(rejected).toEqual({
+      source: "executeSql",
+      operation: "unspecified",
+      category: "query",
+      sqlstate: "42501",
+    });
+    const serialized = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(serialized).not.toContain("s3cret-token");
+    expect(serialized).not.toContain("app_login");
+    expect(serialized).not.toContain("db.internal.example");
+    expect(serialized).not.toContain(userId);
+    expect(serialized).not.toContain("secret_marker");
+    expect(serialized).not.toContain("SET ROLE");
   });
 
   it("logs a reset-role failure without its message", async () => {
@@ -257,7 +310,7 @@ describe("executeSql failure diagnostics", () => {
     const result = await executeSql("SELECT 1;");
     expect(result).toEqual({ ok: true, text: "result-cell" });
     expect(loggedDiagnostics()).toEqual([
-      { source: "executeSql", category: "reset_role", sqlstate: "42501" },
+      { source: "executeSql", operation: "unspecified", category: "reset_role", sqlstate: "42501" },
     ]);
     expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("s3cret-token");
   });
@@ -284,7 +337,7 @@ describe("executeSql without DATABASE_URL", () => {
     const result = await executeSql(secretSql);
     expect(result).toEqual({ ok: false });
     expect(vi.mocked(console.error).mock.calls).toEqual([
-      [JSON.stringify({ source: "executeSql", category: "docker", sqlstate: "unknown" })],
+      [JSON.stringify({ source: "executeSql", operation: "unspecified", category: "docker", sqlstate: "unknown" })],
     ]);
     const serialized = JSON.stringify(vi.mocked(console.error).mock.calls);
     expect(serialized).not.toContain("s3cret-token");

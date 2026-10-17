@@ -65,7 +65,7 @@ export const getCurrentAccess = cache(async (): Promise<CurrentAccess | null> =>
   const user = await getCurrentUser();
   if (user == null) return null;
   if (normalizeUserId(user.id) == null) return { user, ...UNAVAILABLE_ACCESS };
-  const executed = await executeSql(currentAccessSql(user.id));
+  const executed = await executeSql(currentAccessSql(user.id), "access-lookup");
   const flags = executed.ok ? parseAccessRow(executed.text) : UNAVAILABLE_ACCESS;
   return { user, ...flags };
 });

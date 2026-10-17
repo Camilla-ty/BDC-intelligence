@@ -17,6 +17,9 @@ const HOSTED_CONNECT_MS = 30_000;
 export type SqlText = { ok: true; text: string } | { ok: false };
 
 const SQLSTATE = /^[0-9A-Z]{5}$/;
+const SQL_OPERATIONS = ["borrower-listing", "access-lookup"] as const;
+
+export type SqlOperation = (typeof SQL_OPERATIONS)[number];
 
 type SqlFailureCategory = "connect" | "query" | "reset_role" | "docker";
 
@@ -27,9 +30,17 @@ function diagnosticSqlState(error: unknown): string {
   return typeof code === "string" && SQLSTATE.test(code) ? code : "unknown";
 }
 
-function logSqlFailure(category: SqlFailureCategory, error?: unknown): void {
+/** Fixed labels only. Anything else, including caller text, is omitted. */
+function diagnosticOperation(operation: string | undefined): SqlOperation | "unspecified" {
+  return (SQL_OPERATIONS as readonly string[]).includes(operation ?? "")
+    ? (operation as SqlOperation)
+    : "unspecified";
+}
+
+function logSqlFailure(category: SqlFailureCategory, error: unknown, operation?: string): void {
   console.error(JSON.stringify({
     source: "executeSql",
+    operation: diagnosticOperation(operation),
     category,
     sqlstate: diagnosticSqlState(error),
   }));
@@ -90,32 +101,32 @@ export function resetHostedPoolCacheForTests(): void {
   state.__bdcSqlPoolUrl = undefined;
 }
 
-export async function executeSql(sql: string): Promise<SqlText> {
+export async function executeSql(sql: string, operation?: SqlOperation): Promise<SqlText> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (databaseUrl) return executeHosted(databaseUrl, sql);
-  return executeDocker(sql);
+  if (databaseUrl) return executeHosted(databaseUrl, sql, operation);
+  return executeDocker(sql, operation);
 }
 
-function executeDocker(sql: string): SqlText {
+function executeDocker(sql: string, operation?: string): SqlText {
   const result = spawnSync(
     "docker",
     ["exec", "-i", CONTAINER, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", DATABASE, "-At"],
     { input: sql, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
   if (result.status !== 0) {
-    logSqlFailure("docker");
+    logSqlFailure("docker", undefined, operation);
     return { ok: false };
   }
   return { ok: true, text: (result.stdout ?? "").trim() };
 }
 
-async function executeHosted(connectionString: string, sql: string): Promise<SqlText> {
+async function executeHosted(connectionString: string, sql: string, operation?: string): Promise<SqlText> {
   const pool = getHostedPool(connectionString);
   let client: PoolClient;
   try {
     client = await pool.connect();
   } catch (error) {
-    logSqlFailure("connect", error);
+    logSqlFailure("connect", error, operation);
     return { ok: false };
   }
 
@@ -124,7 +135,7 @@ async function executeHosted(connectionString: string, sql: string): Promise<Sql
     const result = await client.query({ text: sql, queryMode: "simple", rowMode: "array" });
     return { ok: true, text: scriptText(result) };
   } catch (error) {
-    logSqlFailure("query", error);
+    logSqlFailure("query", error, operation);
     destroyOnRelease = true;
     return { ok: false };
   } finally {
@@ -134,7 +145,7 @@ async function executeHosted(connectionString: string, sql: string): Promise<Sql
       await client.query("RESET ROLE");
       destroyOnRelease = false;
     } catch (error) {
-      logSqlFailure("reset_role", error);
+      logSqlFailure("reset_role", error, operation);
       destroyOnRelease = true;
     }
     client.release(destroyOnRelease);
