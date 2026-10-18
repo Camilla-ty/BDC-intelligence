@@ -15,6 +15,7 @@ import { runLoad } from "../load/run.mjs";
 import { runSoiLoad } from "../load/soi-run.mjs";
 import { queryRows } from "../lib/db.mjs";
 import { FAKE, writeSyntheticTree } from "./synthetic.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_p4_${process.pid}`;
 
@@ -42,6 +43,7 @@ function withDb(fn) {
     }
     const dataDir = mkdtempSync(path.join(tmpdir(), "bdc-p4-"));
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

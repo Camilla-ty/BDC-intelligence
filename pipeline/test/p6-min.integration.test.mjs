@@ -16,6 +16,7 @@ import { runLoad } from "../load/run.mjs";
 import { runSoiLoad } from "../load/soi-run.mjs";
 import { queryRows } from "../lib/db.mjs";
 import { FAKE, writeSyntheticTree } from "./synthetic.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_p6_${process.pid}`;
 const NEAR = "TEST BORROWER A HOLDCO LLC | TEST LOAN 1";
@@ -44,6 +45,7 @@ function withDb(fn) {
     }
     const dataDir = mkdtempSync(path.join(tmpdir(), "bdc-p6-"));
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

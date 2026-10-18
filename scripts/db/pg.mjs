@@ -12,13 +12,31 @@ export const DEFAULT_CONTAINER = "bdc-intelligence-pg";
 export const CONTAINER = process.env.BDC_DB_CONTAINER ?? DEFAULT_CONTAINER;
 export const DB_USER = "postgres";
 
+// A spawn error (ENOBUFS past maxBuffer, ENOENT, ETIMEDOUT) can arrive with exit status 0 and
+// partial stdout, for example when docker exits cleanly after its output pipe is cut. It is
+// always a failure: the status is forced non-zero and the partial stdout is dropped.
+export function commandResult(result) {
+  const stderr = result.stderr ?? "";
+  if (result.error) {
+    const code = result.error.code ?? result.error.name ?? "spawn error";
+    const status = Number.isInteger(result.status) && result.status !== 0 ? result.status : 1;
+    const sep = stderr === "" || stderr.endsWith("\n") ? "" : "\n";
+    return {
+      status,
+      stdout: "",
+      stderr: `${stderr}${sep}ERROR: command did not complete (${code}); its output is incomplete and was discarded\n`,
+      error: result.error,
+    };
+  }
+  return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr, error: undefined };
+}
+
 function run(cmd, args, input) {
-  const result = spawnSync(cmd, args, {
+  return commandResult(spawnSync(cmd, args, {
     input,
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
-  });
-  return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "", error: result.error };
+  }));
 }
 
 export function dockerAvailable() {
@@ -80,7 +98,7 @@ export function psql(database, sql, extraArgs = []) {
 
 export function psqlOrThrow(database, sql, extraArgs = []) {
   const r = psql(database, sql, extraArgs);
-  if (r.status !== 0) throw new Error(r.stderr.trim() || `psql exited with ${r.status}`);
+  if (r.status !== 0 || r.error) throw new Error(r.stderr.trim() || `psql exited with ${r.status}`);
   return r;
 }
 

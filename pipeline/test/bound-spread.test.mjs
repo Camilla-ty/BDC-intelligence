@@ -8,19 +8,15 @@ import {
 } from "../load/bound-spread.mjs";
 import { RULES, ruleDefinitionSha } from "../load/rules.mjs";
 import { spreadFactFromBind } from "../normalize/maturity-context-bind.mjs";
+import { withSimulatedHostedPipelineEnv } from "./local-pipeline-db.mjs";
 
 test("bound spread refuses a hosted database without reading positions", () => {
-  const previous = process.env.PIPELINE_DATABASE_URL;
-  process.env.PIPELINE_DATABASE_URL = "postgresql://pipeline_writer:s3cret@db.example:5432/postgres";
-  try {
+  withSimulatedHostedPipelineEnv("postgresql://pipeline_writer:s3cret@db.example:5432/postgres", () => {
     assert.throws(
       () => persistBoundSpread({ database: "bdc_local", positionId: 1 }),
       /refuses a hosted database/,
     );
-  } finally {
-    if (previous === undefined) delete process.env.PIPELINE_DATABASE_URL;
-    else process.env.PIPELINE_DATABASE_URL = previous;
-  }
+  });
 });
 
 test("bound spread refuses a database other than the local database", () => {

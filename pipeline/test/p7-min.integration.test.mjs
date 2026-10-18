@@ -18,6 +18,7 @@ import { runSoiLoad } from "../load/soi-run.mjs";
 import { queryRows } from "../lib/db.mjs";
 import { continuityGaps } from "../normalize/instrument-identity.mjs";
 import { FAKE, p7Sources, writeSyntheticTree } from "./synthetic.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_p7_${process.pid}`;
 
@@ -45,6 +46,7 @@ function withDb(fn) {
     }
     const dataDir = mkdtempSync(path.join(tmpdir(), "bdc-p7-"));
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

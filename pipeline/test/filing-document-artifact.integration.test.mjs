@@ -9,6 +9,7 @@ import {
 import { migrate } from "../../scripts/db/migrate.mjs";
 import { createStore } from "../lib/store.mjs";
 import { fetchAndLinkFilingDocument } from "../load/filing-document-artifact.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_fd_${process.pid}`;
 const URL = "https://www.sec.gov/Archives/edgar/data/9999999901/000000000000000001/test-only.htm";
@@ -36,6 +37,7 @@ function withDb(fn) {
     delete process.env.PIPELINE_DATABASE_URL;
     const dataDir = mkdtempSync(path.join(tmpdir(), "bdc-fd-"));
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

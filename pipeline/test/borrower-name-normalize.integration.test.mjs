@@ -10,6 +10,7 @@ import { BorrowerNameHeadConflictError } from "../load/borrower-name-normalize.m
 import { normalizeBorrowerNames } from "../load/borrower-name-normalize-run.mjs";
 import { completeFilingCellIngest } from "../load/filing-cell-outcome.mjs";
 import { parseScheduleDisclosureBlocks } from "../parse/schedule-disclosure-block.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_bnn_${process.pid}`;
 const COMPANY = "TEST BORROWER A";
@@ -39,6 +40,7 @@ function withDb(fn) {
     const savedPipelineUrl = process.env.PIPELINE_DATABASE_URL;
     delete process.env.PIPELINE_DATABASE_URL;
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

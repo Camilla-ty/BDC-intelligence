@@ -113,7 +113,10 @@ function executeDocker(sql: string, operation?: string): SqlText {
     ["exec", "-i", CONTAINER, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", DATABASE, "-At"],
     { input: sql, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
-  if (result.status !== 0) {
+  // A spawn error (ENOBUFS past maxBuffer, ENOENT, ETIMEDOUT) can arrive with
+  // exit status 0 and partial stdout. That is always a failure: discard the
+  // incomplete text so callers cannot parse it as a successful query.
+  if (result.error || result.status !== 0) {
     logSqlFailure("docker", undefined, operation);
     return { ok: false };
   }

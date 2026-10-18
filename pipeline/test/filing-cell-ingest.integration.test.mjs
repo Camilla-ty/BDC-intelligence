@@ -10,6 +10,7 @@ import {
 } from "../load/rules.mjs";
 import { completeFilingCellIngest, recordFilingCellIngestSucceeded } from "../load/filing-cell-outcome.mjs";
 import { PARSER_CODE, PARSER_VERSION, parseScheduleDisclosureBlocks } from "../parse/schedule-disclosure-block.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_fc_${process.pid}`;
 const COMPANY = "TEST COMPANY CELL";
@@ -39,6 +40,7 @@ function withDb(fn) {
     const savedPipelineUrl = process.env.PIPELINE_DATABASE_URL;
     delete process.env.PIPELINE_DATABASE_URL;
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

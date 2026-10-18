@@ -7,18 +7,12 @@ import {
   assertResolutionDatabase,
   resolveBoundedEligibleInstruments,
 } from "../resolve-eligible-instruments.mjs";
+import { withSimulatedHostedPipelineEnv } from "./local-pipeline-db.mjs";
 
 const HOSTED = "postgres://example.invalid/bdc";
 
 function withHostedUrl(fn) {
-  const previous = process.env.PIPELINE_DATABASE_URL;
-  process.env.PIPELINE_DATABASE_URL = HOSTED;
-  try {
-    fn();
-  } finally {
-    if (previous == null) delete process.env.PIPELINE_DATABASE_URL;
-    else process.env.PIPELINE_DATABASE_URL = previous;
-  }
+  return withSimulatedHostedPipelineEnv(HOSTED, fn);
 }
 
 function withLocalTarget(fn) {

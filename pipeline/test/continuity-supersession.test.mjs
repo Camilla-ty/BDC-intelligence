@@ -10,6 +10,7 @@ import {
 import {
   SUPERSESSION_RULES, assertSupersessionDatabase, parseArgs, supersedeApprovedContinuity,
 } from "../supersede-approved-continuity.mjs";
+import { withSimulatedHostedPipelineEnv } from "./local-pipeline-db.mjs";
 
 // Observation ids, identifiers, CIKs, dates, prior decision ids, and target positions below come from the
 // approved allowlist. Every other value (registrant ids, evidence ids, instrument ids, decision ids of the
@@ -259,16 +260,11 @@ test("every pinned fact must equal the stored fact", () => {
 });
 
 test("the command refuses a hosted database unless --allow-hosted is given", () => {
-  const previous = process.env.PIPELINE_DATABASE_URL;
-  process.env.PIPELINE_DATABASE_URL = "postgres://example.invalid/bdc";
-  try {
+  withSimulatedHostedPipelineEnv("postgres://example.invalid/bdc", () => {
     assert.throws(() => supersedeApprovedContinuity({ database: "bdc_local", dryRun: true, log() {} }), /refuses a hosted database/);
     assert.throws(() => supersedeApprovedContinuity({ database: "bdc_local", log() {} }), /refuses a hosted database/);
     assert.doesNotThrow(() => assertSupersessionDatabase("bdc_local", { allowHosted: true }));
-  } finally {
-    if (previous == null) delete process.env.PIPELINE_DATABASE_URL;
-    else process.env.PIPELINE_DATABASE_URL = previous;
-  }
+  });
   const saved = process.env.PIPELINE_DATABASE_URL;
   delete process.env.PIPELINE_DATABASE_URL;
   try {

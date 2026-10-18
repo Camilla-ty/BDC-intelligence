@@ -1,8 +1,16 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+type DockerSpawnResult = {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  signal?: string | null;
+  error?: Error;
+};
+
 const spawnMocks = vi.hoisted(() => ({
-  spawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "" })),
+  spawnSync: vi.fn((): DockerSpawnResult => ({ status: 1, stdout: "", stderr: "" })),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -322,6 +330,69 @@ describe("executeSql without DATABASE_URL", () => {
     await executeSql("SELECT 1;");
     expect(mocks.counts().poolConstructCount).toBe(0);
     expect(mocks.counts().connectCount).toBe(0);
+  });
+
+  it("returns trimmed stdout when docker psql exits 0 without a spawn error", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    spawnMocks.spawnSync.mockReturnValue({
+      status: 0,
+      stdout: "  listing-row\n",
+      stderr: "",
+    });
+    await expect(executeSql("SELECT 1;")).resolves.toEqual({ ok: true, text: "listing-row" });
+    expect(spawnMocks.spawnSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed on ENOBUFS with exit status 0 and discards the partial stdout", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    spawnMocks.spawnSync.mockReturnValue({
+      status: 0,
+      stdout: '[{"legalEntityId":"partial"',
+      stderr: "",
+      error: Object.assign(new Error("spawnSync docker ENOBUFS"), { code: "ENOBUFS" }),
+    });
+    const result = await executeSql("SELECT secret_marker;");
+    expect(result).toEqual({ ok: false });
+    expect(result).not.toHaveProperty("text");
+    expect(vi.mocked(console.error).mock.calls).toEqual([
+      [JSON.stringify({ source: "executeSql", operation: "unspecified", category: "docker", sqlstate: "unknown" })],
+    ]);
+    const serialized = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(serialized).not.toContain("ENOBUFS");
+    expect(serialized).not.toContain("partial");
+    expect(serialized).not.toContain("secret_marker");
+  });
+
+  it("fails closed on a spawn error with a null status or a non-zero status", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    spawnMocks.spawnSync.mockReturnValue({
+      status: null,
+      signal: "SIGTERM",
+      stdout: "partial-null",
+      stderr: "",
+      error: Object.assign(new Error("spawnSync docker ENOBUFS"), { code: "ENOBUFS" }),
+    });
+    await expect(executeSql("SELECT 1;")).resolves.toEqual({ ok: false });
+
+    spawnMocks.spawnSync.mockReturnValue({
+      status: 3,
+      stdout: "",
+      stderr: "psql: ERROR:  boom",
+      error: Object.assign(new Error("spawnSync docker ENOBUFS"), { code: "ENOBUFS" }),
+    });
+    await expect(executeSql("SELECT 1;")).resolves.toEqual({ ok: false });
+  });
+
+  it("fails closed on a spawn error that has no code", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    spawnMocks.spawnSync.mockReturnValue({
+      status: 0,
+      stdout: "ok",
+      stderr: "",
+      error: new Error("spawnSync docker ETIMEDOUT"),
+    });
+    await expect(executeSql("SELECT 1;")).resolves.toEqual({ ok: false });
   });
 
   it("logs a docker failure without psql stderr, SQL, or a connection string", async () => {

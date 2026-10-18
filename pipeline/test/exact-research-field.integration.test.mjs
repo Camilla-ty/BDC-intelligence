@@ -8,6 +8,7 @@ import { ingestFilingCompanyCell } from "../load/filing-cell.mjs";
 import { RULES, ruleDefinitionSha } from "../load/rules.mjs";
 import { ingestExactResearchFields } from "../load/exact-research-field.mjs";
 import { PARSER_CODE, PARSER_VERSION, parseScheduleDisclosureBlocks } from "../parse/schedule-disclosure-block.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_rf_${process.pid}`;
 const PERIOD = "2099-09-30";
@@ -101,6 +102,7 @@ function withDb(fn) {
     const savedPipelineUrl = process.env.PIPELINE_DATABASE_URL;
     delete process.env.PIPELINE_DATABASE_URL;
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

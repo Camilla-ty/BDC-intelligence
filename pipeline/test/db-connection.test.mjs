@@ -3,9 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   HOSTED_STATEMENT_TIMEOUT,
+  PIPELINE_ALLOW_HOSTED_ENV,
+  PIPELINE_TEST_LOCAL_ENV,
   appendResultLines,
+  assertLocalPipelineTarget,
   assertPipelineUrl,
   copyBlock,
+  copyInFromIterable,
   hostedPipelineScript,
   pipelineConnectionTarget,
   pipelineScript,
@@ -17,16 +21,54 @@ import {
 const SECRET = "s3cret-token";
 const USER = "pipeline_writer";
 const HOST = "db.example";
+const SENTINEL = "postgresql://pipeline_writer:sentinel@db.example.invalid:5432/postgres";
 
-test("hosted URL is selected only from PIPELINE_DATABASE_URL", () => {
+test("hosted URL requires PIPELINE_DATABASE_URL and BDC_PIPELINE_ALLOW_HOSTED", () => {
   const hosted = `postgresql://${USER}:${SECRET}@${HOST}:5432/postgres`;
   const web = `postgresql://web_login:${SECRET}@${HOST}:5432/postgres`;
   assert.deepEqual(pipelineConnectionTarget({}), { mode: "local" });
   assert.deepEqual(pipelineConnectionTarget({ PIPELINE_DATABASE_URL: "   " }), { mode: "local" });
   assert.deepEqual(pipelineConnectionTarget({ DATABASE_URL: web }), { mode: "local" });
+  assert.throws(
+    () => pipelineConnectionTarget({ PIPELINE_DATABASE_URL: hosted }),
+    /BDC_PIPELINE_ALLOW_HOSTED/,
+  );
   assert.deepEqual(
-    pipelineConnectionTarget({ PIPELINE_DATABASE_URL: `  ${hosted}  `, DATABASE_URL: web }),
+    pipelineConnectionTarget({
+      PIPELINE_DATABASE_URL: `  ${hosted}  `,
+      DATABASE_URL: web,
+      [PIPELINE_ALLOW_HOSTED_ENV]: "1",
+    }),
     { mode: "hosted", connectionString: hosted },
+  );
+});
+
+test("BDC_PIPELINE_TEST_LOCAL forces local even when Hosted URL and opt-in are set", () => {
+  assert.deepEqual(
+    pipelineConnectionTarget({
+      PIPELINE_DATABASE_URL: SENTINEL,
+      [PIPELINE_ALLOW_HOSTED_ENV]: "1",
+      [PIPELINE_TEST_LOCAL_ENV]: "1",
+    }),
+    { mode: "local" },
+  );
+  assert.deepEqual(
+    assertLocalPipelineTarget({
+      PIPELINE_DATABASE_URL: SENTINEL,
+      [PIPELINE_ALLOW_HOSTED_ENV]: "1",
+      [PIPELINE_TEST_LOCAL_ENV]: "1",
+    }),
+    { mode: "local" },
+  );
+});
+
+test("assertLocalPipelineTarget refuses an active Hosted selection", () => {
+  assert.throws(
+    () => assertLocalPipelineTarget({
+      PIPELINE_DATABASE_URL: SENTINEL,
+      [PIPELINE_ALLOW_HOSTED_ENV]: "1",
+    }),
+    /expected local pipeline database target/,
   );
 });
 
@@ -121,6 +163,38 @@ test("pipeline database module changes no database, role, or server configuratio
 
 test("a COPY block without a terminator fails closed", () => {
   assert.throws(() => splitPsqlScript("COPY _t (n) FROM STDIN;\n1\n"), /missing its terminator/);
+});
+
+test("copyInFromIterable sends CopyFail when the row iterator throws", async () => {
+  const events = [];
+  const connection = {
+    sendCopyFromChunk(chunk) { events.push(["chunk", chunk.toString("utf8")]); },
+    endCopyFrom() { events.push(["end"]); },
+    sendCopyFail(message) { events.push(["fail", message]); },
+  };
+  async function* rows() {
+    yield ["1", "ok"];
+    throw new Error("row iterator failed");
+  }
+  const query = copyInFromIterable("COPY t (a, b) FROM STDIN;", rows());
+  let callbacks = 0;
+  let settled;
+  const done = new Promise((resolve, reject) => {
+    query.callback = (err) => {
+      callbacks += 1;
+      if (err) reject(err);
+      else resolve();
+    };
+  });
+  query.handleCopyInResponse(connection);
+  await assert.rejects(done, /row iterator failed/);
+  settled = events.slice();
+  assert.equal(settled.some((event) => event[0] === "end"), false);
+  assert.deepEqual(settled.filter((event) => event[0] === "fail"), [["fail", "row iterator failed"]]);
+  assert.match(settled.find((event) => event[0] === "chunk")[1], /^1\tok\n$/);
+  query.handleError({ message: "COPY from stdin failed" });
+  query.handleReadyForQuery();
+  assert.equal(callbacks, 1);
 });
 
 test("appendResultLines keeps empty, small, and multi-result order", () => {

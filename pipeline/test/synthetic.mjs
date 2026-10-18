@@ -4,6 +4,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { VERIFIED_BDC_REPORT_HEADER, VERIFIED_SOI_PRESET_HEADER, VERIFIED_SUB_HEADER } from "../lib/config.mjs";
+import { VERIFIED_NUM_HEADER } from "../lib/num-schema.mjs";
 import { createFetchLog } from "../lib/fetch-log.mjs";
 import { createStore } from "../lib/store.mjs";
 import { buildStoredZip } from "./zip-store.mjs";
@@ -72,6 +73,46 @@ export function soiTsv(rows, extraHeaders = SOI_EXTRA_HEADERS) {
   const header = [...VERIFIED_SOI_PRESET_HEADER, ...extraHeaders];
   const lines = rows.map((row) => (typeof row === "string" ? row : soiLine(row, extraHeaders)));
   return `${header.join("\t")}\n${lines.join("\n")}${lines.length ? "\n" : ""}`;
+}
+
+export function numLine(fields) {
+  return VERIFIED_NUM_HEADER.map((h) => fields[h] ?? "").join("\t");
+}
+
+export function numTsv(rows) {
+  const lines = rows.map((row) => (typeof row === "string" ? row : numLine(row)));
+  return `${VERIFIED_NUM_HEADER.join("\t")}\n${lines.join("\n")}${lines.length ? "\n" : ""}`;
+}
+
+/** Typed segments form documented in SOURCE_SCHEMAS 4.3. */
+export function numSegmentsTyped(identifier, version = "us-gaap/2099") {
+  return `InvestmentIdentifierAxis(${version})=${identifier}();`;
+}
+
+/** Abbreviated segments form used in SQL fixtures. */
+export function numSegmentsPlain(identifier) {
+  return `InvestmentIdentifierAxis=${identifier};`;
+}
+
+export function numFactRow({
+  adsh = FAKE.acc,
+  tag,
+  version = "us-gaap/2099",
+  ddate = "20991231",
+  qtrs = "0",
+  uom = "USD",
+  identifier = FAKE.ident,
+  value,
+  segments,
+  dimn = "1",
+  footnote = "",
+  footlen = "0",
+}) {
+  return {
+    adsh, tag, version, ddate, qtrs, uom,
+    segments: segments ?? numSegmentsTyped(identifier, version),
+    dimn, value: String(value), footnote, footlen,
+  };
 }
 
 function soiBase(adsh, cik, name, extra = {}) {

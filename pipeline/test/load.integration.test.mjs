@@ -11,6 +11,7 @@ import { runLoad } from "../load/run.mjs";
 import { FAKE, submissionsMain, writeSyntheticTree } from "./synthetic.mjs";
 import { createStore } from "../lib/store.mjs";
 import { createFetchLog } from "../lib/fetch-log.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_p2_${process.pid}`;
 
@@ -37,6 +38,7 @@ test("synthetic registry load: identity, amendments, coverage, idempotency, refr
   }
   const dataDir = mkdtempSync(path.join(tmpdir(), "bdc-p2-"));
   try {
+    assertIntegrationPipelineIsLocal();
     dropDatabase(dbName);
     createDatabase(dbName);
     migrate(dbName);

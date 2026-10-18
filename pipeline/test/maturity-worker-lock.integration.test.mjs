@@ -10,6 +10,7 @@ import {
   MaturityWorkerBusy, acquireMaturityWorkerLock,
 } from "../load/maturity-worker-lock.mjs";
 import { runMaturityInspect } from "../maturity-inspect.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_lock_${process.pid}`;
 const ACCESSION = "0000000000-00-000001";
@@ -37,6 +38,7 @@ function withDb(fn) {
     delete process.env.PIPELINE_DATABASE_URL;
     delete process.env.DATABASE_URL;
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

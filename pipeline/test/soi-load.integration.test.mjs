@@ -16,6 +16,7 @@ import { reconcileSoi } from "../soi-reconcile.mjs";
 import { createStore } from "../lib/store.mjs";
 import { createFetchLog } from "../lib/fetch-log.mjs";
 import { buildStoredZip } from "./zip-store.mjs";
+import { assertIntegrationPipelineIsLocal } from "./local-pipeline-db.mjs";
 
 const dbName = `bdc_soi_${process.pid}`;
 
@@ -74,6 +75,7 @@ function withDb(fn) {
     }
     const dataDir = mkdtempSync(path.join(tmpdir(), "bdc-soi-"));
     try {
+      assertIntegrationPipelineIsLocal();
       dropDatabase(dbName);
       createDatabase(dbName);
       migrate(dbName);

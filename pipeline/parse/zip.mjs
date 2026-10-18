@@ -4,9 +4,15 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
+function unzipFailed(member, result) {
+  const code = result.error?.code ?? result.status;
+  const detail = (result.stderr && String(result.stderr)) || result.error?.message || `exit ${code}`;
+  return new Error(`unzip failed for ${member}: ${detail}`);
+}
+
 export function listMembers(zipPath) {
   const r = spawnSync("unzip", ["-Z1", zipPath], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`unzip -Z1 failed for ${zipPath}: ${r.stderr}`);
+  if (r.error || r.status !== 0) throw unzipFailed(zipPath, r);
   return r.stdout.split("\n").filter((name) => name !== "" && !name.endsWith("/")).sort();
 }
 
@@ -29,10 +35,60 @@ export function hashMember(zipPath, member) {
   });
 }
 
-export function readMember(zipPath, member) {
-  const r = spawnSync("unzip", ["-p", zipPath, member], { maxBuffer: 512 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`unzip -p failed for ${member}: ${r.stderr}`);
+const READ_MEMBER_MAX_BUFFER = 512 * 1024 * 1024;
+
+export function readMember(zipPath, member, { maxBuffer = READ_MEMBER_MAX_BUFFER } = {}) {
+  const r = spawnSync("unzip", ["-p", zipPath, member], { maxBuffer });
+  if (r.error || r.status !== 0) throw unzipFailed(member, { ...r, stderr: r.stderr?.toString?.() ?? r.stderr });
   return r.stdout;
+}
+
+function childStillRunning(child) {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+function waitChildClosed(child) {
+  return new Promise((resolve) => {
+    if (!childStillRunning(child)) resolve();
+    else child.once("close", () => resolve());
+  });
+}
+
+function stopChild(child) {
+  if (childStillRunning(child)) child.kill("SIGTERM");
+  child.stdout.destroy();
+}
+
+// Yields stdout chunks. A spawn error or a non-zero unzip exit is always a failure;
+// callers must not treat a truncated stream as the complete member.
+// return() or a throw after a yield kills unzip so the child cannot block on a full pipe.
+export async function* streamMemberChunks(zipPath, member, { onSpawn } = {}) {
+  const child = spawn("unzip", ["-p", zipPath, member], { stdio: ["ignore", "pipe", "pipe"] });
+  onSpawn?.(child);
+  let stderr = "";
+  let spawnError = null;
+  child.stderr.on("data", (d) => { stderr += d; });
+  child.on("error", (error) => { spawnError = error; });
+
+  try {
+    try {
+      for await (const chunk of child.stdout) {
+        yield chunk;
+      }
+    } catch (error) {
+      stopChild(child);
+      await waitChildClosed(child);
+      throw error;
+    }
+
+    await waitChildClosed(child);
+    const code = child.exitCode;
+    if (spawnError) throw unzipFailed(member, { error: spawnError, status: code, stderr });
+    if (code !== 0) throw unzipFailed(member, { status: code, stderr });
+  } finally {
+    stopChild(child);
+    await waitChildClosed(child);
+  }
 }
 
 export async function describeMembers(zipPath) {

@@ -1,7 +1,9 @@
 // Pipeline database access. SQL text is unchanged.
-// PIPELINE_DATABASE_URL selects the hosted pg client. Otherwise psql runs inside the
-// local Docker container (scripts/db/pg.mjs). Every script runs as bdc_pipeline_writer
-// unless asWriter is false. Bulk data stays in COPY. This module does not read the web URL.
+// Hosted access requires PIPELINE_DATABASE_URL and BDC_PIPELINE_ALLOW_HOSTED=1.
+// BDC_PIPELINE_TEST_LOCAL=1 forces the local Docker target (ordinary test suites).
+// Otherwise, with no Hosted URL, psql runs inside the local Docker container
+// (scripts/db/pg.mjs). Every script runs as bdc_pipeline_writer unless asWriter is
+// false. Bulk data stays in COPY. This module does not read the web URL.
 
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -9,6 +11,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { CONTAINER, DB_USER, psql } from "../../scripts/db/pg.mjs";
+
+/** Explicit opt-in for Hosted pipeline connections (tests and operators). */
+export const PIPELINE_ALLOW_HOSTED_ENV = "BDC_PIPELINE_ALLOW_HOSTED";
+/** When set, pipelineConnectionTarget always returns local (ordinary test isolation). */
+export const PIPELINE_TEST_LOCAL_ENV = "BDC_PIPELINE_TEST_LOCAL";
 
 export function lit(value) {
   if (value === null || value === undefined) return "NULL";
@@ -26,16 +33,54 @@ function copyField(value) {
   return String(value).replace(/\\/g, "\\\\").replace(/\t/g, "\\t").replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 }
 
+export function formatCopyRow(values) {
+  return values.map(copyField).join("\t");
+}
+
+export function formatCopyLine(row) {
+  return typeof row === "string" ? row : formatCopyRow(row);
+}
+
 // A COPY ... FROM STDIN block with its data inline, for psql scripts.
 export function copyBlock(table, columns, rows) {
-  const lines = rows.map((r) => r.map(copyField).join("\t"));
+  const lines = rows.map((r) => formatCopyRow(r));
   return `COPY ${table} (${columns.join(", ")}) FROM STDIN;\n${lines.join("\n")}${lines.length ? "\n" : ""}\\.\n`;
 }
 
+export function envFlagEnabled(env, name) {
+  const value = env?.[name];
+  return value === "1" || value === "true" || value === "yes";
+}
+
+/**
+ * Resolve local Docker vs Hosted.
+ * - BDC_PIPELINE_TEST_LOCAL=1 → always local (ignores PIPELINE_DATABASE_URL).
+ * - No PIPELINE_DATABASE_URL → local.
+ * - PIPELINE_DATABASE_URL without BDC_PIPELINE_ALLOW_HOSTED → throw (fail closed).
+ * - Both URL and ALLOW_HOSTED → hosted.
+ */
 export function pipelineConnectionTarget(env = process.env) {
+  if (envFlagEnabled(env, PIPELINE_TEST_LOCAL_ENV)) {
+    return { mode: "local" };
+  }
   const raw = env.PIPELINE_DATABASE_URL;
   if (raw == null || String(raw).trim() === "") return { mode: "local" };
+  if (!envFlagEnabled(env, PIPELINE_ALLOW_HOSTED_ENV)) {
+    throw new Error(
+      "PIPELINE_DATABASE_URL is set but BDC_PIPELINE_ALLOW_HOSTED is not. "
+      + "Unset PIPELINE_DATABASE_URL for local Docker, or set BDC_PIPELINE_ALLOW_HOSTED=1 for Hosted.",
+    );
+  }
   return { mode: "hosted", connectionString: String(raw).trim() };
+}
+
+/** Fail closed: resolved target must be local before disposable integration DB work. */
+export function assertLocalPipelineTarget(env = process.env) {
+  const target = pipelineConnectionTarget(env);
+  if (target.mode !== "local") {
+    throw new Error("expected local pipeline database target; Hosted selection is active");
+  }
+  return target;
 }
 
 export function assertPipelineUrl(connectionString) {
@@ -192,6 +237,81 @@ function copyInQuery(text, payload) {
   };
 }
 
+// COPY FROM STDIN from an async row iterator. A throw in the iterator must
+// send CopyFail (not CopyDone) so the Hosted connection leaves COPY IN.
+export function copyInFromIterable(text, rows) {
+  let settled = false;
+  let iteratorError = null;
+  const query = {
+    text,
+    callback: null,
+    submit(connection) {
+      connection.query(text);
+      return null;
+    },
+    handleCopyInResponse(connection) {
+      Promise.resolve().then(async () => {
+        try {
+          for await (const row of rows) {
+            connection.sendCopyFromChunk(Buffer.from(`${formatCopyLine(row)}\n`, "utf8"));
+          }
+          connection.endCopyFrom();
+        } catch (err) {
+          iteratorError = err instanceof Error ? err : new Error(err?.message || "COPY failed");
+          if (typeof connection.sendCopyFail === "function") {
+            connection.sendCopyFail(iteratorError.message);
+          }
+          finish(iteratorError);
+        }
+      }).catch((err) => {
+        finish(err instanceof Error ? err : new Error(err?.message || "COPY failed"));
+      });
+    },
+    handleCopyData() {},
+    handleRowDescription() {},
+    handleDataRow() {},
+    handleCommandComplete() {},
+    handleEmptyQuery() {},
+    handlePortalSuspended() {},
+    handleReadyForQuery() {
+      finish(iteratorError);
+    },
+    handleError(err) {
+      finish(iteratorError || (err instanceof Error ? err : new Error(err?.message || "COPY failed")));
+    },
+  };
+  function finish(err) {
+    if (settled) return;
+    settled = true;
+    query.callback?.(err ?? null);
+  }
+  return query;
+}
+
+function writeStdin(stream, data) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => reject(error);
+    stream.once("error", onError);
+    if (stream.write(data)) {
+      stream.removeListener("error", onError);
+      resolve();
+    } else {
+      stream.once("drain", () => {
+        stream.removeListener("error", onError);
+        resolve();
+      });
+    }
+  });
+}
+
+async function* asRowIterable(rows) {
+  if (rows && typeof rows[Symbol.asyncIterator] === "function") {
+    yield* rows;
+    return;
+  }
+  for (const row of rows ?? []) yield row;
+}
+
 export async function executeHostedScript(connectionString, script) {
   assertPipelineUrl(connectionString);
   const client = new pg.Client({
@@ -301,6 +421,19 @@ async function openHostedPipelineSession(connectionString) {
         throw new Error(publicPipelineError(error, connectionString));
       }
     },
+    async copyFrom(table, columns, rows) {
+      const text = `COPY ${table} (${columns.join(", ")}) FROM STDIN;`;
+      try {
+        await new Promise((resolve, reject) => {
+          const query = copyInFromIterable(text, asRowIterable(rows));
+          query.callback = (err) => (err ? reject(err) : resolve());
+          client.query(query);
+        });
+      } catch (error) {
+        throw new Error(publicPipelineError(error, connectionString));
+      }
+      return "";
+    },
     close,
   };
 }
@@ -310,7 +443,7 @@ async function openLocalPipelineSession(database) {
   const child = spawn("docker", [
     "exec", "-i", CONTAINER,
     "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1",
-    "-U", DB_USER, "-d", database, "-At",
+    "-U", DB_USER, "-d", database, "-At", "-F", "\t",
   ], { stdio: ["pipe", "pipe", "pipe"] });
   let out = "";
   let err = "";
@@ -353,6 +486,25 @@ async function openLocalPipelineSession(database) {
         child.stdin.write(`${text};\nSELECT '${marker}';\n`);
       });
     },
+    copyFrom(table, columns, rows) {
+      if (closed) return Promise.reject(new Error("pipeline session is closed"));
+      if (pending) return Promise.reject(new Error("pipeline session already has a query"));
+      const marker = `__BDC_MARK_${randomBytes(8).toString("hex")}__`;
+      return new Promise((resolve, reject) => {
+        pending = { marker, resolve, reject };
+        (async () => {
+          await writeStdin(child.stdin, `COPY ${table} (${columns.join(", ")}) FROM STDIN;\n`);
+          for await (const row of asRowIterable(rows)) {
+            await writeStdin(child.stdin, `${formatCopyLine(row)}\n`);
+          }
+          await writeStdin(child.stdin, `\\.\nSELECT '${marker}';\n`);
+        })().catch((error) => {
+          if (pending?.marker !== marker) return;
+          pending = null;
+          reject(error);
+        });
+      });
+    },
     close() {
       if (closed) return Promise.resolve();
       closed = true;
@@ -375,15 +527,20 @@ async function openLocalPipelineSession(database) {
   return session;
 }
 
+// Lines of a local psql result, or an error. A result carrying a spawn error never yields lines.
+export function localScriptLines(r) {
+  if (r.status !== 0 || r.error) {
+    const message = r.stderr.split("\n").filter((l) => /ERROR|DETAIL|CONTEXT|LINE/.test(l)).slice(0, 10).join("\n");
+    const fallback = r.error ? `psql did not complete (${r.error.code ?? r.error.name})` : `psql exited with ${r.status}`;
+    throw new Error(message || r.stderr.trim() || fallback);
+  }
+  return r.stdout.split("\n").filter((l) => l !== "");
+}
+
 export function runScript(database, sql, { asWriter = true } = {}) {
   const target = pipelineConnectionTarget();
   if (target.mode === "hosted") return runHosted(target.connectionString, hostedPipelineScript(sql, { asWriter }));
-  const r = psql(database, pipelineScript(sql, { asWriter }), ["-At", "-F", "\t"]);
-  if (r.status !== 0) {
-    const message = r.stderr.split("\n").filter((l) => /ERROR|DETAIL|CONTEXT|LINE/.test(l)).slice(0, 10).join("\n");
-    throw new Error(message || r.stderr.trim() || `psql exited with ${r.status}`);
-  }
-  return r.stdout.split("\n").filter((l) => l !== "");
+  return localScriptLines(psql(database, pipelineScript(sql, { asWriter }), ["-At", "-F", "\t"]));
 }
 
 export function queryRows(database, sql, opts) {

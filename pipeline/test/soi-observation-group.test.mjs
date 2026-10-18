@@ -249,7 +249,11 @@ test("a row that is both balance and spread is not grouped", () => {
 });
 
 test("SOI fact grouping refuses a hosted database", () => {
-  const previous = process.env.PIPELINE_DATABASE_URL;
+  const previousUrl = process.env.PIPELINE_DATABASE_URL;
+  const previousAllow = process.env.BDC_PIPELINE_ALLOW_HOSTED;
+  const previousLocal = process.env.BDC_PIPELINE_TEST_LOCAL;
+  delete process.env.BDC_PIPELINE_TEST_LOCAL;
+  process.env.BDC_PIPELINE_ALLOW_HOSTED = "1";
   process.env.PIPELINE_DATABASE_URL = "postgres://example.invalid/bdc";
   try {
     assert.throws(
@@ -257,8 +261,12 @@ test("SOI fact grouping refuses a hosted database", () => {
       /refuses a hosted database/,
     );
   } finally {
-    if (previous == null) delete process.env.PIPELINE_DATABASE_URL;
-    else process.env.PIPELINE_DATABASE_URL = previous;
+    if (previousUrl == null) delete process.env.PIPELINE_DATABASE_URL;
+    else process.env.PIPELINE_DATABASE_URL = previousUrl;
+    if (previousAllow == null) delete process.env.BDC_PIPELINE_ALLOW_HOSTED;
+    else process.env.BDC_PIPELINE_ALLOW_HOSTED = previousAllow;
+    if (previousLocal == null) delete process.env.BDC_PIPELINE_TEST_LOCAL;
+    else process.env.BDC_PIPELINE_TEST_LOCAL = previousLocal;
   }
 });
 
