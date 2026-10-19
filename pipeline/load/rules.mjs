@@ -42,7 +42,9 @@ export const RULES = [
     files: ["pipeline/normalize/maturity-context-bind.mjs", "pipeline/load/bound-spread.mjs"],
     spec: "docs/DATA_MODEL.md",
     description: "Stores the unscaled number of the single InvestmentBasisSpreadVariableRate fact on an already bound maturity context. Does not read benchmark text and does not replace an existing SPREAD head." },
-  { code: "obs.research_field.bound_context_cell", kind: "EXTRACTION", version: "3",
+  // v4 registers the committed CSWC-variant definition beside a stored v3 whose
+  // definition_sha256 is not reproducible from git. Historical v3 rows stay on v3.
+  { code: "obs.research_field.bound_context_cell", kind: "EXTRACTION", version: "4",
     files: ["pipeline/extract/bound-context-research-cell.mjs", "pipeline/load/bound-context-research-cell.mjs"],
     spec: "docs/DATA_MODEL.md",
     description: "Reads untagged Industry and Type cells on the HTML row of an already bound maturity context. Type headings are Type and Type of Investment. An empty Industry cell is omitted. A raised footnote marker is omitted from the stored text. Does not parse identifier text and does not replace a current head." },

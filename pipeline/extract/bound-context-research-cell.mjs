@@ -6,7 +6,7 @@ import { cellText } from "../parse/schedule-disclosure-block.mjs";
 import { tableRows } from "../normalize/ix-context-row.mjs";
 
 export const BOUND_CONTEXT_RESEARCH_CODE = "obs.research_field.bound_context_cell";
-export const BOUND_CONTEXT_RESEARCH_VERSION = "3";
+export const BOUND_CONTEXT_RESEARCH_VERSION = "4";
 
 const INDUSTRY_LABELS = new Set(["Industry"]);
 const TYPE_LABELS = new Set(["Type", "Type of Investment"]);

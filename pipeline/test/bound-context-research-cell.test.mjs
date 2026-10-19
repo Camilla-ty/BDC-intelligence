@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundContextResearchCells, researchHeadAction } from "../extract/bound-context-research-cell.mjs";
+import {
+  BOUND_CONTEXT_RESEARCH_CODE, BOUND_CONTEXT_RESEARCH_VERSION, boundContextResearchCells, researchHeadAction,
+} from "../extract/bound-context-research-cell.mjs";
+import { RULES, ruleDefinitionSha } from "../load/rules.mjs";
 
 const CURRENT = "i3209c8499d854347ae9587c162ae445a_I20230331";
 const COMPARATIVE = "i5eb6ad985d904f6a9343fd73a3935455_I20220331";
@@ -137,6 +140,13 @@ test("a New Mountain header is not read as Industry and Type", () => {
   const html = "<table><tr><td>Portfolio Company, Location and Industry</td><td>Type of Investment</td><td>Fair Value</td></tr>"
     + `<tr><td>Business Services</td><td>First Lien(2)(3)</td><td>${fact("nm")}</td></tr></table>`;
   assert.equal(boundContextResearchCells(html, "nm"), null);
+});
+
+test("the catalog current version is v4 and does not replace historical v3", () => {
+  assert.equal(BOUND_CONTEXT_RESEARCH_VERSION, "4");
+  const current = RULES.filter((rule) => rule.code === BOUND_CONTEXT_RESEARCH_CODE);
+  assert.deepEqual(current.map((rule) => rule.version), ["4"]);
+  assert.equal(ruleDefinitionSha(current[0]), "682ea1d4d16ce4c396beafb66b37a5709920e8ddfca75e6f945df4afeb7f96c3");
 });
 
 test("an existing identical head is kept and a different head conflicts", () => {
