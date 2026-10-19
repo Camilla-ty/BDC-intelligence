@@ -12,7 +12,7 @@ import { pipelineCodeVersion } from "./run.mjs";
 import { ensureAndLinkRuleForRun } from "./rules.mjs";
 
 export const BOUND_SPREAD_CODE = "obs.spread.bound_ixbrl_fact";
-export const BOUND_SPREAD_VERSION = "1";
+export const BOUND_SPREAD_VERSION = "2";
 
 const FACT_ID = /^[A-Za-z0-9_-]+$/;
 const DECIMAL = /^-?\d+(\.\d+)?$/;

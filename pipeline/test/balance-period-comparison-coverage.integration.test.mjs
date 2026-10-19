@@ -275,10 +275,10 @@ WHERE position_observation_id = ${balanceQ3.id} AND state = 'MATCHED'`);
   const runId = Number(queryRows(dbName, `INSERT INTO ops.run (run_kind, code_version, parameters, started_at)
 VALUES ('TEST_BLOCK_ENDPOINT', '${pipelineCodeVersion()}', '{"test":true}'::jsonb, now()) RETURNING id;`)[0][0]);
   const instrumentRule = ensureAndLinkRuleForRun(dbName, runId, {
-    code: "resolution.instrument_exact_identifier_and_type", version: "2",
+    code: "resolution.instrument_exact_identifier_and_type", version: "3",
   });
   const continuityRule = ensureAndLinkRuleForRun(dbName, runId, {
-    code: "resolution.position_same_registrant_and_instrument", version: "2",
+    code: "resolution.position_same_registrant_and_instrument", version: "3",
   });
   queryRows(dbName, `
 INSERT INTO resolution.instrument_resolution_decision (

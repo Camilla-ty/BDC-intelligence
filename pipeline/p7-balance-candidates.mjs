@@ -25,10 +25,10 @@ const EXPECTED_SINGLE_DATE = 78;
 /** Identities linked for balance-candidate P7; must match applyP7Min + current RULES. */
 export const P7_BALANCE_RULES = [
   { code: "norm.instrument_type_footnote_ref", version: "1" },
-  { code: "resolution.instrument_exact_identifier_and_type", version: "2" },
-  { code: "resolution.instrument_unknown_attributes", version: "2" },
-  { code: "resolution.position_same_registrant_and_instrument", version: "2" },
-  { code: "resolution.position_unresolved_without_instrument", version: "2" },
+  { code: "resolution.instrument_exact_identifier_and_type", version: "3" },
+  { code: "resolution.instrument_unknown_attributes", version: "3" },
+  { code: "resolution.position_same_registrant_and_instrument", version: "3" },
+  { code: "resolution.position_unresolved_without_instrument", version: "3" },
 ];
 
 function opt(args, name) {

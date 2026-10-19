@@ -31,10 +31,10 @@ export const RESOLUTION_RULES = [
   { code: "norm.borrower_name", version: "1" },
   { code: "resolution.entity_exact_company_cell_name", version: "2" },
   { code: "norm.instrument_type_footnote_ref", version: "1" },
-  { code: "resolution.instrument_exact_identifier_and_type", version: "2" },
-  { code: "resolution.instrument_unknown_attributes", version: "2" },
-  { code: "resolution.position_same_registrant_and_instrument", version: "2" },
-  { code: "resolution.position_unresolved_without_instrument", version: "2" },
+  { code: "resolution.instrument_exact_identifier_and_type", version: "3" },
+  { code: "resolution.instrument_unknown_attributes", version: "3" },
+  { code: "resolution.position_same_registrant_and_instrument", version: "3" },
+  { code: "resolution.position_unresolved_without_instrument", version: "3" },
 ];
 
 function opt(args, name) {

@@ -17,7 +17,9 @@ export const RULES = [
     spec: "docs/SOURCE_SCHEMAS.md 6, 6.1", description: "Extracts BDC Report CSV links, link-text years, and Updated labels" },
   { code: "parser.sec_bdc_report_csv", kind: "PARSER", version: "1", files: ["pipeline/parse/csv.mjs", "pipeline/parse/bdc-report-csv.mjs"],
     spec: "docs/SOURCE_SCHEMAS.md 6.1", description: "Parses BDC Report CSVs in the verified 2020-2026 layout only" },
-  { code: "parser.sec_sub_tsv", kind: "PARSER", version: "1", files: ["pipeline/parse/sub.mjs", "pipeline/parse/zip.mjs"],
+  // v2: shared zip.mjs now fail-closes on unzip spawn errors and adds NUM streaming.
+  // SUB still lands via readMember. Hosted v1 SHA matches the pre-stream git definition.
+  { code: "parser.sec_sub_tsv", kind: "PARSER", version: "2", files: ["pipeline/parse/sub.mjs", "pipeline/parse/zip.mjs"],
     spec: "docs/SOURCE_SCHEMAS.md 3.3, 4.1, 4.8", description: "Lands every ZIP member checksum and the SUB table exactly as received" },
   { code: "parser.sec_submissions_json", kind: "PARSER", version: "1", files: ["pipeline/parse/submissions.mjs"],
     spec: "docs/SOURCE_SCHEMAS.md 7, 7.1", description: "Checks submissions main-file and page structure; bodies are flattened by the database" },
@@ -30,15 +32,21 @@ export const RULES = [
     spec: "docs/SOURCE_SCHEMAS.md 3.6, 7.1", description: "FILING_METADATA coverage per release and registrant; FILING_HISTORY coverage per registrant" },
   { code: "validation.registry_cross_source", kind: "VALIDATION", version: "1", files: ["pipeline/load/validate.mjs"],
     spec: "docs/DATA_MODEL.md", description: "Compares form, filing date, and registrant link between SUB and submissions; never picks a winner" },
-  { code: "pipeline.registry_load", kind: "EXTRACTION", version: "4", files: ["pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
+  // v5: db.mjs gained Hosted fail-closed targeting and streaming sessions. Skip
+  // policy is unchanged. Hosted v4 SHA is not reproducible from git.
+  { code: "pipeline.registry_load", kind: "EXTRACTION", version: "5", files: ["pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
     spec: "docs/adr/0011-registry-ingestion.md", description: "Offline loader: processes fetch-log entries in order; LOADED on any prior version of this rule_code, or any outcome on the current version, skips the artifact" },
-  { code: "parser.sec_soi_tsv", kind: "PARSER", version: "1", files: ["pipeline/parse/soi.mjs", "pipeline/parse/zip.mjs"],
+  // v2: shared zip.mjs now fail-closes on unzip spawn errors and adds NUM streaming.
+  // SOI still lands via readMember. Hosted v1 SHA matches the pre-stream git definition.
+  { code: "parser.sec_soi_tsv", kind: "PARSER", version: "2", files: ["pipeline/parse/soi.mjs", "pipeline/parse/zip.mjs"],
     spec: "docs/SOURCE_SCHEMAS.md 3.3, 4.8, 5.1", description: "Lands soi.tsv exactly as received; preset header prefix is verified, extra dynamic columns are kept" },
   { code: "parser.sec_schedule_disclosure_block", kind: "PARSER", version: "2",
     files: ["pipeline/parse/schedule-disclosure-block.mjs", "pipeline/parse/filing-cell-writer.mjs", "pipeline/load/filing-cell.mjs"],
     spec: "docs/DATA_MODEL.md",
     description: "Schedule of Investments disclosure blocks, version 2. A section aggregate row ends the previous company block. Filing-cell names use this rule version." },
-  { code: "obs.spread.bound_ixbrl_fact", kind: "EXTRACTION", version: "1",
+  // v2: registers the committed definition beside Hosted v1, whose
+  // definition_sha256 is not reproducible from git. Matcher files are unchanged.
+  { code: "obs.spread.bound_ixbrl_fact", kind: "EXTRACTION", version: "2",
     files: ["pipeline/normalize/maturity-context-bind.mjs", "pipeline/load/bound-spread.mjs"],
     spec: "docs/DATA_MODEL.md",
     description: "Stores the unscaled number of the single InvestmentBasisSpreadVariableRate fact on an already bound maturity context. Does not read benchmark text and does not replace an existing SPREAD head." },
@@ -62,7 +70,9 @@ export const RULES = [
     spec: "docs/SOURCE_SCHEMAS.md 3.2, 3.3, 5.2", description: "SOI_HOLDINGS coverage per release and per registrant, independent of FILING_METADATA; registry ZIP readiness treats LOADED on any version of pipeline.registry_load as loaded" },
   { code: "validation.soi_adsh_cik", kind: "VALIDATION", version: "3", files: ["pipeline/load/units/dataset-soi.mjs"],
     spec: "docs/SOURCE_SCHEMAS.md 5.3, 9", description: "Compares the SOI cik cell to explicit filing-registrant links; never uses the accession prefix; never picks a winner" },
-  { code: "pipeline.soi_load", kind: "EXTRACTION", version: "4", files: ["pipeline/load/soi-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
+  // v5: db.mjs gained Hosted fail-closed targeting and streaming sessions. Skip
+  // policy is unchanged. Hosted v4 SHA is not reproducible from git.
+  { code: "pipeline.soi_load", kind: "EXTRACTION", version: "5", files: ["pipeline/load/soi-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
     spec: "docs/adr/0012-soi-ingestion.md", description: "Offline SOI loader: processes ZIP artifacts already loaded by registry:load; LOADED on any prior version of this rule_code, or any outcome on the current version, skips the artifact" },
   { code: "parser.sec_num_tsv", kind: "PARSER", version: "2",
     files: ["pipeline/parse/num.mjs", "pipeline/parse/zip.mjs", "pipeline/lib/num-schema.mjs"],
@@ -125,19 +135,21 @@ export const RULES = [
     ],
     spec: "docs/METHODOLOGY.md 7.6; docs/adr/0006-identity-layers-and-resolution-states.md",
     description: "MATCHED only when the primary-filing company cell or SOI ISSUER_NAME equals a legal-entity alias exactly after norm.borrower_name v1. Identifier Axis text is never a legal-entity name; no split, near-name, fuzzy, or LLM. Missing, conflicting, or ambiguous company names stay UNRESOLVED. v2: stored-HTML company-cell ingest may bind primary-filing company-cell evidence; a later company-cell may supersede NO_COMPANY_NAME_EVIDENCE only when an existing VERIFIED alias matches exactly. Prior v1 rows remain; aliases are matched by rule_code" },
-  { code: "resolution.instrument_exact_identifier_and_type", kind: "RESOLUTION", version: "2",
+  // v3: registers the committed definition beside Hosted v2, whose
+  // definition_sha256 is not reproducible from git. Matcher files are unchanged.
+  { code: "resolution.instrument_exact_identifier_and_type", kind: "RESOLUTION", version: "3",
     files: ["pipeline/normalize/instrument-identity.mjs", "pipeline/load/p7-min.mjs"],
     spec: "docs/METHODOLOGY.md 7.5; docs/adr/0006-identity-layers-and-resolution-states.md",
     description: "MATCHED instrument only when identifier text is exact and Investment Type Axis is a non-empty REPORTED member; SYSTEM_RULE; no fuzzy or LLM" },
-  { code: "resolution.instrument_unknown_attributes", kind: "RESOLUTION", version: "2",
+  { code: "resolution.instrument_unknown_attributes", kind: "RESOLUTION", version: "3",
     files: ["pipeline/normalize/instrument-identity.mjs", "pipeline/load/p7-min.mjs"],
     spec: "docs/METHODOLOGY.md 7.5; docs/adr/0006-identity-layers-and-resolution-states.md",
     description: "Missing or empty Investment Type Axis member leaves instrument identity UNRESOLVED; never MATCHED from legal entity alone" },
-  { code: "resolution.position_same_registrant_and_instrument", kind: "RESOLUTION", version: "2",
+  { code: "resolution.position_same_registrant_and_instrument", kind: "RESOLUTION", version: "3",
     files: ["pipeline/normalize/instrument-identity.mjs", "pipeline/load/p7-min.mjs"],
     spec: "docs/METHODOLOGY.md 7.5, 7.7; docs/adr/0006-identity-layers-and-resolution-states.md",
     description: "MATCHED continuity only for the same LINKED filing registrant, exact identifier, and type text; the type is the norm.instrument_type_footnote_ref v1 text when VERIFIED, else the raw text. Instrument identity is unchanged; different BDCs stay separate series" },
-  { code: "resolution.position_unresolved_without_instrument", kind: "RESOLUTION", version: "2",
+  { code: "resolution.position_unresolved_without_instrument", kind: "RESOLUTION", version: "3",
     files: ["pipeline/normalize/instrument-identity.mjs", "pipeline/load/p7-min.mjs"],
     spec: "docs/METHODOLOGY.md 7.5, 7.7; docs/adr/0006-identity-layers-and-resolution-states.md",
     description: "Continuity stays UNRESOLVED when instrument identity or the filing registrant is not uniquely established, or when existing continuity names more than one series for the key; missing dates are not observed, never zero" },
@@ -150,7 +162,9 @@ export const RULES = [
     files: ["pipeline/golden-gate.mjs", "pipeline/load/golden-gate.mjs", "pipeline/normalize/golden-observation-count.mjs"],
     spec: "docs/METHODOLOGY.md 8; docs/DATA_MODEL.md 11",
     description: "Phase 8 Golden Borrower Gate: evaluates the thin-slice chain and derived.golden_observation_count v1; does not MATCH instruments or derive COST/FV" },
-  { code: "obs.soi_fact_group", kind: "GROUPING", version: "1",
+  // v2: registers the committed definition beside Hosted v1, whose
+  // definition_sha256 is not reproducible from git. Grouping files are unchanged.
+  { code: "obs.soi_fact_group", kind: "GROUPING", version: "2",
     files: ["pipeline/normalize/soi-observation-group.mjs", "pipeline/group-soi-facts.mjs"],
     spec: "docs/DATA_MODEL.md",
     description: "Groups one balance fact with one spread fact, optionally plus one PIK-only fact, when registrant, filing, date, identifier, type, and populated axis members agree. Blank is not a wildcard. Does not merge rows or resolve instruments. Group state stays UNRESOLVED." },

@@ -8,7 +8,7 @@ import {
   P7_BALANCE_RULES,
 } from "../p7-balance-candidates.mjs";
 
-test("balance-candidate P7 links footnote v1 and instrument/continuity v2 from the catalog", () => {
+test("balance-candidate P7 links footnote v1 and instrument/continuity v3 from the catalog", () => {
   assert.deepEqual(
     P7_BALANCE_RULES.map((rule) => rule.code).sort(),
     [
@@ -24,7 +24,7 @@ test("balance-candidate P7 links footnote v1 and instrument/continuity v2 from t
     "1",
   );
   for (const rule of P7_BALANCE_RULES) {
-    if (rule.code.startsWith("resolution.")) assert.equal(rule.version, "2");
+    if (rule.code.startsWith("resolution.")) assert.equal(rule.version, "3");
     assert.ok(
       RULES.some((item) => item.code === rule.code && item.version === rule.version),
       `${rule.code} v${rule.version} is in the RULES catalog`,

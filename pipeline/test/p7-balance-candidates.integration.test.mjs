@@ -124,7 +124,7 @@ test("CLI balance P7 path refuses a disposable database name", withDb(async () =
   );
 }));
 
-test("balance-candidate P7 write links catalog v2/v1 rules, inserts once, and reruns idempotently", withDb(async (_t, dataDir) => {
+test("balance-candidate P7 write links catalog v3/v1 rules, inserts once, and reruns idempotently", withDb(async (_t, dataDir) => {
   // Same-filing SPREAD companion on Q3 so both typed FAKE.ident periods are genuine candidates.
   writeSyntheticTree(dataDir, p7Sources({
     extraSoi: p7UntypedSoiRows(FAKE.ident2, { cik1Q3: 1 }),
@@ -185,7 +185,7 @@ ORDER BY rv.rule_code`);
     linked.find(([code]) => code === "norm.instrument_type_footnote_ref")?.[1],
     "1",
   );
-  assert.ok(linked.every(([code, version]) => !code.startsWith("resolution.") || version === "2"));
+  assert.ok(linked.every(([code, version]) => !code.startsWith("resolution.") || version === "3"));
   const ruleIdByCode = Object.fromEntries(linked.map(([code, , id]) => [code, Number(id)]));
 
   assert.equal(first.instrument_matched_inserted, 2);
@@ -224,7 +224,7 @@ WHERE d.run_id = ${runId}
   AND d.state = 'MATCHED'
   AND d.rule_version_id = ${ruleIdByCode["resolution.instrument_exact_identifier_and_type"]}
   AND rv.rule_code = 'resolution.instrument_exact_identifier_and_type'
-  AND rv.version = '2'
+  AND rv.version = '3'
   AND d.evidence_id = p.evidence_id`), "2");
   assert.equal(scalar(`
 SELECT count(*)::text
@@ -236,7 +236,7 @@ WHERE d.run_id = ${runId}
   AND d.state = 'MATCHED'
   AND d.rule_version_id = ${ruleIdByCode["resolution.position_same_registrant_and_instrument"]}
   AND rv.rule_code = 'resolution.position_same_registrant_and_instrument'
-  AND rv.version = '2'
+  AND rv.version = '3'
   AND d.evidence_id = p.evidence_id`), "2");
 
   const againRun = Number(queryRows(dbName, `INSERT INTO ops.run (run_kind, code_version, parameters, started_at)

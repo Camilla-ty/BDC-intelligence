@@ -51,7 +51,7 @@ test("spreadFactFromBind returns null without a unique scaled spread fact", () =
   }), null);
 });
 
-test("obs.spread.bound_ixbrl_fact is catalogued at version 1", () => {
+test("obs.spread.bound_ixbrl_fact is catalogued at version 2", () => {
   const rule = RULES.find((item) => item.code === BOUND_SPREAD_CODE && item.version === BOUND_SPREAD_VERSION);
   assert.ok(rule);
   assert.deepEqual(rule.files, [

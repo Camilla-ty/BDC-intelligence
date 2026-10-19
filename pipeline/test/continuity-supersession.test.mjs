@@ -281,7 +281,7 @@ test("the rule is catalogued and the P7 rule versions are unchanged", () => {
   assert.match(rule.spec, /METHODOLOGY\.md 7\.8/);
   for (const r of SUPERSESSION_RULES) assert.ok(RULES.some((x) => x.code === r.code && x.version === r.version));
   assert.equal(RULES.find((r) => r.code === "norm.instrument_type_footnote_ref").version, "1");
-  assert.equal(RULES.find((r) => r.code === "resolution.position_same_registrant_and_instrument").version, "2");
+  assert.equal(RULES.find((r) => r.code === "resolution.position_same_registrant_and_instrument").version, "3");
   for (const r of RULES.filter((x) => x.code.startsWith("resolution.instrument_") || x.code.startsWith("resolution.position_same")
     || x.code.startsWith("resolution.position_unresolved") || x.code === "norm.instrument_type_footnote_ref")) {
     assert.equal(r.files.some((f) => f.includes("continuity-supersession") || f.includes("supersede-approved")), false);

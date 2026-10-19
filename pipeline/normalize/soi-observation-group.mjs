@@ -9,7 +9,7 @@
 
 export const SOI_FACT_GROUP_RULE = {
   code: "obs.soi_fact_group",
-  version: "1",
+  version: "2",
 };
 
 export const AXIS_LABELS = {
