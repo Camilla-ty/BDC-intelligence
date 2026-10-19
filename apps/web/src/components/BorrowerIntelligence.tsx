@@ -88,6 +88,14 @@ import {
   VALUATION_NOTE,
   type BorrowerDetail,
 } from "@/lib/borrowers";
+import {
+  AMBIGUOUS_IDENTIFIER_LABEL,
+  AMBIGUOUS_IDENTIFIER_NOTE,
+  IDENTIFIER_SCOPE_NOTE,
+  NO_EXTERNAL_IDENTIFIERS,
+  legalEntityIdentifierDisplays,
+  type LegalEntityIdentifierRow,
+} from "@/lib/legal-entity-identifiers";
 
 function ObservedValue({ value, currency }: { value: string; currency: string | null }) {
   return (
@@ -389,8 +397,70 @@ function AmountEvidenceReview({ comparison }: { comparison: PositionComparison }
   );
 }
 
+function ExternalIdentifiers({
+  rows,
+  error,
+}: {
+  rows: LegalEntityIdentifierRow[];
+  error: string | null;
+}) {
+  const displays = legalEntityIdentifierDisplays(rows);
+  return (
+    <div className="mt-4">
+      <h3 className="text-sm font-semibold text-navy">External identifiers</h3>
+      <p className="mt-1 text-sm text-muted">{IDENTIFIER_SCOPE_NOTE}</p>
+      {error ? <p className="mt-3 text-sm">{error}</p> : null}
+      {!error && displays.length === 0 ? <p className="mt-3 text-sm">{NO_EXTERNAL_IDENTIFIERS}</p> : null}
+      {!error && displays.length > 0 ? (
+        <ul className="mt-3 space-y-3 text-sm">
+          {displays.map((item) => (
+            <li key={`${item.scheme}:${item.relationshipRole}:${item.rawValue}`} className="border-t border-line pt-3">
+              <p className="font-semibold text-navy">
+                {item.scheme}
+                {item.ambiguous ? <span className="ml-2 text-xs font-semibold uppercase tracking-wider">{AMBIGUOUS_IDENTIFIER_LABEL}</span> : null}
+              </p>
+              {item.ambiguous ? <p className="mt-1 text-muted">{AMBIGUOUS_IDENTIFIER_NOTE}</p> : null}
+              <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs uppercase tracking-wider text-muted">Value</dt>
+                  <dd className="break-words">{item.rawValue}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wider text-muted">Relationship</dt>
+                  <dd><StateText text={item.relationshipRole} /></dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wider text-muted">Verification</dt>
+                  <dd><StateText text={item.verificationState} /></dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wider text-muted">Evidence</dt>
+                  <dd className="break-words">
+                    {item.citationUrl ? (
+                      <>
+                        <a href={item.citationUrl} className="text-accent underline">{item.citationTitle}</a>
+                        <span className="mt-1 block text-muted">{item.citationExcerpt}</span>
+                      </>
+                    ) : item.evidenceId ? (
+                      <span>Evidence id {item.evidenceId}</span>
+                    ) : (
+                      <StateText text="Unknown" />
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function BorrowerIntelligence({
   borrower,
+  identifiers = [],
+  identifierError = null,
   positions = [],
   positionError = null,
   researchError = null,
@@ -405,6 +475,8 @@ export function BorrowerIntelligence({
   refinancingError = null,
 }: {
   borrower: BorrowerDetail;
+  identifiers?: LegalEntityIdentifierRow[];
+  identifierError?: string | null;
   positions?: HistoricalPosition[];
   positionError?: string | null;
   researchError?: string | null;
@@ -460,6 +532,7 @@ export function BorrowerIntelligence({
             <dd><StateText text={borrower.instrumentType} /></dd>
           </div>
         </dl>
+        <ExternalIdentifiers rows={identifiers} error={identifierError} />
         <p className="mt-3 text-sm">{ENTITY_NOTE}</p>
         <p className="mt-2 text-sm">{VALUATION_NOTE}</p>
       </section>

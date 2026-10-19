@@ -12,7 +12,7 @@ import { borrowerDetail } from "@/lib/borrowers";
 import { UNOBSERVED_BORROWER } from "@/lib/states";
 import { requireAuthenticatedUser } from "@/server/auth/access";
 import { loadCanonicalLegalEntityId } from "@/server/consolidations";
-import { loadBorrowerComparisonsAndRefinancing, loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservationsForEntity, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadComparisonFieldTrace, loadPositionResearchFields } from "@/server/load-borrowers";
+import { loadBorrowerComparisonsAndRefinancing, loadBorrowerMaturityObservations, loadBorrowerMaturitySummary, loadBorrowerMaturityYears, loadBorrowerObservationsForEntity, loadBorrowerPositionObservations, loadBorrowerPositionValuation, loadComparisonFieldTrace, loadLegalEntityIdentifiers, loadPositionResearchFields } from "@/server/load-borrowers";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +34,8 @@ export default async function BorrowerPage({
   if (error) return <p className="text-sm">{error}</p>;
   const borrower = borrowerDetail(rows, scopedId);
   if (!borrower) return <MissingRecord message={UNOBSERVED_BORROWER} href="/borrowers" label="Borrowers" />;
-  const [positions, comparisonBundle, valuation, maturityRows, maturitySummary, maturityYearRows] = await Promise.all([
+  const [identifiers, positions, comparisonBundle, valuation, maturityRows, maturitySummary, maturityYearRows] = await Promise.all([
+    loadLegalEntityIdentifiers(scopedId),
     loadBorrowerPositionObservations(scopedId),
     loadBorrowerComparisonsAndRefinancing(scopedId),
     loadBorrowerPositionValuation(scopedId),
@@ -64,6 +65,8 @@ export default async function BorrowerPage({
   return (
     <BorrowerIntelligence
       borrower={borrower}
+      identifiers={identifiers.error ? [] : identifiers.rows}
+      identifierError={identifiers.error}
       positions={positions.error ? [] : historicalPositions(positions.rows, rows, scopedId, research.error ? [] : research.rows)}
       positionError={positions.error}
       researchError={positions.error ? null : research.error}

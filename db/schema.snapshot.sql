@@ -580,6 +580,362 @@ $$;
 
 COMMENT ON FUNCTION evidence.source_field(p_locator ref.locator_type, p_column_label text, p_json_path text) IS 'Key into ref.registry_field_mapping.source_field for an evidence location.';
 
+CREATE FUNCTION identity.assert_identifier_pipeline_writer() RETURNS void
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog'
+    AS $$
+BEGIN
+  IF session_user IS DISTINCT FROM 'bdc_pipeline_writer'
+     AND NOT pg_has_role(session_user, 'bdc_pipeline_writer', 'MEMBER') THEN
+    RAISE EXCEPTION USING ERRCODE = '42501',
+      MESSAGE = 'unverified legal-entity identifier writes require bdc_pipeline_writer';
+  END IF;
+END
+$$;
+
+CREATE FUNCTION identity.assert_identifier_resolution_writer() RETURNS void
+    LANGUAGE plpgsql
+    SET search_path TO 'pg_catalog'
+    AS $$
+BEGIN
+  IF session_user IS DISTINCT FROM 'resolution_writer'
+     AND NOT pg_has_role(session_user, 'resolution_writer', 'MEMBER') THEN
+    RAISE EXCEPTION USING ERRCODE = '42501',
+      MESSAGE = 'verified legal-entity identifier writes require resolution_writer';
+  END IF;
+END
+$$;
+
+CREATE FUNCTION identity.begin_legal_entity_identifier_run(p_parameters jsonb) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'ops', 'identity'
+    AS $$
+DECLARE
+  new_run bigint;
+BEGIN
+  PERFORM identity.assert_identifier_resolution_writer();
+  INSERT INTO ops.run (run_kind, code_version, parameters, started_at)
+  VALUES (
+    'LEGAL_ENTITY_IDENTIFIER',
+    'identity.legal_entity_identifier.human_review.v1',
+    coalesce(p_parameters, '{}'::jsonb),
+    now()
+  )
+  RETURNING id INTO new_run;
+  INSERT INTO ops.run_outcome (run_id, status, finished_at, counts)
+  VALUES (new_run, 'SUCCEEDED', now(), jsonb_build_object('assertions', 1));
+  RETURN new_run;
+END
+$$;
+
+CREATE FUNCTION identity.human_review_identifier_rule_version_id() RETURNS bigint
+    LANGUAGE sql STABLE
+    SET search_path TO 'pg_catalog', 'ops'
+    AS $$
+  SELECT id
+  FROM ops.rule_version
+  WHERE rule_code = 'identity.legal_entity_identifier.human_review'
+  ORDER BY id DESC
+  LIMIT 1
+$$;
+
+CREATE FUNCTION identity.identifier_citation_ok(p_evidence_id bigint, p_url text, p_title text, p_excerpt text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'pg_catalog'
+    AS $_$
+  SELECT
+    (p_url IS NULL) = (p_title IS NULL)
+    AND (p_url IS NULL) = (p_excerpt IS NULL)
+    AND (
+      p_evidence_id IS NOT NULL
+      OR (
+        p_url IS NOT NULL
+        AND p_url ~ '^https://[^[:space:]]+$'
+        AND p_title IS NOT NULL
+        AND btrim(p_title) <> ''
+        AND p_excerpt IS NOT NULL
+        AND btrim(p_excerpt) <> ''
+      )
+    )
+$_$;
+
+CREATE FUNCTION identity.pipeline_unverified_identifier_rule_version_id() RETURNS bigint
+    LANGUAGE sql STABLE
+    SET search_path TO 'pg_catalog', 'ops'
+    AS $$
+  SELECT id
+  FROM ops.rule_version
+  WHERE rule_code = 'identity.legal_entity_identifier.pipeline_unverified'
+  ORDER BY id DESC
+  LIMIT 1
+$$;
+
+CREATE FUNCTION identity.record_unverified_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_evidence_id bigint, p_run_id bigint, p_expected_current_id bigint, p_supersede_reason text) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'identity', 'ops', 'evidence', 'ref'
+    AS $$
+DECLARE
+  cur_id bigint;
+  rule_id bigint;
+  new_id bigint;
+  lock_key text;
+BEGIN
+  PERFORM identity.assert_identifier_pipeline_writer();
+  IF p_legal_entity_id IS NULL OR p_scheme IS NULL OR p_relationship_role IS NULL OR p_raw_value IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '22004',
+      MESSAGE = 'unverified identifier requires legal entity, scheme, role, and raw value';
+  END IF;
+  IF p_relationship_role NOT IN ('OWN', 'PARENT', 'AFFILIATE', 'UNKNOWN') THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'identifier relationship_role must be OWN, PARENT, AFFILIATE, or UNKNOWN';
+  END IF;
+  IF coalesce(btrim(p_raw_value), '') = '' THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'identifier raw_value must contain a non-space character';
+  END IF;
+  IF p_evidence_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'pipeline identifier assertions require evidence_id';
+  END IF;
+  IF p_run_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'pipeline identifier assertions require run_id';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM identity.legal_entity WHERE id = p_legal_entity_id) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'legal entity not found';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM ref.legal_entity_identifier_scheme WHERE code = p_scheme) THEN
+    RAISE EXCEPTION USING ERRCODE = '23503', MESSAGE = 'unknown legal-entity identifier scheme';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM evidence.evidence WHERE id = p_evidence_id) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'evidence not found';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM ops.run WHERE id = p_run_id) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'pipeline run not found';
+  END IF;
+
+  lock_key := p_legal_entity_id::text || '|' || p_scheme || '|' || p_relationship_role || '|' || p_raw_value;
+  PERFORM pg_advisory_xact_lock(872018, hashtext(lock_key));
+
+  SELECT c.id INTO cur_id
+  FROM identity.current_legal_entity_identifier c
+  WHERE c.legal_entity_id = p_legal_entity_id
+    AND c.scheme = p_scheme
+    AND c.relationship_role = p_relationship_role
+    AND c.raw_value = p_raw_value;
+
+  IF cur_id IS DISTINCT FROM p_expected_current_id THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCS2',
+      MESSAGE = 'identifier write is stale: current head does not match expected id';
+  END IF;
+  IF cur_id IS NOT NULL AND coalesce(btrim(p_supersede_reason), '') = '' THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'superseding an identifier requires supersede_reason';
+  END IF;
+  IF cur_id IS NULL AND p_supersede_reason IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCS1',
+      MESSAGE = 'supersede_reason given without a current identifier tip';
+  END IF;
+
+  rule_id := identity.pipeline_unverified_identifier_rule_version_id();
+  IF rule_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'missing pipeline identifier rule_version';
+  END IF;
+
+  INSERT INTO identity.legal_entity_identifier (
+      legal_entity_id, scheme, relationship_role, raw_value, normalized_value,
+      verification_state, actor_kind, decided_by, decided_at, rule_version_id, run_id,
+      evidence_id, researcher_citation_url, researcher_citation_title, researcher_citation_excerpt,
+      supersedes_id, supersede_reason)
+  VALUES (
+      p_legal_entity_id, p_scheme, p_relationship_role, p_raw_value, NULL,
+      'UNVERIFIED', 'SYSTEM_RULE', 'pipeline:legal_entity_identifier', now(), rule_id, p_run_id,
+      p_evidence_id, NULL, NULL, NULL,
+      cur_id, CASE WHEN cur_id IS NULL THEN NULL ELSE p_supersede_reason END)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION identity.verify_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'identity', 'ops', 'evidence', 'ref'
+    AS $$
+DECLARE
+  cur_id bigint;
+  rule_id bigint;
+  run_id bigint;
+  new_id bigint;
+  lock_key text;
+BEGIN
+  PERFORM identity.assert_identifier_resolution_writer();
+  IF p_legal_entity_id IS NULL OR p_scheme IS NULL OR p_relationship_role IS NULL OR p_raw_value IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '22004',
+      MESSAGE = 'verified identifier requires legal entity, scheme, role, and raw value';
+  END IF;
+  IF p_relationship_role NOT IN ('OWN', 'PARENT', 'AFFILIATE', 'UNKNOWN') THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'identifier relationship_role must be OWN, PARENT, AFFILIATE, or UNKNOWN';
+  END IF;
+  IF coalesce(btrim(p_raw_value), '') = '' OR coalesce(btrim(p_decided_by), '') = '' THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'verified identifier requires raw_value and decided_by';
+  END IF;
+  IF NOT identity.identifier_citation_ok(
+       p_evidence_id, p_researcher_citation_url, p_researcher_citation_title, p_researcher_citation_excerpt) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'verified identifier requires evidence_id or a complete citation';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM identity.legal_entity WHERE id = p_legal_entity_id) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'legal entity not found';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM ref.legal_entity_identifier_scheme WHERE code = p_scheme) THEN
+    RAISE EXCEPTION USING ERRCODE = '23503', MESSAGE = 'unknown legal-entity identifier scheme';
+  END IF;
+  IF p_evidence_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM evidence.evidence WHERE id = p_evidence_id) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'evidence not found';
+  END IF;
+
+  lock_key := p_legal_entity_id::text || '|' || p_scheme || '|' || p_relationship_role || '|' || p_raw_value;
+  PERFORM pg_advisory_xact_lock(872018, hashtext(lock_key));
+
+  SELECT c.id INTO cur_id
+  FROM identity.current_legal_entity_identifier c
+  WHERE c.legal_entity_id = p_legal_entity_id
+    AND c.scheme = p_scheme
+    AND c.relationship_role = p_relationship_role
+    AND c.raw_value = p_raw_value;
+
+  IF cur_id IS DISTINCT FROM p_expected_current_id THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCS2',
+      MESSAGE = 'identifier verification is stale: current head does not match expected id';
+  END IF;
+
+  rule_id := identity.human_review_identifier_rule_version_id();
+  IF rule_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'missing human identifier rule_version';
+  END IF;
+  run_id := identity.begin_legal_entity_identifier_run(jsonb_build_object(
+    'action', 'verify',
+    'legal_entity_id', p_legal_entity_id,
+    'scheme', p_scheme,
+    'relationship_role', p_relationship_role
+  ));
+
+  INSERT INTO identity.legal_entity_identifier (
+      legal_entity_id, scheme, relationship_role, raw_value, normalized_value,
+      verification_state, actor_kind, decided_by, decided_at, rule_version_id, run_id,
+      evidence_id, researcher_citation_url, researcher_citation_title, researcher_citation_excerpt,
+      supersedes_id, supersede_reason)
+  VALUES (
+      p_legal_entity_id, p_scheme, p_relationship_role, p_raw_value, NULL,
+      'VERIFIED', 'HUMAN_REVIEW', p_decided_by, now(), rule_id, run_id,
+      p_evidence_id, p_researcher_citation_url, p_researcher_citation_title, p_researcher_citation_excerpt,
+      cur_id, CASE WHEN cur_id IS NULL THEN NULL ELSE 'verify legal entity identifier' END)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
+CREATE FUNCTION identity.withdraw_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_supersede_reason text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint, p_copy_evidence_from_tip boolean) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'identity', 'ops', 'evidence', 'ref'
+    AS $$
+DECLARE
+  cur identity.legal_entity_identifier%ROWTYPE;
+  use_evidence bigint;
+  use_url text;
+  use_title text;
+  use_excerpt text;
+  rule_id bigint;
+  run_id bigint;
+  new_id bigint;
+  lock_key text;
+BEGIN
+  PERFORM identity.assert_identifier_resolution_writer();
+  IF coalesce(btrim(p_decided_by), '') = '' OR coalesce(btrim(p_supersede_reason), '') = '' THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'identifier withdrawal requires decided_by and supersede_reason';
+  END IF;
+  IF p_relationship_role NOT IN ('OWN', 'PARENT', 'AFFILIATE', 'UNKNOWN') THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'identifier relationship_role must be OWN, PARENT, AFFILIATE, or UNKNOWN';
+  END IF;
+  IF p_expected_current_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'identifier withdrawal requires the current tip id';
+  END IF;
+
+  lock_key := p_legal_entity_id::text || '|' || p_scheme || '|' || p_relationship_role || '|' || p_raw_value;
+  PERFORM pg_advisory_xact_lock(872018, hashtext(lock_key));
+
+  SELECT * INTO cur
+  FROM identity.current_legal_entity_identifier c
+  WHERE c.legal_entity_id = p_legal_entity_id
+    AND c.scheme = p_scheme
+    AND c.relationship_role = p_relationship_role
+    AND c.raw_value = p_raw_value;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'no current identifier tip to withdraw';
+  END IF;
+  IF cur.id IS DISTINCT FROM p_expected_current_id THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCS2',
+      MESSAGE = 'identifier withdrawal is stale: current head does not match expected id';
+  END IF;
+
+  IF coalesce(p_copy_evidence_from_tip, false) THEN
+    IF p_evidence_id IS NOT NULL
+       OR p_researcher_citation_url IS NOT NULL
+       OR p_researcher_citation_title IS NOT NULL
+       OR p_researcher_citation_excerpt IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE = '23514',
+        MESSAGE = 'withdrawal copies tip evidence or accepts new evidence, not both';
+    END IF;
+    use_evidence := cur.evidence_id;
+    use_url := cur.researcher_citation_url;
+    use_title := cur.researcher_citation_title;
+    use_excerpt := cur.researcher_citation_excerpt;
+  ELSE
+    use_evidence := p_evidence_id;
+    use_url := p_researcher_citation_url;
+    use_title := p_researcher_citation_title;
+    use_excerpt := p_researcher_citation_excerpt;
+  END IF;
+  IF NOT identity.identifier_citation_ok(use_evidence, use_url, use_title, use_excerpt) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'identifier withdrawal requires evidence_id or a complete citation';
+  END IF;
+  IF use_evidence IS NOT NULL AND NOT EXISTS (SELECT 1 FROM evidence.evidence WHERE id = use_evidence) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'evidence not found';
+  END IF;
+
+  rule_id := identity.human_review_identifier_rule_version_id();
+  IF rule_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'missing human identifier rule_version';
+  END IF;
+  run_id := identity.begin_legal_entity_identifier_run(jsonb_build_object(
+    'action', 'withdraw',
+    'legal_entity_id', p_legal_entity_id,
+    'scheme', p_scheme,
+    'relationship_role', p_relationship_role,
+    'supersedes_id', cur.id
+  ));
+
+  INSERT INTO identity.legal_entity_identifier (
+      legal_entity_id, scheme, relationship_role, raw_value, normalized_value,
+      verification_state, actor_kind, decided_by, decided_at, rule_version_id, run_id,
+      evidence_id, researcher_citation_url, researcher_citation_title, researcher_citation_excerpt,
+      supersedes_id, supersede_reason)
+  VALUES (
+      p_legal_entity_id, p_scheme, p_relationship_role, cur.raw_value, NULL,
+      'UNVERIFIED', 'HUMAN_REVIEW', p_decided_by, now(), rule_id, run_id,
+      use_evidence, use_url, use_title, use_excerpt,
+      cur.id, p_supersede_reason)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$$;
+
 CREATE FUNCTION obs.cell_by_label(p_row_id bigint, p_label text) RETURNS text
     LANGUAGE sql STABLE
     AS $$
@@ -4354,8 +4710,8 @@ END
 $$;
 
 CREATE FUNCTION resolution.approved_consolidation_target(p_from_legal_entity_id uuid) RETURNS uuid
-    LANGUAGE sql STABLE
-    SET search_path TO 'pg_catalog', 'resolution'
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'resolution', 'pg_temp'
     AS $$
   SELECT CASE
     WHEN c.state = 'MATCHED' AND c.to_legal_entity_id IS NOT NULL THEN c.to_legal_entity_id
@@ -4408,8 +4764,8 @@ END
 $$;
 
 CREATE FUNCTION resolution.canonical_legal_entity(p_legal_entity_id uuid) RETURNS uuid
-    LANGUAGE plpgsql STABLE
-    SET search_path TO 'pg_catalog', 'resolution', 'identity'
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'resolution', 'identity', 'pg_temp'
     AS $$
 DECLARE
   cur uuid := p_legal_entity_id;
@@ -4524,8 +4880,8 @@ CREATE FUNCTION resolution.consolidation_rule_version_id() RETURNS bigint
 $$;
 
 CREATE FUNCTION resolution.legal_entities_with_canonical(p_canonical_id uuid) RETURNS TABLE(legal_entity_id uuid)
-    LANGUAGE sql STABLE
-    SET search_path TO 'pg_catalog', 'resolution', 'identity'
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'resolution', 'identity', 'pg_temp'
     AS $$
   SELECT le.id
   FROM identity.legal_entity le
@@ -5967,6 +6323,84 @@ ALTER TABLE evidence.supplementary_evidence ALTER COLUMN id ADD GENERATED ALWAYS
     CACHE 1
 );
 
+CREATE TABLE identity.legal_entity_identifier (
+    id bigint NOT NULL,
+    legal_entity_id uuid NOT NULL,
+    scheme text NOT NULL,
+    relationship_role text NOT NULL,
+    raw_value text NOT NULL,
+    normalized_value text,
+    verification_state text NOT NULL,
+    actor_kind ref.actor_kind NOT NULL,
+    decided_by text NOT NULL,
+    decided_at timestamp with time zone NOT NULL,
+    rule_version_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    evidence_id bigint,
+    researcher_citation_url text,
+    researcher_citation_title text,
+    researcher_citation_excerpt text,
+    supersedes_id bigint,
+    supersede_reason text,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT legal_entity_identifier_check CHECK (((verification_state <> 'VERIFIED'::text) OR (actor_kind = 'HUMAN_REVIEW'::ref.actor_kind))),
+    CONSTRAINT legal_entity_identifier_check1 CHECK ((((actor_kind = 'SYSTEM_RULE'::ref.actor_kind) AND (verification_state = 'UNVERIFIED'::text) AND (evidence_id IS NOT NULL)) OR (actor_kind = 'HUMAN_REVIEW'::ref.actor_kind))),
+    CONSTRAINT legal_entity_identifier_check2 CHECK (((evidence_id IS NOT NULL) OR ((researcher_citation_url IS NOT NULL) AND (researcher_citation_url ~ '^https://[^[:space:]]+$'::text) AND (researcher_citation_title IS NOT NULL) AND (btrim(researcher_citation_title) <> ''::text) AND (researcher_citation_excerpt IS NOT NULL) AND (btrim(researcher_citation_excerpt) <> ''::text)))),
+    CONSTRAINT legal_entity_identifier_check3 CHECK ((((researcher_citation_url IS NULL) = (researcher_citation_title IS NULL)) AND ((researcher_citation_url IS NULL) = (researcher_citation_excerpt IS NULL)))),
+    CONSTRAINT legal_entity_identifier_decided_by_check CHECK ((btrim(decided_by) <> ''::text)),
+    CONSTRAINT legal_entity_identifier_normalized_value_check CHECK ((normalized_value IS NULL)),
+    CONSTRAINT legal_entity_identifier_not_self_superseding CHECK ((supersedes_id IS DISTINCT FROM id)),
+    CONSTRAINT legal_entity_identifier_raw_value_check CHECK ((btrim(raw_value) <> ''::text)),
+    CONSTRAINT legal_entity_identifier_relationship_role_check CHECK ((relationship_role = ANY (ARRAY['OWN'::text, 'PARENT'::text, 'AFFILIATE'::text, 'UNKNOWN'::text]))),
+    CONSTRAINT legal_entity_identifier_verification_state_check CHECK ((verification_state = ANY (ARRAY['UNVERIFIED'::text, 'VERIFIED'::text])))
+);
+
+COMMENT ON TABLE identity.legal_entity_identifier IS 'Append-only external identifier assertions for a portfolio legal entity. Does not replace identity.legal_entity.id and does not store a filer CIK as a borrower key.';
+
+COMMENT ON COLUMN identity.legal_entity_identifier.relationship_role IS 'OWN, PARENT, AFFILIATE, or UNKNOWN. FILER is not a v1 role.';
+
+COMMENT ON COLUMN identity.legal_entity_identifier.raw_value IS 'Identifier text exactly as retrieved. v1 does not rewrite it.';
+
+COMMENT ON COLUMN identity.legal_entity_identifier.normalized_value IS 'Reserved. v1 writers and the table CHECK keep this NULL.';
+
+CREATE VIEW identity.current_legal_entity_identifier AS
+ SELECT id,
+    legal_entity_id,
+    scheme,
+    relationship_role,
+    raw_value,
+    normalized_value,
+    verification_state,
+    actor_kind,
+    decided_by,
+    decided_at,
+    rule_version_id,
+    run_id,
+    evidence_id,
+    researcher_citation_url,
+    researcher_citation_title,
+    researcher_citation_excerpt,
+    supersedes_id,
+    supersede_reason,
+    recorded_at
+   FROM identity.legal_entity_identifier i
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM identity.legal_entity_identifier s
+          WHERE (s.supersedes_id = i.id))));
+
+COMMENT ON VIEW identity.current_legal_entity_identifier IS 'Non-superseded identifier tips. One tip per (legal_entity_id, scheme, relationship_role, raw_value).';
+
+CREATE VIEW identity.ambiguous_verified_own_identifier AS
+ SELECT legal_entity_id,
+    scheme,
+    count(*) AS verified_own_tip_count
+   FROM identity.current_legal_entity_identifier
+  WHERE ((relationship_role = 'OWN'::text) AND (verification_state = 'VERIFIED'::text))
+  GROUP BY legal_entity_id, scheme
+ HAVING (count(*) > 1);
+
+COMMENT ON VIEW identity.ambiguous_verified_own_identifier IS 'Fail closed: more than one current VERIFIED OWN tip for the same legal entity and scheme, including different raw values. Consumers must not pick a winner or emit MATCHED.';
+
 CREATE TABLE identity.economic_group (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     display_label text NOT NULL,
@@ -6046,6 +6480,15 @@ CREATE TABLE identity.legal_entity_alias (
 
 ALTER TABLE identity.legal_entity_alias ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME identity.legal_entity_alias_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+ALTER TABLE identity.legal_entity_identifier ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME identity.legal_entity_identifier_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -7143,6 +7586,15 @@ CREATE TABLE ref.filing_attribute (
     description text NOT NULL,
     CONSTRAINT filing_attribute_code_check CHECK ((code ~ '^[A-Z][A-Z0-9_]*$'::text))
 );
+
+CREATE TABLE ref.legal_entity_identifier_scheme (
+    code text NOT NULL,
+    description text NOT NULL,
+    CONSTRAINT legal_entity_identifier_scheme_code_check CHECK ((code ~ '^[A-Z][A-Z0-9_]*$'::text)),
+    CONSTRAINT legal_entity_identifier_scheme_description_check CHECK ((btrim(description) <> ''::text))
+);
+
+COMMENT ON TABLE ref.legal_entity_identifier_scheme IS 'Controlled schemes for portfolio legal-entity external identifiers. Not a borrower key.';
 
 ALTER TABLE ref.registry_field_mapping ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME ref.registry_field_mapping_id_seq
@@ -9844,6 +10296,9 @@ ALTER TABLE ONLY identity.instrument
 ALTER TABLE ONLY identity.legal_entity_alias
     ADD CONSTRAINT legal_entity_alias_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY identity.legal_entity_identifier
+    ADD CONSTRAINT legal_entity_identifier_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY identity.legal_entity
     ADD CONSTRAINT legal_entity_pkey PRIMARY KEY (id);
 
@@ -10006,6 +10461,9 @@ ALTER TABLE ONLY ref.field_definition
 ALTER TABLE ONLY ref.filing_attribute
     ADD CONSTRAINT filing_attribute_pkey PRIMARY KEY (code);
 
+ALTER TABLE ONLY ref.legal_entity_identifier_scheme
+    ADD CONSTRAINT legal_entity_identifier_scheme_pkey PRIMARY KEY (code);
+
 ALTER TABLE ONLY ref.registrant_attribute
     ADD CONSTRAINT registrant_attribute_pkey PRIMARY KEY (code);
 
@@ -10152,6 +10610,10 @@ CREATE INDEX supplementary_evidence_subject_idx ON evidence.supplementary_eviden
 CREATE UNIQUE INDEX instrument_attribute_assertion_supersedes_once ON identity.instrument_attribute_assertion USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
 CREATE UNIQUE INDEX legal_entity_alias_supersedes_once ON identity.legal_entity_alias USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
+
+CREATE INDEX legal_entity_identifier_subject_idx ON identity.legal_entity_identifier USING btree (legal_entity_id, scheme, relationship_role, raw_value);
+
+CREATE UNIQUE INDEX legal_entity_identifier_supersedes_once ON identity.legal_entity_identifier USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
 CREATE UNIQUE INDEX borrower_name_observation_filing_cell_root_uidx ON obs.borrower_name_observation USING btree (position_observation_id, evidence_id) WHERE ((name_source = 'FILING_CELL'::text) AND (supersedes_id IS NULL));
 
@@ -10307,6 +10769,8 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON identity.legal_entity 
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON identity.legal_entity_alias FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON identity.legal_entity_identifier FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON identity."position" FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON identity.economic_group FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
@@ -10319,11 +10783,15 @@ CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON identity.legal_entity FOR
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON identity.legal_entity_alias FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON identity.legal_entity_identifier FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON identity."position" FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER check_supersession BEFORE INSERT ON identity.instrument_attribute_assertion FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('instrument_id,field_code', 'multi');
 
 CREATE TRIGGER check_supersession BEFORE INSERT ON identity.legal_entity_alias FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('legal_entity_id', 'multi');
+
+CREATE TRIGGER check_supersession BEFORE INSERT ON identity.legal_entity_identifier FOR EACH ROW EXECUTE FUNCTION ops.check_supersession('legal_entity_id,scheme,relationship_role,raw_value', 'single_chain');
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.borrower_name_observation FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -10513,6 +10981,8 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ref.field_definition F
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ref.filing_attribute FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ref.legal_entity_identifier_scheme FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ref.registrant_attribute FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ref.registry_field_mapping FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
@@ -10528,6 +10998,8 @@ CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ref.dataset_table FOR EAC
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ref.field_definition FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ref.filing_attribute FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ref.legal_entity_identifier_scheme FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ref.registrant_attribute FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -10817,6 +11289,24 @@ ALTER TABLE ONLY identity.legal_entity_alias
 
 ALTER TABLE ONLY identity.legal_entity_alias
     ADD CONSTRAINT legal_entity_alias_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES identity.legal_entity_alias(id);
+
+ALTER TABLE ONLY identity.legal_entity_identifier
+    ADD CONSTRAINT legal_entity_identifier_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
+
+ALTER TABLE ONLY identity.legal_entity_identifier
+    ADD CONSTRAINT legal_entity_identifier_legal_entity_id_fkey FOREIGN KEY (legal_entity_id) REFERENCES identity.legal_entity(id);
+
+ALTER TABLE ONLY identity.legal_entity_identifier
+    ADD CONSTRAINT legal_entity_identifier_rule_version_id_fkey FOREIGN KEY (rule_version_id) REFERENCES ops.rule_version(id);
+
+ALTER TABLE ONLY identity.legal_entity_identifier
+    ADD CONSTRAINT legal_entity_identifier_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY identity.legal_entity_identifier
+    ADD CONSTRAINT legal_entity_identifier_scheme_fkey FOREIGN KEY (scheme) REFERENCES ref.legal_entity_identifier_scheme(code);
+
+ALTER TABLE ONLY identity.legal_entity_identifier
+    ADD CONSTRAINT legal_entity_identifier_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES identity.legal_entity_identifier(id);
 
 ALTER TABLE ONLY identity.legal_entity
     ADD CONSTRAINT legal_entity_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
@@ -11539,6 +12029,8 @@ GRANT USAGE ON SCHEMA raw TO bdc_reader;
 
 GRANT USAGE ON SCHEMA ref TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA ref TO bdc_reader;
+GRANT USAGE ON SCHEMA ref TO resolution_writer;
+GRANT USAGE ON SCHEMA ref TO admin_reader;
 
 GRANT USAGE ON SCHEMA registry TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA registry TO bdc_reader;
@@ -11558,6 +12050,28 @@ GRANT USAGE ON SCHEMA validation TO bdc_pipeline_writer;
 GRANT USAGE ON SCHEMA validation TO bdc_reader;
 
 REVOKE ALL ON FUNCTION access.record_grant(p_user_id uuid, p_grant_kind access.grant_kind, p_action access.grant_action, p_source access.grant_source, p_reason text, p_actor_user_id uuid) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION identity.assert_identifier_pipeline_writer() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION identity.assert_identifier_resolution_writer() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION identity.begin_legal_entity_identifier_run(p_parameters jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION identity.begin_legal_entity_identifier_run(p_parameters jsonb) TO resolution_writer;
+
+REVOKE ALL ON FUNCTION identity.human_review_identifier_rule_version_id() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION identity.identifier_citation_ok(p_evidence_id bigint, p_url text, p_title text, p_excerpt text) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION identity.pipeline_unverified_identifier_rule_version_id() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION identity.record_unverified_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_evidence_id bigint, p_run_id bigint, p_expected_current_id bigint, p_supersede_reason text) FROM PUBLIC;
+GRANT ALL ON FUNCTION identity.record_unverified_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_evidence_id bigint, p_run_id bigint, p_expected_current_id bigint, p_supersede_reason text) TO bdc_pipeline_writer;
+
+REVOKE ALL ON FUNCTION identity.verify_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION identity.verify_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint) TO resolution_writer;
+
+REVOKE ALL ON FUNCTION identity.withdraw_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_supersede_reason text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint, p_copy_evidence_from_tip boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION identity.withdraw_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_supersede_reason text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint, p_copy_evidence_from_tip boolean) TO resolution_writer;
 
 REVOKE ALL ON FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) TO bdc_reader;
@@ -11650,6 +12164,7 @@ GRANT ALL ON FUNCTION registry.review_case_read(p_case_key text) TO bdc_reader;
 REVOKE ALL ON FUNCTION resolution.approve_legal_entity_consolidation(p_proposal_id bigint, p_decided_by text, p_rationale text) FROM PUBLIC;
 GRANT ALL ON FUNCTION resolution.approve_legal_entity_consolidation(p_proposal_id bigint, p_decided_by text, p_rationale text) TO resolution_writer;
 
+REVOKE ALL ON FUNCTION resolution.approved_consolidation_target(p_from_legal_entity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION resolution.approved_consolidation_target(p_from_legal_entity_id uuid) TO bdc_reader;
 GRANT ALL ON FUNCTION resolution.approved_consolidation_target(p_from_legal_entity_id uuid) TO resolution_writer;
 GRANT ALL ON FUNCTION resolution.approved_consolidation_target(p_from_legal_entity_id uuid) TO admin_reader;
@@ -11659,6 +12174,7 @@ GRANT ALL ON FUNCTION resolution.assert_consolidation_writer() TO resolution_wri
 REVOKE ALL ON FUNCTION resolution.begin_consolidation_run(p_parameters jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION resolution.begin_consolidation_run(p_parameters jsonb) TO resolution_writer;
 
+REVOKE ALL ON FUNCTION resolution.canonical_legal_entity(p_legal_entity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION resolution.canonical_legal_entity(p_legal_entity_id uuid) TO bdc_reader;
 GRANT ALL ON FUNCTION resolution.canonical_legal_entity(p_legal_entity_id uuid) TO resolution_writer;
 GRANT ALL ON FUNCTION resolution.canonical_legal_entity(p_legal_entity_id uuid) TO admin_reader;
@@ -11666,6 +12182,7 @@ GRANT ALL ON FUNCTION resolution.canonical_legal_entity(p_legal_entity_id uuid) 
 GRANT ALL ON FUNCTION resolution.consolidation_rule_version_id() TO resolution_writer;
 GRANT ALL ON FUNCTION resolution.consolidation_rule_version_id() TO bdc_reader;
 
+REVOKE ALL ON FUNCTION resolution.legal_entities_with_canonical(p_canonical_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION resolution.legal_entities_with_canonical(p_canonical_id uuid) TO bdc_reader;
 GRANT ALL ON FUNCTION resolution.legal_entities_with_canonical(p_canonical_id uuid) TO resolution_writer;
 GRANT ALL ON FUNCTION resolution.legal_entities_with_canonical(p_canonical_id uuid) TO admin_reader;
@@ -11796,6 +12313,20 @@ GRANT SELECT,INSERT ON TABLE evidence.html_column_heading TO bdc_pipeline_writer
 GRANT SELECT,INSERT ON TABLE evidence.supplementary_evidence TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE evidence.supplementary_evidence_id_seq TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE identity.legal_entity_identifier TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE identity.legal_entity_identifier TO resolution_writer;
+GRANT SELECT ON TABLE identity.legal_entity_identifier TO admin_reader;
+
+GRANT SELECT ON TABLE identity.current_legal_entity_identifier TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE identity.current_legal_entity_identifier TO resolution_writer;
+GRANT SELECT ON TABLE identity.current_legal_entity_identifier TO admin_reader;
+GRANT SELECT ON TABLE identity.current_legal_entity_identifier TO bdc_reader;
+
+GRANT SELECT ON TABLE identity.ambiguous_verified_own_identifier TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE identity.ambiguous_verified_own_identifier TO resolution_writer;
+GRANT SELECT ON TABLE identity.ambiguous_verified_own_identifier TO admin_reader;
+GRANT SELECT ON TABLE identity.ambiguous_verified_own_identifier TO bdc_reader;
 
 GRANT SELECT,INSERT ON TABLE identity.economic_group TO bdc_pipeline_writer;
 
@@ -11967,6 +12498,10 @@ GRANT SELECT ON TABLE ref.current_column_mapping TO bdc_reader;
 GRANT SELECT ON TABLE ref.dataset_table TO bdc_pipeline_writer;
 
 GRANT SELECT ON TABLE ref.filing_attribute TO bdc_pipeline_writer;
+
+GRANT SELECT ON TABLE ref.legal_entity_identifier_scheme TO bdc_pipeline_writer;
+GRANT SELECT ON TABLE ref.legal_entity_identifier_scheme TO resolution_writer;
+GRANT SELECT ON TABLE ref.legal_entity_identifier_scheme TO admin_reader;
 
 GRANT SELECT ON TABLE ref.source_type TO bdc_pipeline_writer;
 

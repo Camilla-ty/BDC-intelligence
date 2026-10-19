@@ -56,6 +56,12 @@ import {
 } from "@/lib/borrower-valuation";
 import { BorrowerIntelligence } from "@/components/BorrowerIntelligence";
 import {
+  AMBIGUOUS_IDENTIFIER_LABEL,
+  AMBIGUOUS_IDENTIFIER_NOTE,
+  NO_EXTERNAL_IDENTIFIERS,
+  type LegalEntityIdentifierRow,
+} from "@/lib/legal-entity-identifiers";
+import {
   ACQUISITION_LABEL,
   EMPTY_POSITIONS,
   TIMELINE_NOTE,
@@ -68,6 +74,7 @@ import { BorrowerList } from "@/components/BorrowerList";
 import { BorrowerSources } from "@/components/BorrowerSources";
 import { AppShell } from "@/components/AppShell";
 import {
+  CIK_NOTE,
   COMPARISON_FILTER_NOTE,
   COMPARISON_LIST_NOTE,
   COMPARISON_NONE,
@@ -1991,6 +1998,117 @@ describe("borrower detail listing scope", () => {
     // Directory keeps the full listing until that page is optimized separately.
     expect(listPage).toMatch(/loadBorrowerObservations\s*\(/);
     expect(listPage).not.toMatch(/loadBorrowerObservationsForEntity/);
+  });
+});
+
+function identifierRow(overrides: Partial<LegalEntityIdentifierRow> = {}): LegalEntityIdentifierRow {
+  return {
+    legal_entity_id: ID,
+    scheme: "LEI",
+    relationship_role: "OWN",
+    raw_value: "549300EXAMPLELEI00001",
+    verification_state: "VERIFIED",
+    evidence_id: null,
+    researcher_citation_url: "https://example.test/lei",
+    researcher_citation_title: "LEI citation",
+    researcher_citation_excerpt: "The legal entity identifier is 549300EXAMPLELEI00001.",
+    ambiguous_verified_own: false,
+    ...overrides,
+  };
+}
+
+describe("legal entity external identifiers", () => {
+  it("shows a neutral empty state and keeps the filing registrant CIK note", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} />);
+    const identity = screen.getByRole("heading", { name: "Identity" }).closest("section");
+    expect(identity).toHaveTextContent(NO_EXTERNAL_IDENTIFIERS);
+    expect(identity).not.toHaveTextContent("0 external");
+    expect(screen.getByText(CIK_NOTE)).toHaveTextContent("CIK identifies the filing registrant, not the borrower.");
+    expect(screen.getByText("0000000001")).toBeInTheDocument();
+  });
+
+  it("shows an identifier query failure instead of the empty identifier message", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(
+      <BorrowerIntelligence
+        borrower={detail!}
+        identifierError="External identifiers could not be read."
+      />,
+    );
+    const identity = screen.getByRole("heading", { name: "Identity" }).closest("section");
+    expect(identity).toHaveTextContent("External identifiers could not be read.");
+    expect(identity).not.toHaveTextContent(NO_EXTERNAL_IDENTIFIERS);
+  });
+
+  it("shows the stored scheme, raw value, role, verification, and citation", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(<BorrowerIntelligence borrower={detail!} identifiers={[identifierRow()]} />);
+    const identity = screen.getByRole("heading", { name: "Identity" }).closest("section");
+    expect(identity).toHaveTextContent("LEI");
+    expect(identity).toHaveTextContent("549300EXAMPLELEI00001");
+    expect(identity).toHaveTextContent("OWN");
+    expect(identity).toHaveTextContent("VERIFIED");
+    const link = identity?.querySelector("a");
+    expect(link).toHaveAttribute("href", "https://example.test/lei");
+    expect(link).toHaveTextContent("LEI citation");
+    expect(identity).toHaveTextContent("The legal entity identifier is 549300EXAMPLELEI00001.");
+    expect(identity).not.toHaveTextContent(AMBIGUOUS_IDENTIFIER_LABEL);
+    expect(screen.getByText(CIK_NOTE)).toBeInTheDocument();
+  });
+
+  it("shows an evidence id when no citation is stored", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(
+      <BorrowerIntelligence
+        borrower={detail!}
+        identifiers={[identifierRow({
+          researcher_citation_url: null,
+          researcher_citation_title: null,
+          researcher_citation_excerpt: null,
+          evidence_id: "501",
+        })]}
+      />,
+    );
+    const identity = screen.getByRole("heading", { name: "Identity" }).closest("section");
+    expect(identity).toHaveTextContent("Evidence id 501");
+    expect(identity?.querySelector("a")).toBeNull();
+  });
+
+  it("labels every current assertion for an ambiguous scheme and does not choose one", () => {
+    const detail = borrowerDetail([row()], ID);
+    render(
+      <BorrowerIntelligence
+        borrower={detail!}
+        identifiers={[
+          identifierRow({
+            scheme: "CIK",
+            raw_value: "0001111111",
+            ambiguous_verified_own: true,
+            researcher_citation_url: null,
+            researcher_citation_title: null,
+            researcher_citation_excerpt: null,
+            evidence_id: "701",
+          }),
+          identifierRow({
+            scheme: "CIK",
+            raw_value: "0002222222",
+            ambiguous_verified_own: true,
+            researcher_citation_url: null,
+            researcher_citation_title: null,
+            researcher_citation_excerpt: null,
+            evidence_id: "702",
+          }),
+        ]}
+      />,
+    );
+    const identity = screen.getByRole("heading", { name: "Identity" }).closest("section");
+    expect(identity).toHaveTextContent("0001111111");
+    expect(identity).toHaveTextContent("0002222222");
+    expect(identity).toHaveTextContent(AMBIGUOUS_IDENTIFIER_LABEL);
+    expect(identity).toHaveTextContent(AMBIGUOUS_IDENTIFIER_NOTE);
+    expect(screen.getAllByText(AMBIGUOUS_IDENTIFIER_LABEL)).toHaveLength(2);
+    expect(screen.getByText("0000000001")).toBeInTheDocument();
   });
 });
 

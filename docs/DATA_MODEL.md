@@ -27,7 +27,7 @@ ingestion), and [ADR 0012](adr/0012-soi-ingestion.md) (SOI ingestion). Source fa
 | Raw before normalized | `raw.tabular_row` keeps the exact line, its SHA-256, and cells that must equal the tab split of the line. Typed observations keep the raw text next to the normalized value. |
 | Append-only history (G-10) | Every table has triggers that reject UPDATE, DELETE, and TRUNCATE (SQLSTATE `BDCA1`). Application roles have INSERT and SELECT only. Corrections supersede. |
 | Provenance (G-12) | Every material row has NOT NULL `evidence_id`, `run_id`, and a rule version. Evidence points into a checksummed artifact. |
-| Registrant identity (G-09) | CIK exists only in `registry.registrant`. A filing's registrant comes only from `registry.filing_registrant_link` with source SUB, submissions JSON, or filing header. There is no accession-prefix column or option. |
+| Registrant identity (G-09) | CIK exists only in `registry.registrant`. A filing's registrant comes only from `registry.filing_registrant_link` with source SUB, submissions JSON, or filing header. There is no accession-prefix column or option. Portfolio CIK or LEI assertions, when stored, are append-only rows on `identity.legal_entity_identifier` (ADR 0018) and are not `registry.registrant.cik`. |
 | Unknown is valid (G-04) | `UNKNOWN` and `NOT_APPLICABLE` are value states. Unknown values cannot carry a normalized value. A normalized zero requires disclosed zero text. No value column has a default. |
 | Missing coverage is not zero (G-05) | Coverage is asserted per aspect (`FILING_METADATA`, `FILING_HISTORY`, `SOI_HOLDINGS`) in `ops.coverage_assertion`. A scope without an assertion has UNKNOWN coverage. Only `COVERED` counts as covered. Empty SOI periods are `EMPTY_PERIOD`, never zero holdings. |
 | Resolution states (G-13) | Decisions use exactly `MATCHED`, `PROBABLE`, `UNRESOLVED`, `REJECTED`. Only `UNRESOLVED` may have no target. |
@@ -44,7 +44,7 @@ ingestion), and [ADR 0012](adr/0012-soi-ingestion.md) (SOI ingestion). Source fa
 | `registry` | Registrants, registrant attribute and name-history observations, data-set releases and listings, BDC Report editions, filings, registrant links, filing attributes, filing documents, amendment decisions |
 | `evidence` | Evidence locators and supplementary (corroborating or contradicting) evidence |
 | `obs` | SOI row observations and classifications, NUM facts, position observations and sources, groups, field values, corroborations, borrower-name observations, cross-artifact equivalence |
-| `identity` | Legal entities and aliases, economic groups, instruments and attribute assertions, positions |
+| `identity` | Legal entities and aliases, economic groups, instruments and attribute assertions, positions, and append-only external identifier assertions (ADR 0018) |
 | `resolution` | Match candidates with per-attribute comparisons (no scores), the four decision tables, and append-only legal-entity consolidation decisions (ADR 0017) |
 | `validation` | Validation results and evidence-status assertions |
 | `derived` | Derived values, their inputs, and P9-min observation events |
@@ -76,6 +76,7 @@ erDiagram
   POSITION_OBSERVATION ||--o{ BORROWER_NAME_OBSERVATION : names
   BORROWER_NAME_OBSERVATION ||--o{ ENTITY_RESOLUTION_DECISION : resolved
   LEGAL_ENTITY ||--o{ ENTITY_RESOLUTION_DECISION : target
+  LEGAL_ENTITY ||--o{ LEGAL_ENTITY_IDENTIFIER : external_ids
   LEGAL_ENTITY ||--o{ GROUP_MEMBERSHIP_DECISION : member
   ECONOMIC_GROUP ||--o{ GROUP_MEMBERSHIP_DECISION : group
   POSITION_OBSERVATION ||--o{ INSTRUMENT_RESOLUTION_DECISION : resolved
@@ -177,8 +178,8 @@ column is stored; value state, evidence status, and computed authority cover it 
 | Role | Privileges |
 | --- | --- |
 | migration owner | Owns every object; applies migrations; writes reference mappings and rule activations |
-| `bdc_pipeline_writer` | SELECT and INSERT on history tables; SELECT on reference tables and views; no UPDATE, DELETE, or TRUNCATE anywhere |
-| `bdc_reader` | SELECT on views only |
+| `bdc_pipeline_writer` | SELECT and INSERT on history tables; SELECT on reference tables and views; no UPDATE, DELETE, or TRUNCATE anywhere. Direct INSERT is revoked on helper-only tables (`resolution.legal_entity_consolidation_decision`, `identity.legal_entity_identifier`). |
+| `bdc_reader` | SELECT on views only. No SELECT on `identity.legal_entity_identifier`. |
 
 No web role exists yet.
 
@@ -283,6 +284,41 @@ null target. Legal-entity rows are never deleted. See ADR 0017. Borrower detail
 loaders may expand scope with `resolution.legal_entities_with_canonical(uuid)`
 so a canonical page includes matched observations from consolidated source UUIDs
 without rewriting stored entity-resolution decisions.
+
+## 12c. External identifiers for portfolio legal entities
+
+`identity.legal_entity.id` remains the only canonical Borrower ID. Typed external
+identifiers are supporting assertions on append-only
+`identity.legal_entity_identifier` (ADR 0018). They are not stored on
+`identity.legal_entity_alias`. CUSIP and ISIN stay out of this table.
+
+`ref.legal_entity_identifier_scheme` is the controlled vocabulary. v1 seeds `CIK`
+and `LEI`. `relationship_role` is `OWN`, `PARENT`, `AFFILIATE`, or `UNKNOWN`.
+`FILER` is not a v1 role. A filer CIK on `registry.registrant` is not copied here
+as `OWN`.
+
+v1 stores `raw_value` exactly as retrieved and keeps `normalized_value` NULL.
+Supersession is `single_chain` on
+`(legal_entity_id, scheme, relationship_role, raw_value)`. Distinct raw strings
+remain distinct subjects. `identity.current_legal_entity_identifier` is the
+non-superseded tip view. `identity.ambiguous_verified_own_identifier` lists
+`(legal_entity_id, scheme)` groups with more than one current `VERIFIED` `OWN`
+tip; consumers must not pick a winner.
+
+Writes are helper-only. `bdc_pipeline_writer` and `resolution_writer` have SELECT
+but not INSERT on the table and no sequence `USAGE`. Pipeline UNVERIFIED rows go
+through `identity.record_unverified_legal_entity_identifier`. Human VERIFIED and
+withdrawal rows go through `identity.verify_legal_entity_identifier` and
+`identity.withdraw_legal_entity_identifier`, which mint their own `ops.run`.
+Identifier helpers do not write entity-resolution or consolidation decisions.
+Until a versioned identifier-matching rule is accepted, these rows are storage
+and reporting only.
+
+`bdc_reader` reads `identity.current_legal_entity_identifier` and
+`identity.ambiguous_verified_own_identifier`. It has no base-table SELECT.
+`resolution.canonical_legal_entity` and related canonical helpers run as
+`SECURITY DEFINER` so the reader can resolve canonical identity without SELECT
+on `identity.legal_entity`.
 
 ## 13. Confirmed position period comparison
 

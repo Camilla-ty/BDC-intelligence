@@ -10,6 +10,10 @@ import {
   type ComparisonAvailabilityRow,
   type ObservationRow,
 } from "@/lib/borrowers";
+import {
+  assertIdentifierFields,
+  type LegalEntityIdentifierRow,
+} from "@/lib/legal-entity-identifiers";
 import { executeSql } from "@/server/sql-text";
 
 // Reads registry.borrower_observation_listing as bdc_reader.
@@ -102,6 +106,68 @@ async function readListingRows(sql: string): Promise<ListingResult> {
       return { rows: [], error: "The borrower listing could not be read." };
     }
     rows.push(row);
+  }
+  return { rows, error: null };
+}
+
+const IDENTIFIER_ERROR = "External identifiers could not be read.";
+
+function legalEntityIdentifierSql(legalEntityId: string): string {
+  return `
+SET ROLE bdc_reader;
+SET statement_timeout = '30s';
+SELECT coalesce(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+  SELECT c.legal_entity_id::text,
+         c.scheme,
+         c.relationship_role,
+         c.raw_value,
+         c.verification_state,
+         c.evidence_id::text AS evidence_id,
+         c.researcher_citation_url,
+         c.researcher_citation_title,
+         c.researcher_citation_excerpt,
+         EXISTS (
+           SELECT 1
+           FROM identity.ambiguous_verified_own_identifier a
+           WHERE a.legal_entity_id = c.legal_entity_id
+             AND a.scheme = c.scheme
+         ) AS ambiguous_verified_own
+  FROM identity.current_legal_entity_identifier c
+  WHERE c.legal_entity_id = '${legalEntityId}'::uuid
+  ORDER BY c.scheme, c.relationship_role, c.raw_value
+) t;
+RESET ROLE;
+`;
+}
+
+export type LegalEntityIdentifierResult = {
+  rows: LegalEntityIdentifierRow[];
+  error: string | null;
+};
+
+/** Current identifier tips for one canonical legal entity. Does not read the base table. */
+export async function loadLegalEntityIdentifiers(
+  legalEntityId: string,
+): Promise<LegalEntityIdentifierResult> {
+  if (!ENTITY_ID.test(legalEntityId)) return { rows: [], error: null };
+  const executed = await executeSql(legalEntityIdentifierSql(legalEntityId));
+  if (!executed.ok) return { rows: [], error: IDENTIFIER_ERROR };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(executed.text === "" ? "[]" : executed.text);
+  } catch {
+    return { rows: [], error: IDENTIFIER_ERROR };
+  }
+  if (!Array.isArray(parsed)) return { rows: [], error: IDENTIFIER_ERROR };
+  const rows: LegalEntityIdentifierRow[] = [];
+  for (const item of parsed) {
+    if (item == null || typeof item !== "object") return { rows: [], error: IDENTIFIER_ERROR };
+    try {
+      rows.push(assertIdentifierFields(item));
+    } catch {
+      return { rows: [], error: IDENTIFIER_ERROR };
+    }
   }
   return { rows, error: null };
 }

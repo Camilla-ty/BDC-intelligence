@@ -29,6 +29,7 @@ authentication, and similar) are recorded in the phase in which they are decided
 | [0015](0015-supabase-auth-email-otp-and-microsoft-oauth.md) | Supabase Auth with email OTP and Microsoft OAuth | Accepted |
 | [0016](0016-num-currency-binding.md) | NUM ingestion and SOI currency binding | Accepted |
 | [0017](0017-legal-entity-consolidation.md) | Legal-entity consolidation for canonical Borrower ID | Accepted |
+| [0018](0018-legal-entity-external-identifiers.md) | External identifiers for portfolio legal entities | Accepted |
 
 ## Template
 

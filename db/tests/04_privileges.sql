@@ -42,9 +42,19 @@ SELECT pg_temp.check('writer has INSERT on every history table except ref, the l
     AND (n.nspname, c.relname) NOT IN (
       ('ops', 'schema_migration'),
       ('ops', 'rule_activation'),
-      ('resolution', 'legal_entity_consolidation_decision')
+      ('resolution', 'legal_entity_consolidation_decision'),
+      ('identity', 'legal_entity_identifier')
     )
     AND NOT has_table_privilege('bdc_pipeline_writer', c.oid, 'INSERT')));
+
+SELECT pg_temp.check('identifier assertions are helper-only for pipeline and resolution writer',
+  NOT has_table_privilege('bdc_pipeline_writer', 'identity.legal_entity_identifier', 'INSERT')
+  AND NOT has_table_privilege('resolution_writer', 'identity.legal_entity_identifier', 'INSERT')
+  AND has_table_privilege('bdc_pipeline_writer', 'identity.legal_entity_identifier', 'SELECT')
+  AND has_table_privilege('resolution_writer', 'identity.legal_entity_identifier', 'SELECT')
+  AND NOT has_table_privilege('bdc_reader', 'identity.legal_entity_identifier', 'SELECT')
+  AND NOT has_sequence_privilege('bdc_pipeline_writer', 'identity.legal_entity_identifier_id_seq', 'USAGE')
+  AND NOT has_sequence_privilege('resolution_writer', 'identity.legal_entity_identifier_id_seq', 'USAGE'));
 
 SELECT pg_temp.check('pipeline writer cannot INSERT consolidation decisions (helper-only)',
   NOT has_table_privilege('bdc_pipeline_writer', 'resolution.legal_entity_consolidation_decision', 'INSERT')
