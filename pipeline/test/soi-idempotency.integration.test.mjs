@@ -78,8 +78,8 @@ test("cross-version LOADED counts, and non-LOADED older rows do not", withDb(asy
   writeSyntheticTree(dataDir);
   await runLoad({ dataDir, database: dbName, log: () => {} });
   const runId = Number(scalar("SELECT min(id) FROM ops.run"));
-  const currentSoi = ruleId("pipeline.soi_load", "5");
-  const currentRegistry = ruleId("pipeline.registry_load", "5");
+  const currentSoi = ruleId("pipeline.soi_load", "6");
+  const currentRegistry = ruleId("pipeline.registry_load", "6");
   const olderSoi = insertRule("pipeline.soi_load", "1", HEX("a"));
   const laterSoi = insertRule("pipeline.soi_load", "9", HEX("b"));
   const otherRule = ruleId("coverage.soi", "3");
@@ -89,8 +89,8 @@ test("cross-version LOADED counts, and non-LOADED older rows do not", withDb(asy
   assert.equal(scalar("SELECT version FROM ops.rule_version WHERE rule_code = 'coverage.soi'"), "3");
   assert.equal(scalar("SELECT version FROM ops.rule_version WHERE rule_code = 'obs.projection.soi'"), "3");
   assert.equal(scalar("SELECT version FROM ops.rule_version WHERE rule_code = 'validation.soi_adsh_cik'"), "3");
-  assert.equal(scalar("SELECT count(*) FROM ops.rule_version WHERE rule_code = 'pipeline.soi_load' AND version = '5'"), "1");
-  assert.equal(scalar("SELECT count(*) FROM ops.rule_version WHERE rule_code = 'pipeline.registry_load' AND version = '5'"), "1");
+  assert.equal(scalar("SELECT count(*) FROM ops.rule_version WHERE rule_code = 'pipeline.soi_load' AND version = '6'"), "1");
+  assert.equal(scalar("SELECT count(*) FROM ops.rule_version WHERE rule_code = 'pipeline.registry_load' AND version = '6'"), "1");
 
   const url = "https://www.sec.gov/files/TEST-ONLY/idempotency-loaded.zip";
   const sha = HEX("d");
@@ -137,13 +137,13 @@ test("cross-version LOADED counts, and non-LOADED older rows do not", withDb(asy
   await runSoiLoad({ dataDir, database: dbName, log: () => {} });
   assert.equal(scalar(`SELECT count(*) FROM raw.table_load tl JOIN raw.artifact a ON a.id = tl.artifact_id WHERE tl.table_code = 'SOI' AND a.source_url LIKE '%2099_12_bdc.zip'`), "0");
   assert.equal(scalar("SELECT count(*) FROM obs.soi_row_observation"), "0");
-  assert.equal(scalar(`SELECT count(*) FROM ops.artifact_processing p JOIN ops.rule_version r ON r.id = p.rule_version_id WHERE p.artifact_id = ${filledId} AND r.rule_code = 'pipeline.soi_load' AND r.version = '5'`), "0");
+  assert.equal(scalar(`SELECT count(*) FROM ops.artifact_processing p JOIN ops.rule_version r ON r.id = p.rule_version_id WHERE p.artifact_id = ${filledId} AND r.rule_code = 'pipeline.soi_load' AND r.version = '6'`), "0");
   assert.equal(scalar(`SELECT count(*) FROM ops.artifact_processing WHERE artifact_id = ${filledId}`), priorRows);
   assert.ok(Number(scalar("SELECT count(*) FROM raw.table_load WHERE table_code = 'SOI'")) > Number(beforeLoads));
   assert.equal(scalar(`SELECT r.version FROM ops.artifact_processing p
 JOIN ops.rule_version r ON r.id = p.rule_version_id
 JOIN raw.artifact a ON a.id = p.artifact_id
-WHERE r.rule_code = 'pipeline.soi_load' AND a.source_url LIKE '%2099_11_bdc.zip'`), "5");
+WHERE r.rule_code = 'pipeline.soi_load' AND a.source_url LIKE '%2099_11_bdc.zip'`), "6");
   assert.equal(scalar(`SELECT r.version FROM ops.coverage_assertion c
 JOIN ops.rule_version r ON r.id = c.rule_version_id
 WHERE r.rule_code = 'coverage.soi' LIMIT 1`), "3");

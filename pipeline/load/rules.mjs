@@ -32,9 +32,9 @@ export const RULES = [
     spec: "docs/SOURCE_SCHEMAS.md 3.6, 7.1", description: "FILING_METADATA coverage per release and registrant; FILING_HISTORY coverage per registrant" },
   { code: "validation.registry_cross_source", kind: "VALIDATION", version: "1", files: ["pipeline/load/validate.mjs"],
     spec: "docs/DATA_MODEL.md", description: "Compares form, filing date, and registrant link between SUB and submissions; never picks a winner" },
-  // v5: db.mjs gained Hosted fail-closed targeting and streaming sessions. Skip
-  // policy is unchanged. Hosted v4 SHA is not reproducible from git.
-  { code: "pipeline.registry_load", kind: "EXTRACTION", version: "5", files: ["pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
+  // v6: Hosted long-lived sessions reject and log client errors instead of
+  // process.exit(1). Skip policy is unchanged. Hosted v5 remains stored.
+  { code: "pipeline.registry_load", kind: "EXTRACTION", version: "6", files: ["pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
     spec: "docs/adr/0011-registry-ingestion.md", description: "Offline loader: processes fetch-log entries in order; LOADED on any prior version of this rule_code, or any outcome on the current version, skips the artifact" },
   // v2: shared zip.mjs now fail-closes on unzip spawn errors and adds NUM streaming.
   // SOI still lands via readMember. Hosted v1 SHA matches the pre-stream git definition.
@@ -70,9 +70,9 @@ export const RULES = [
     spec: "docs/SOURCE_SCHEMAS.md 3.2, 3.3, 5.2", description: "SOI_HOLDINGS coverage per release and per registrant, independent of FILING_METADATA; registry ZIP readiness treats LOADED on any version of pipeline.registry_load as loaded" },
   { code: "validation.soi_adsh_cik", kind: "VALIDATION", version: "3", files: ["pipeline/load/units/dataset-soi.mjs"],
     spec: "docs/SOURCE_SCHEMAS.md 5.3, 9", description: "Compares the SOI cik cell to explicit filing-registrant links; never uses the accession prefix; never picks a winner" },
-  // v5: db.mjs gained Hosted fail-closed targeting and streaming sessions. Skip
-  // policy is unchanged. Hosted v4 SHA is not reproducible from git.
-  { code: "pipeline.soi_load", kind: "EXTRACTION", version: "5", files: ["pipeline/load/soi-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
+  // v6: same Hosted session error handling as registry_load v6. Skip policy
+  // is unchanged. Hosted v5 remains stored.
+  { code: "pipeline.soi_load", kind: "EXTRACTION", version: "6", files: ["pipeline/load/soi-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
     spec: "docs/adr/0012-soi-ingestion.md", description: "Offline SOI loader: processes ZIP artifacts already loaded by registry:load; LOADED on any prior version of this rule_code, or any outcome on the current version, skips the artifact" },
   { code: "parser.sec_num_tsv", kind: "PARSER", version: "2",
     files: ["pipeline/parse/num.mjs", "pipeline/parse/zip.mjs", "pipeline/lib/num-schema.mjs"],
@@ -84,7 +84,8 @@ export const RULES = [
     ],
     spec: "docs/SOURCE_SCHEMAS.md 4.3; docs/DATA_MODEL.md",
     description: "Projects each OK NUM line to obs.num_fact_observation; ddate is YYYYMMDD; identifier member is parsed from segments; orphan adsh rows stay raw only" },
-  { code: "pipeline.num_load", kind: "EXTRACTION", version: "2",
+  // v3: same Hosted session error handling as registry_load v6.
+  { code: "pipeline.num_load", kind: "EXTRACTION", version: "3",
     files: ["pipeline/load/num-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
     spec: "docs/adr/0016-num-currency-binding.md",
     description: "Offline NUM loader: processes ZIP artifacts already loaded by registry:load; LOADED on any prior version of this rule_code, or any outcome on the current version, skips the artifact" },

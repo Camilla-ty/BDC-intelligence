@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
@@ -11,6 +12,7 @@ import {
   copyBlock,
   copyInFromIterable,
   hostedPipelineScript,
+  hostedSessionFromClient,
   pipelineConnectionTarget,
   pipelineScript,
   publicPipelineError,
@@ -251,4 +253,140 @@ test("SOI date checks validate every row on the server without a client result s
   assert.match(src, /DO \$soi_field_date\$ BEGIN/);
   assert.doesNotMatch(src, /SELECT pg_temp\.strict_date\(cells\[\$\{DDATE\}\][\s\S]*?FROM _ok;/);
   assert.doesNotMatch(src, /SELECT pg_temp\.strict_date\(r\.cells\[m\.pos\][\s\S]*?FROM _ok r JOIN _maps m/);
+});
+
+const SESSION_SECRET = "s3cret-token";
+const SESSION_USER = "pipeline_writer";
+const SESSION_HOST = "db.example";
+const SESSION_URL = `postgresql://${SESSION_USER}:${SESSION_SECRET}@${SESSION_HOST}:5432/postgres`;
+
+function mockSessionClient() {
+  const client = new EventEmitter();
+  client.ended = 0;
+  client.query = async () => ({ rows: [["ok"]] });
+  client.end = async () => {
+    client.ended += 1;
+  };
+  return client;
+}
+
+function withExitGuard(fn) {
+  const original = process.exit;
+  let exitCode = null;
+  process.exit = (code) => {
+    exitCode = code;
+  };
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      process.exit = original;
+    })
+    .then((value) => {
+      assert.equal(exitCode, null, "hosted session error must not call process.exit");
+      return value;
+    });
+}
+
+function assertRedacted(message) {
+  assert.equal(message.includes(SESSION_SECRET), false);
+  assert.equal(message.includes(SESSION_USER), false);
+  assert.equal(message.includes(SESSION_HOST), false);
+  assert.equal(message.includes("postgresql://"), false);
+  assert.equal(message.includes(SESSION_URL), false);
+}
+
+test("a Hosted session client error rejects the in-flight query without process.exit", async () => {
+  await withExitGuard(async () => {
+    const client = mockSessionClient();
+    const logs = [];
+    client.query = () => new Promise(() => {});
+    const session = hostedSessionFromClient(client, SESSION_URL, { log: (line) => logs.push(line) });
+    const pending = session.query("SELECT 1");
+    client.emit(
+      "error",
+      new Error(`the database system is not accepting connections ${SESSION_URL} user ${SESSION_USER} password ${SESSION_SECRET} at ${SESSION_HOST}`),
+    );
+    await assert.rejects(pending, (error) => {
+      assert.match(error.message, /not accepting connections/);
+      assertRedacted(error.message);
+      return true;
+    });
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /^hosted pipeline session error: /);
+    assertRedacted(logs[0]);
+    assert.equal(client.ended, 1);
+    await assert.rejects(session.query("SELECT 1"), /pipeline session is closed/);
+    await session.close();
+    assert.equal(client.ended, 1);
+    assert.equal(logs.length, 1);
+  });
+});
+
+test("a Hosted session client error rejects streaming COPY without process.exit", async () => {
+  await withExitGuard(async () => {
+    const client = mockSessionClient();
+    const logs = [];
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    client.query = (query) => {
+      if (query && typeof query.handleCopyInResponse === "function") {
+        query.handleCopyInResponse({
+          sendCopyFromChunk() {},
+          endCopyFrom() {},
+          sendCopyFail() {},
+        });
+      }
+    };
+    const session = hostedSessionFromClient(client, SESSION_URL, { log: (line) => logs.push(line) });
+    async function* rows() {
+      yield ["1", "ok"];
+      await gate;
+    }
+    const pending = session.copyFrom("_tsv", ["line_number", "raw_line"], rows());
+    await new Promise((resolve) => setImmediate(resolve));
+    client.emit("error", new Error(`COPY failed ${SESSION_URL}`));
+    try {
+      await assert.rejects(pending, (error) => {
+        assert.match(error.message, /COPY failed/);
+        assert.match(error.message, /\[redacted-url\]/);
+        assertRedacted(error.message);
+        return true;
+      });
+    } finally {
+      release();
+    }
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /^hosted pipeline session error: /);
+    assertRedacted(logs[0]);
+    assert.equal(client.ended, 1);
+    await assert.rejects(session.copyFrom("_tsv", ["n"], [["1"]]), /pipeline session is closed/);
+  });
+});
+
+test("normal Hosted session close is not a client-error failure", async () => {
+  await withExitGuard(async () => {
+    const client = mockSessionClient();
+    const logs = [];
+    const session = hostedSessionFromClient(client, SESSION_URL, { log: (line) => logs.push(line) });
+    assert.equal(await session.query("SELECT 1"), "ok");
+    await session.close();
+    assert.equal(client.ended, 1);
+    client.emit("error", new Error(`late error ${SESSION_URL}`));
+    assert.deepEqual(logs, []);
+    await session.close();
+    assert.equal(client.ended, 1);
+    await assert.rejects(session.query("SELECT 1"), /pipeline session is closed/);
+  });
+});
+
+test("Hosted session helpers do not call process.exit", () => {
+  const src = readFileSync(new URL("../lib/db.mjs", import.meta.url), "utf8");
+  const hosted = src.slice(
+    src.indexOf("export function hostedSessionFromClient"),
+    src.indexOf("async function openLocalPipelineSession"),
+  );
+  assert.match(hosted, /hosted pipeline session error:/);
+  assert.doesNotMatch(hosted, /process\.exit/);
 });

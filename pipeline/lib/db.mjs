@@ -382,6 +382,84 @@ async function applySessionContract(session) {
   await session.query("SET ROLE bdc_pipeline_writer");
 }
 
+function sessionError(error) {
+  if (error instanceof Error) return error;
+  if (error && typeof error.message === "string" && error.message) return new Error(error.message);
+  return new Error("hosted pipeline session failed");
+}
+
+// Long-lived Hosted session. A client `error` (dropped socket, server restart)
+// rejects the in-flight query/COPY, logs a redacted message, and ends the
+// client so an open transaction is aborted. It does not call process.exit.
+export function hostedSessionFromClient(client, connectionString, { log = console.error } = {}) {
+  let closed = false;
+  let pending = null;
+
+  const redact = (error) => new Error(publicPipelineError(sessionError(error), connectionString));
+
+  const failClosed = (error) => {
+    if (closed) return;
+    closed = true;
+    const err = redact(error);
+    log(`hosted pipeline session error: ${err.message}`);
+    const waiting = pending;
+    pending = null;
+    waiting?.reject(err);
+    Promise.resolve(typeof client.end === "function" ? client.end() : undefined).catch(() => undefined);
+  };
+
+  client.on("error", (error) => {
+    failClosed(error);
+  });
+
+  const run = (work) => {
+    if (closed) return Promise.reject(new Error("pipeline session is closed"));
+    if (pending) return Promise.reject(new Error("pipeline session already has a query"));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (cb, value) => {
+        if (settled) return;
+        settled = true;
+        if (pending?.reject === rejectPending) pending = null;
+        cb(value);
+      };
+      const rejectPending = (error) => settle(reject, error);
+      pending = { reject: rejectPending };
+      Promise.resolve()
+        .then(work)
+        .then((value) => settle(resolve, value))
+        .catch((error) => settle(reject, redact(error)));
+    });
+  };
+
+  return {
+    query(sql) {
+      return run(async () => {
+        const result = await client.query({ text: sql, rowMode: "array" });
+        const row = result.rows?.[0];
+        if (!row) return "";
+        return row.map(cellText).join("\t");
+      });
+    },
+    copyFrom(table, columns, rows) {
+      const text = `COPY ${table} (${columns.join(", ")}) FROM STDIN;`;
+      return run(() => new Promise((resolve, reject) => {
+        const query = copyInFromIterable(text, asRowIterable(rows));
+        query.callback = (err) => (err ? reject(err) : resolve());
+        client.query(query);
+      }));
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      const waiting = pending;
+      pending = null;
+      waiting?.reject(new Error("pipeline session closed"));
+      await Promise.resolve(typeof client.end === "function" ? client.end() : undefined).catch(() => undefined);
+    },
+  };
+}
+
 async function openHostedPipelineSession(connectionString) {
   assertPipelineUrl(connectionString);
   const client = new pg.Client({
@@ -390,52 +468,15 @@ async function openHostedPipelineSession(connectionString) {
     connectionTimeoutMillis: 30_000,
   });
   client._types.getTypeParser = () => (value) => value;
-  let closed = false;
-  client.on("error", () => {
-    if (closed) return;
-    closed = true;
-    process.exit(1);
-  });
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    await client.end().catch(() => undefined);
-  };
+  const session = hostedSessionFromClient(client, connectionString);
   try {
     await client.connect();
-    await applySessionContract({
-      query: (sql) => client.query(sql).then(() => ""),
-    });
+    await applySessionContract(session);
   } catch (error) {
-    await close();
+    await session.close();
     throw new Error(publicPipelineError(error, connectionString));
   }
-  return {
-    query: async (sql) => {
-      try {
-        const result = await client.query({ text: sql, rowMode: "array" });
-        const row = result.rows?.[0];
-        if (!row) return "";
-        return row.map(cellText).join("\t");
-      } catch (error) {
-        throw new Error(publicPipelineError(error, connectionString));
-      }
-    },
-    async copyFrom(table, columns, rows) {
-      const text = `COPY ${table} (${columns.join(", ")}) FROM STDIN;`;
-      try {
-        await new Promise((resolve, reject) => {
-          const query = copyInFromIterable(text, asRowIterable(rows));
-          query.callback = (err) => (err ? reject(err) : resolve());
-          client.query(query);
-        });
-      } catch (error) {
-        throw new Error(publicPipelineError(error, connectionString));
-      }
-      return "";
-    },
-    close,
-  };
+  return session;
 }
 
 async function openLocalPipelineSession(database) {
