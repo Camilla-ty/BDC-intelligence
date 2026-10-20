@@ -94,6 +94,15 @@ export const RULES = [
     files: ["pipeline/load/num-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
     spec: "docs/adr/0016-num-currency-binding.md",
     description: "Offline NUM loader: processes ZIP artifacts already loaded by registry:load; LOADED on any prior version of this rule_code, or any outcome on the current version, skips the artifact" },
+  // ensureOnly: registered by num:recover-quoted through ensureAndLinkRuleForRun, never by registerRules.
+  { code: "pipeline.num_quoted_recovery_backfill", kind: "EXTRACTION", version: "1", ensureOnly: true,
+    files: [
+      "pipeline/load/num-quoted-recovery-backfill.mjs", "pipeline/recover-num-quoted.mjs",
+      "pipeline/parse/num-quoted-tsv.mjs", "pipeline/normalize/num-segments.mjs",
+      "pipeline/lib/num-schema.mjs", "pipeline/load/sql.mjs", "pipeline/lib/db.mjs",
+    ],
+    spec: "docs/adr/0021-aug-2026-num-quoted-recovery-backfill.md",
+    description: "One-time backfill of the ADR 0021 pinned artifact: inserts a new NUM table_load of the locked FIELD_COUNT_MISMATCH lines as QUOTED_RECOVERY rows with sidecars, FOOTLEN_MISMATCH exceptions, and facts that pass D6 and every obs.projection.num v3 gate; stored rows are not changed; LOADED on any version of this rule_code skips the artifact" },
   { code: "obs.currency.from_num_unique_match", kind: "NORMALIZATION", version: "2",
     files: [
       "pipeline/normalize/num-currency-bind.mjs",
@@ -196,7 +205,7 @@ function unknownPolicySql(rule) {
 }
 
 export function registerRules(database, runId) {
-  const defs = RULES.map((r) => ({ ...r, sha: ruleDefinitionSha(r) }));
+  const defs = RULES.filter((r) => !r.ensureOnly).map((r) => ({ ...r, sha: ruleDefinitionSha(r) }));
   const values = defs.map((r) => `(${lit(r.code)}, ${lit(r.kind)}::ops.rule_kind, ${lit(r.version)}, ${lit(r.sha)}, ${lit(r.spec)}, ${lit(r.description)}, ${unknownPolicySql(r)})`).join(",\n  ");
   const rows = queryRows(database, `
 BEGIN;

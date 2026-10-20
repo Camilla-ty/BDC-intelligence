@@ -92,6 +92,7 @@ npm run soi:load       # offline SOI projection from already-loaded ZIP artifact
 npm run soi:reconcile  # local only: compare soi.tsv line counts to the database
 npm run num:load       # offline NUM projection from already-loaded ZIP artifacts
 npm run num:bind-currency  # bind SOI monetary currency from loaded NUM facts (fail-closed)
+npm run num:recover-quoted -- --source-table-load-id ID  # ADR 0021 one-time August 2026 backfill; Hosted needs separate approval
 npm run maturity:inspect -- --accession ACCESSION  # filing maturity inspection; HTML fetch needs SEC_USER_AGENT
 npm run p4:golden      # Golden slice borrower-name observations; no fetch
 npm run p5:golden      # Golden slice filing-document fetch + string checks; needs SEC_USER_AGENT

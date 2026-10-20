@@ -32,6 +32,7 @@ authentication, and similar) are recorded in the phase in which they are decided
 | [0018](0018-legal-entity-external-identifiers.md) | External identifiers for portfolio legal entities | Accepted |
 | [0019](0019-num-quoted-tsv-recovery.md) | Quoted TSV recovery for SEC NUM extra-tab rows | Accepted |
 | [0020](0020-num-quoted-recovery-admin-review.md) | Future Admin review of NUM quoted-recovery validation failures | Accepted |
+| [0021](0021-aug-2026-num-quoted-recovery-backfill.md) | One-time August 2026 NUM quoted-TSV recovery backfill | Accepted |
 
 ## Template
 

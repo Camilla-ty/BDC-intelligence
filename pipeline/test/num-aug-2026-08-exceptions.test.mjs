@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { NUM_MEMBER_PATH, VERIFIED_NUM_HEADER } from "../lib/num-schema.mjs";
+import { AUG_2026_NUM_BACKFILL_PIN } from "../load/num-quoted-recovery-backfill.mjs";
 import { streamNumTsv } from "../parse/num.mjs";
 import { footlenMatchesUnquotedFootnote, splitQuotedTsvFields } from "../parse/num-quoted-tsv.mjs";
 import { streamMemberChunks } from "../parse/zip.mjs";
@@ -46,6 +47,14 @@ const RECORDED = Object.freeze([
   { line: 841844, sha: "4487bb8603a191503640b19ad7acfcda01b95b94859d37deedc4e77f30dcba4a", naive: 12, quotedTabs: 1, extraQuoted: 0 },
   { line: 949170, sha: "a3da67bff9895ad04f51f7873662fbf1aae6e570f5713164dcbf5fa7bfeec7ce", naive: 12, quotedTabs: 1, extraQuoted: 0 },
 ]);
+
+test("the ADR 0021 backfill pin equals the recorded August 2026 locks", () => {
+  assert.deepEqual(AUG_2026_NUM_BACKFILL_PIN.locks.map(({ line, sha }) => ({ line, sha })),
+    RECORDED.map(({ line, sha }) => ({ line, sha })));
+  assert.deepEqual([...AUG_2026_NUM_BACKFILL_PIN.d6PassLines], [...D6_PASS_LINES]);
+  assert.deepEqual([...AUG_2026_NUM_BACKFILL_PIN.d6FailLines], [...D6_FAIL_LINES]);
+  assert.ok(ZIP.endsWith(AUG_2026_NUM_BACKFILL_PIN.artifactSha256));
+});
 
 function sha256Utf8(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
