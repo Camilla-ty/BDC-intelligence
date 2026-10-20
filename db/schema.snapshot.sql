@@ -233,7 +233,8 @@ CREATE TYPE ref.parse_status AS ENUM (
     'FIELD_COUNT_MISMATCH',
     'EMPTY_MEMBER',
     'HEADER_MISSING',
-    'SCHEMA_DRIFT'
+    'SCHEMA_DRIFT',
+    'QUOTED_RECOVERY'
 );
 
 CREATE TYPE ref.period_role AS ENUM (
@@ -1255,10 +1256,24 @@ $$;
 CREATE FUNCTION obs.check_num_fact_observation() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+  header text[];
+  recovered text[];
+  status ref.parse_status;
 BEGIN
   PERFORM obs.check_row_projection('NUM', NEW.tabular_row_id, NEW.filing_id, NEW.evidence_id);
-  IF NEW.value_raw IS DISTINCT FROM obs.cell_by_label(NEW.tabular_row_id, 'value')
-     OR NEW.uom_raw IS DISTINCT FROM obs.cell_by_label(NEW.tabular_row_id, 'uom') THEN
+  SELECT r.parse_status, tl.header, q.recovered_cells
+    INTO status, header, recovered
+  FROM raw.tabular_row r
+  JOIN raw.table_load tl ON tl.id = r.table_load_id
+  LEFT JOIN raw.num_quoted_recovery q ON q.tabular_row_id = r.id
+  WHERE r.id = NEW.tabular_row_id;
+  IF status = 'QUOTED_RECOVERY' AND NOT raw.num_quoted_footlen_ok(recovered, header) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'QUOTED_RECOVERY rows must pass footlen validation before projection';
+  END IF;
+  IF NEW.value_raw IS DISTINCT FROM obs.num_cell_by_label(NEW.tabular_row_id, 'value')
+     OR NEW.uom_raw IS DISTINCT FROM obs.num_cell_by_label(NEW.tabular_row_id, 'uom') THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'raw value and uom must equal the source row cells';
   END IF;
   RETURN NEW;
@@ -1404,15 +1419,30 @@ $$;
 CREATE FUNCTION obs.check_row_projection(p_table text, p_row_id bigint, p_filing_id bigint, p_evidence_id bigint) RETURNS void
     LANGUAGE plpgsql
     AS $$
+DECLARE
+  adsh text;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM raw.tabular_row r JOIN raw.table_load tl ON tl.id = r.table_load_id
-    WHERE r.id = p_row_id AND tl.table_code = p_table AND r.parse_status = 'OK'
-  ) THEN
-    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
-      MESSAGE = format('source row must be an OK row of a %s table load', p_table);
+  IF p_table = 'NUM' THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM raw.tabular_row r JOIN raw.table_load tl ON tl.id = r.table_load_id
+      WHERE r.id = p_row_id AND tl.table_code = 'NUM'
+        AND r.parse_status IN ('OK', 'QUOTED_RECOVERY')
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'source row must be an OK or QUOTED_RECOVERY row of a NUM table load';
+    END IF;
+    adsh := obs.num_cell_by_label(p_row_id, 'adsh');
+  ELSE
+    IF NOT EXISTS (
+      SELECT 1 FROM raw.tabular_row r JOIN raw.table_load tl ON tl.id = r.table_load_id
+      WHERE r.id = p_row_id AND tl.table_code = p_table AND r.parse_status = 'OK'
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = format('source row must be an OK row of a %s table load', p_table);
+    END IF;
+    adsh := obs.cell_by_label(p_row_id, 'adsh');
   END IF;
-  IF obs.cell_by_label(p_row_id, 'adsh') IS DISTINCT FROM
+  IF adsh IS DISTINCT FROM
      (SELECT f.accession_number FROM registry.filing f WHERE f.id = p_filing_id) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1',
       MESSAGE = 'filing_id must be the filing whose accession equals the row adsh cell';
@@ -1522,6 +1552,22 @@ BEGIN
   RETURN NEW;
 END
 $$;
+
+CREATE FUNCTION obs.num_cell_by_label(p_row_id bigint, p_label text) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT CASE r.parse_status
+    WHEN 'OK' THEN r.cells[array_position(tl.header, p_label)]
+    WHEN 'QUOTED_RECOVERY' THEN q.recovered_cells[array_position(tl.header, p_label)]
+    ELSE NULL
+  END
+  FROM raw.tabular_row r
+  JOIN raw.table_load tl ON tl.id = r.table_load_id
+  LEFT JOIN raw.num_quoted_recovery q ON q.tabular_row_id = r.id
+  WHERE r.id = p_row_id AND tl.table_code = 'NUM'
+$$;
+
+COMMENT ON FUNCTION obs.num_cell_by_label(p_row_id bigint, p_label text) IS 'NUM projection cells: naive cells for OK rows, sidecar recovered_cells for QUOTED_RECOVERY. Does not change obs.cell_by_label.';
 
 CREATE FUNCTION obs.require_group_member() RETURNS trigger
     LANGUAGE plpgsql
@@ -1647,6 +1693,13 @@ BEGIN
   ) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1',
       MESSAGE = 'FIELD_COUNT_MISMATCH exceptions require a FIELD_COUNT_MISMATCH raw row';
+  END IF;
+  IF NEW.kind = 'FOOTLEN_MISMATCH' AND NOT EXISTS (
+    SELECT 1 FROM raw.tabular_row r
+    WHERE r.id = NEW.tabular_row_id AND r.parse_status = 'QUOTED_RECOVERY'
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'FOOTLEN_MISMATCH exceptions require a QUOTED_RECOVERY raw row';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM evidence.evidence e
@@ -1823,6 +1876,35 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION raw.check_num_quoted_recovery() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  r raw.tabular_row;
+  tl raw.table_load;
+BEGIN
+  SELECT * INTO r FROM raw.tabular_row WHERE id = NEW.tabular_row_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'num_quoted_recovery tabular_row_id must exist';
+  END IF;
+  SELECT * INTO tl FROM raw.table_load WHERE id = r.table_load_id;
+  IF tl.table_code IS DISTINCT FROM 'NUM' OR r.parse_status IS DISTINCT FROM 'QUOTED_RECOVERY' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'num_quoted_recovery requires a NUM QUOTED_RECOVERY raw row';
+  END IF;
+  IF r.field_count = cardinality(tl.header) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'num_quoted_recovery requires naive field_count different from the header width';
+  END IF;
+  IF NEW.recovered_field_count IS DISTINCT FROM cardinality(tl.header) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'recovered_field_count must equal the NUM header width';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
 CREATE FUNCTION raw.check_table_load_header() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1864,6 +1946,10 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1',
       MESSAGE = 'parse_status must be OK exactly when field_count equals the header width';
   END IF;
+  IF NEW.parse_status = 'QUOTED_RECOVERY' AND tl.table_code IS DISTINCT FROM 'NUM' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'QUOTED_RECOVERY is allowed only on NUM table loads';
+  END IF;
   RETURN NEW;
 END
 $$;
@@ -1894,6 +1980,34 @@ BEGIN
   RETURN NULL;
 END
 $_$;
+
+CREATE FUNCTION raw.num_quoted_footlen_ok(p_cells text[], p_header text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  SELECT
+    COALESCE(p_cells[array_position(p_header, 'footlen')], '') ~ '^[0-9]+$'
+    AND octet_length(COALESCE(p_cells[array_position(p_header, 'footnote')], ''))
+        = (COALESCE(p_cells[array_position(p_header, 'footlen')], ''))::bigint
+$_$;
+
+COMMENT ON FUNCTION raw.num_quoted_footlen_ok(p_cells text[], p_header text[]) IS 'D6: footlen equals the UTF-8 byte length of the unquoted footnote, including empty footnote with footlen 0.';
+
+CREATE FUNCTION raw.require_num_quoted_recovery() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.parse_status IS DISTINCT FROM 'QUOTED_RECOVERY' THEN
+    RETURN NULL;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM raw.num_quoted_recovery q WHERE q.tabular_row_id = NEW.id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCL1',
+      MESSAGE = format('QUOTED_RECOVERY row %s has no raw.num_quoted_recovery sidecar', NEW.id);
+  END IF;
+  RETURN NULL;
+END
+$$;
 
 CREATE FUNCTION raw.source_stream(p_artifact_id bigint) RETURNS text
     LANGUAGE sql STABLE
@@ -7175,11 +7289,11 @@ CREATE TABLE ops.projection_exception (
     run_id bigint NOT NULL,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT projection_exception_detail_check CHECK ((btrim(detail) <> ''::text)),
-    CONSTRAINT projection_exception_kind_check CHECK ((kind = ANY (ARRAY['FIELD_COUNT_MISMATCH'::text, 'ORPHAN_ADSH'::text]))),
+    CONSTRAINT projection_exception_kind_check CHECK ((kind = ANY (ARRAY['FIELD_COUNT_MISMATCH'::text, 'ORPHAN_ADSH'::text, 'FOOTLEN_MISMATCH'::text]))),
     CONSTRAINT projection_exception_tabular_row_id_check CHECK ((tabular_row_id IS NOT NULL))
 );
 
-COMMENT ON TABLE ops.projection_exception IS 'Raw SOI lines that were kept losslessly but not projected: field-count mismatches and accession values with no registry.filing row.';
+COMMENT ON TABLE ops.projection_exception IS 'Raw lines kept losslessly but not projected: field-count mismatches, orphan adsh, and NUM quoted-recovery footlen mismatches.';
 
 CREATE TABLE raw.artifact_member (
     id bigint NOT NULL,
@@ -7230,7 +7344,7 @@ CREATE TABLE raw.tabular_row (
     CONSTRAINT tabular_row_check CHECK ((cardinality(cells) = field_count)),
     CONSTRAINT tabular_row_field_count_check CHECK ((field_count >= 0)),
     CONSTRAINT tabular_row_line_number_check CHECK ((line_number >= 1)),
-    CONSTRAINT tabular_row_parse_status_check CHECK ((parse_status = ANY (ARRAY['OK'::ref.parse_status, 'FIELD_COUNT_MISMATCH'::ref.parse_status]))),
+    CONSTRAINT tabular_row_parse_status_check CHECK ((parse_status = ANY (ARRAY['OK'::ref.parse_status, 'FIELD_COUNT_MISMATCH'::ref.parse_status, 'QUOTED_RECOVERY'::ref.parse_status]))),
     CONSTRAINT tabular_row_raw_line_sha256_check CHECK ((raw_line_sha256 ~ '^[0-9a-f]{64}$'::text))
 );
 
@@ -7500,6 +7614,31 @@ COMMENT ON TABLE raw."json_value" IS 'Every node of a raw.json_document, written
 
 ALTER TABLE raw."json_value" ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME raw.json_value_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE TABLE raw.num_quoted_recovery (
+    id bigint NOT NULL,
+    tabular_row_id bigint NOT NULL,
+    recovered_cells text[] NOT NULL,
+    recovered_field_count integer NOT NULL,
+    parser_rule_version_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT num_quoted_recovery_check CHECK ((cardinality(recovered_cells) = recovered_field_count)),
+    CONSTRAINT num_quoted_recovery_recovered_field_count_check CHECK ((recovered_field_count >= 0))
+);
+
+COMMENT ON TABLE raw.num_quoted_recovery IS 'Append-only recovered 11-cell parse of a NUM QUOTED_RECOVERY row. Naive cells stay on raw.tabular_row. One sidecar per source row.';
+
+COMMENT ON COLUMN raw.num_quoted_recovery.recovered_cells IS 'Quoted-TSV fields in documented NUM header order. Identifier whitespace is not trimmed.';
+
+ALTER TABLE raw.num_quoted_recovery ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME raw.num_quoted_recovery_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -10437,6 +10576,12 @@ ALTER TABLE ONLY raw."json_value"
 ALTER TABLE ONLY raw."json_value"
     ADD CONSTRAINT json_value_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY raw.num_quoted_recovery
+    ADD CONSTRAINT num_quoted_recovery_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY raw.num_quoted_recovery
+    ADD CONSTRAINT num_quoted_recovery_tabular_row_id_key UNIQUE (tabular_row_id);
+
 ALTER TABLE ONLY raw.table_load
     ADD CONSTRAINT table_load_artifact_id_artifact_member_id_parser_rule_versi_key UNIQUE NULLS NOT DISTINCT (artifact_id, artifact_member_id, parser_rule_version_id);
 
@@ -10943,6 +11088,8 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON raw.json_document FOR 
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON raw."json_value" FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON raw.num_quoted_recovery FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON raw.table_load FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON raw.tabular_row FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
@@ -10957,6 +11104,8 @@ CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON raw.json_document FOR EAC
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON raw."json_value" FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON raw.num_quoted_recovery FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON raw.table_load FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON raw.tabular_row FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
@@ -10967,11 +11116,15 @@ CREATE TRIGGER check_json_document BEFORE INSERT ON raw.json_document FOR EACH R
 
 CREATE TRIGGER check_json_value BEFORE INSERT ON raw."json_value" FOR EACH ROW EXECUTE FUNCTION raw.check_json_value();
 
+CREATE TRIGGER check_num_quoted_recovery BEFORE INSERT ON raw.num_quoted_recovery FOR EACH ROW EXECUTE FUNCTION raw.check_num_quoted_recovery();
+
 CREATE TRIGGER check_table_load_header BEFORE INSERT ON raw.table_load FOR EACH ROW EXECUTE FUNCTION raw.check_table_load_header();
 
 CREATE TRIGGER check_tabular_row BEFORE INSERT ON raw.tabular_row FOR EACH ROW EXECUTE FUNCTION raw.check_tabular_row();
 
 CREATE TRIGGER flatten_json_document AFTER INSERT ON raw.json_document FOR EACH ROW EXECUTE FUNCTION raw.flatten_json_document();
+
+CREATE CONSTRAINT TRIGGER require_num_quoted_recovery AFTER INSERT ON raw.tabular_row DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION raw.require_num_quoted_recovery();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ref.coverage_aspect FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -11592,6 +11745,15 @@ ALTER TABLE ONLY raw."json_value"
 
 ALTER TABLE ONLY raw."json_value"
     ADD CONSTRAINT json_value_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY raw.num_quoted_recovery
+    ADD CONSTRAINT num_quoted_recovery_parser_rule_version_id_fkey FOREIGN KEY (parser_rule_version_id) REFERENCES ops.rule_version(id);
+
+ALTER TABLE ONLY raw.num_quoted_recovery
+    ADD CONSTRAINT num_quoted_recovery_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY raw.num_quoted_recovery
+    ADD CONSTRAINT num_quoted_recovery_tabular_row_id_fkey FOREIGN KEY (tabular_row_id) REFERENCES raw.tabular_row(id);
 
 ALTER TABLE ONLY raw.table_load
     ADD CONSTRAINT table_load_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES raw.artifact(id);
@@ -12483,6 +12645,10 @@ GRANT USAGE ON SEQUENCE raw.json_document_id_seq TO bdc_pipeline_writer;
 GRANT SELECT,INSERT ON TABLE raw."json_value" TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE raw.json_value_id_seq TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE raw.num_quoted_recovery TO bdc_pipeline_writer;
+
+GRANT USAGE ON SEQUENCE raw.num_quoted_recovery_id_seq TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE raw.table_load_id_seq TO bdc_pipeline_writer;
 

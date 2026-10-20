@@ -30,6 +30,8 @@ authentication, and similar) are recorded in the phase in which they are decided
 | [0016](0016-num-currency-binding.md) | NUM ingestion and SOI currency binding | Accepted |
 | [0017](0017-legal-entity-consolidation.md) | Legal-entity consolidation for canonical Borrower ID | Accepted |
 | [0018](0018-legal-entity-external-identifiers.md) | External identifiers for portfolio legal entities | Accepted |
+| [0019](0019-num-quoted-tsv-recovery.md) | Quoted TSV recovery for SEC NUM extra-tab rows | Accepted |
+| [0020](0020-num-quoted-recovery-admin-review.md) | Future Admin review of NUM quoted-recovery validation failures | Accepted |
 
 ## Template
 

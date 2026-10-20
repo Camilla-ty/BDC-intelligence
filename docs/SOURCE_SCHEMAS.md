@@ -253,10 +253,37 @@ the files use `segments` (section 14). Forms observed: mostly 8-K, 8-K/A, and DE
 ### 4.8 Line format
 
 Documented: UTF-8, tab-delimited, `\n`-terminated lines, lowercase header names (S2 section 4).
-Observed: no carriage returns in data lines. A few rows have **more** tab-separated fields than the
-header (F05: NUM 107, SOI 15, TXT 14; F06: NUM 21, SOI 3, TXT 1; F07: NUM 23, SOI 4; F04: none),
-consistent with tab characters inside values. The SOI header uses mixed-case labels, not the
-lowercase rule.
+Observed: no carriage returns in data lines. A few rows have **more** naive tab-separated
+fields than the header (F05: NUM 107, SOI 15, TXT 14; F06: NUM 21, SOI 3, TXT 1; F07: NUM 23,
+SOI 4; F04: none), consistent with tab characters inside values. The SOI header uses
+mixed-case labels, not the lowercase rule.
+
+**Naive split (all tables, including NUM).** The official field count is the number of
+cells from splitting the line on every U+0009. That naive count is preserved. It is never
+replaced by a quoted width. `raw.tabular_row.cells` remain that naive split.
+
+**SOI and TXT extra-field rows.** Unchanged: malformed; count and quarantine
+(discrepancy 15). This subsection does not recover SOI or TXT.
+
+**NUM only — valid quoted recovery (policy, ADR 0019).** When a NUM extra-field row is
+syntactically valid quoted TSV, extra tabs lie inside quoted fields, and a quoted parse
+yields exactly the 11 documented NUM columns, the row is stored with parse status
+`QUOTED_RECOVERY`. It is not an ordinary OK 11-column line. Unquoted extra tabs and
+invalid quoting stay `FIELD_COUNT_MISMATCH`.
+
+Recovered 11 cells and recovered field count are stored separately from `raw_line` and
+the naive split. The source identifier member is the quoted `segments` typed-member text
+exactly; tabs and other whitespace are not trimmed or collapsed.
+
+`footlen` must equal the UTF-8 byte length of the unquoted footnote text, or the footnote
+must be empty with `footlen` 0. Other `footlen` values keep recovery diagnostics and are
+not projected (`FOOTLEN_MISMATCH`). A future Admin review path for quarantined recovered
+rows is policy only (ADR 0020); it is not implemented here and does not bypass `footlen`
+or other projection gates.
+
+Quoted recovery does not rewrite already-landed rows, replay a completed NUM load, infer
+currency, or change SOI/TXT parsers. Fact-level filing corroboration of extra-tab rows
+does not ingest those rows.
 
 ## 5. SOI in depth
 
@@ -871,7 +898,7 @@ retrieval.
 | 12 | NON contents | Filings without financial statements | Same | Some 10-Q/10-K/10-K/A rows (F04, F05, F07) | Record as observed |
 | 13 | SOI custom content | Custom tags and axes excluded | Same | CamelCase, filer-style column names present | OPEN QUESTION (Q16) |
 | 14 | SOI cost and fair value | Preset columns defined | Same | Preset columns nearly empty; values under dynamic labels | OPEN QUESTION (Q14) |
-| 15 | Tab-delimited lines | One field per tab | Same | A few rows have extra fields (4.8) | Treat as malformed rows; count and quarantine |
+| 15 | Tab-delimited lines | One field per tab | Same | A few rows have extra fields (4.8) | SOI, TXT, unquoted NUM extra tabs, and invalid NUM quotes: malformed; count and quarantine (naive `field_count_mismatch_count`). NUM rows whose extra tabs are only inside syntactically valid quoted fields: not ordinary OK; stored as `QUOTED_RECOVERY` with naive cells preserved and recovered cells aside (§4.8, ADR 0019). Projection of those rows is a separate gate, not implied by recovery. |
 | 16 | SOI header case | Lowercase field names | Same | SOI uses mixed-case labels | Match labels exactly |
 | 17 | BDC Report field names | n/a | n/a | Page names, CSV header, and XML elements all differ (section 6) | Map by position and documented meaning |
 | 18 | BDC Report layout by year | n/a | n/a | 2020–2026 share one header; 2012–2019 use six other layouts (section 6.1) | Load 2020–2026 only; the header must equal the verified layout exactly |
@@ -938,3 +965,5 @@ retrieval.
 | 2026-09-28 | Version 2: BDC Report yearly layouts (6.1), additional submissions pages (7.1), registry field register (7.2), fixtures F19a–F33, discrepancies 18–20, questions Q21–Q24. Corrections: the Data Sets page lists 21 ZIPs, not 22 (3.2); the 2012–2015 BDC Report links have no "Updated" label (6). |
 | 2026-10-02 | Section 8: Inline XBRL `ixt:fixed-zero` format and context period end, as used by the maturity binder. |
 | 2026-10-07 | Section 8.1: Inline XBRL `ix:footnote`, `ix:relationship`, the default `fact-footnote` arcrole, EDGAR footnote restrictions, and the visible "(n)" label as an observed presentation convention. |
+| 2026-10-19 | Section 4.8 and discrepancy 15: NUM-only valid quoted recovery policy (ADR 0019). Naive extra-field counts unchanged. SOI/TXT extra-field rows remain malformed. |
+| 2026-10-19 | Section 4.8: cross-reference ADR 0020 (future Admin review of quarantined recovered rows; no D6 bypass). |

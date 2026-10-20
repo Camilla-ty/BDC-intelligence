@@ -24,7 +24,7 @@ ingestion), and [ADR 0012](adr/0012-soi-ingestion.md) (SOI ingestion). Source fa
 | Principle | Mechanism |
 | --- | --- |
 | SOI has no natural key | Raw rows are identified by location (table load + line number). No unique constraint in `obs` uses business columns. Duplicate rows become separate observations. |
-| Raw before normalized | `raw.tabular_row` keeps the exact line, its SHA-256, and cells that must equal the tab split of the line. Typed observations keep the raw text next to the normalized value. |
+| Raw before normalized | `raw.tabular_row` keeps the exact line, its SHA-256, and cells that must equal the tab split of the line. NUM quoted extra-tab recovery stores a separate 11-cell array on `raw.num_quoted_recovery`; it does not rewrite naive cells. Typed observations keep the raw text next to the normalized value. |
 | Append-only history (G-10) | Every table has triggers that reject UPDATE, DELETE, and TRUNCATE (SQLSTATE `BDCA1`). Application roles have INSERT and SELECT only. Corrections supersede. |
 | Provenance (G-12) | Every material row has NOT NULL `evidence_id`, `run_id`, and a rule version. Evidence points into a checksummed artifact. |
 | Registrant identity (G-09) | CIK exists only in `registry.registrant`. A filing's registrant comes only from `registry.filing_registrant_link` with source SUB, submissions JSON, or filing header. There is no accession-prefix column or option. Portfolio CIK or LEI assertions, when stored, are append-only rows on `identity.legal_entity_identifier` (ADR 0018) and are not `registry.registrant.cik`. |
@@ -39,8 +39,8 @@ ingestion), and [ADR 0012](adr/0012-soi-ingestion.md) (SOI ingestion). Source fa
 
 | Schema | Holds |
 | --- | --- |
-| `ops` | Runs and outcomes, rule versions and activations, audit events, coverage assertions, artifact-processing ledger, projection exceptions, migration ledger |
-| `raw` | Artifacts (downloaded bytes), artifact lineage, ZIP members, table loads, raw rows, JSON documents and flattened JSON values |
+| `ops` | Runs and outcomes, rule versions and activations, audit events, coverage assertions, artifact-processing ledger, projection exceptions (`FIELD_COUNT_MISMATCH`, `ORPHAN_ADSH`, `FOOTLEN_MISMATCH`), migration ledger |
+| `raw` | Artifacts (downloaded bytes), artifact lineage, ZIP members, table loads, raw rows, NUM quoted-recovery sidecar, JSON documents and flattened JSON values |
 | `registry` | Registrants, registrant attribute and name-history observations, data-set releases and listings, BDC Report editions, filings, registrant links, filing attributes, filing documents, amendment decisions |
 | `evidence` | Evidence locators and supplementary (corroborating or contradicting) evidence |
 | `obs` | SOI row observations and classifications, NUM facts, position observations and sources, groups, field values, corroborations, borrower-name observations, cross-artifact equivalence |
@@ -62,6 +62,7 @@ erDiagram
   RAW_TABULAR_ROW ||--o{ EVIDENCE : row_or_cell
   REGISTRY_FILING ||--o{ FILING_REGISTRANT_LINK : explicit_metadata
   REGISTRY_REGISTRANT ||--o{ FILING_REGISTRANT_LINK : named_by
+  RAW_TABULAR_ROW ||--o| NUM_QUOTED_RECOVERY : recovered_cells
   RAW_TABULAR_ROW ||--o{ SOI_ROW_OBSERVATION : projected
   REGISTRY_FILING ||--o{ SOI_ROW_OBSERVATION : adsh_equals_accession
   SOI_ROW_OBSERVATION ||--o{ SOI_ROW_CLASSIFICATION : classified
@@ -165,7 +166,9 @@ review; the pipeline writer role cannot write mappings).
 Guardrail-fixed sets are PostgreSQL enums in `ref` (`resolution_state`, `value_state`,
 `mapping_status`, `evidence_level`, `evidence_status`, `coverage_state`, `parse_status`,
 `period_role`, `duration_kind`, `currency_state`, `scale_state`, `validation_outcome`,
-`actor_kind`, `filing_link_source`, and others). Extensible sets are reference tables
+`actor_kind`, `filing_link_source`, and others). `parse_status` includes `OK` (naive
+width equals the header), `FIELD_COUNT_MISMATCH` (unquoted extra tabs or invalid quotes),
+and `QUOTED_RECOVERY` (NUM-only valid quoted extra-tab rows). Extensible sets are reference tables
 (`ref.source_type`, `ref.dataset_table`, `ref.field_definition`, `ref.registrant_attribute`,
 `ref.filing_attribute`).
 

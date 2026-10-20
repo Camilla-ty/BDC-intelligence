@@ -18,7 +18,7 @@ import { runSoiLoad } from "../load/soi-run.mjs";
 import { runNumLoad } from "../load/num-run.mjs";
 import { datasetNumUnitLegacy } from "../load/units/dataset-num.mjs";
 import {
-  FAKE, defaultSoiRows, defaultSources, defaultSubRows, numFactRow, numSegmentsPlain, numTsv, soiTsv, subTsv,
+  FAKE, defaultSoiRows, defaultSources, defaultSubRows, numFactRow, numLine, numSegmentsPlain, numTsv, soiTsv, subTsv,
   writeSyntheticTree,
 } from "./synthetic.mjs";
 import { buildStoredZip } from "./zip-store.mjs";
@@ -39,7 +39,20 @@ WHERE t.table_code = 'NUM' ORDER BY r.line_number`),
        n.value_raw, n.value_state::text
 FROM obs.num_fact_observation n ORDER BY n.tabular_row_id, n.tag`),
     exceptions: query(database, `SELECT kind FROM ops.projection_exception ORDER BY id`),
+    recoveries: query(database, `SELECT r.line_number::text, r.parse_status::text, q.recovered_field_count::text
+FROM raw.num_quoted_recovery q
+JOIN raw.tabular_row r ON r.id = q.tabular_row_id
+ORDER BY r.line_number`),
   };
+}
+
+function quotedNumRaw({ extraTabs = 1, footnote = "", footlen = "0", identifier = FAKE.ident, value = "100" }) {
+  const row = numFactRow({ tag: "InvestmentOwnedAtCost", value, identifier, footnote, footlen });
+  const quotedSeg = `"${row.segments}${"\t".repeat(extraTabs)}"`;
+  return [
+    row.adsh, row.tag, row.version, row.ddate, row.qtrs, row.uom,
+    quotedSeg, row.dimn, row.value, row.footnote, row.footlen,
+  ].join("\t");
 }
 
 function sourcesWithNum(numRows, { soiRows = defaultSoiRows() } = {}) {
@@ -163,6 +176,67 @@ test("a malformed accession is rejected and does not leave a committed NUM load"
     /accession number/,
   );
   assert.equal(query(LEGACY_DB, "SELECT count(*) FROM raw.table_load WHERE table_code = 'NUM'").join(), "0");
+}));
+
+test("quoted NUM recovery matches on stream and legacy loaders", withTwoDbs(async (dataDir) => {
+  const identWithTab = `${FAKE.ident}\t`;
+  const pass = quotedNumRaw({ extraTabs: 1, identifier: identWithTab });
+  const d6fail = quotedNumRaw({ extraTabs: 1, footlen: "4" });
+  const invalid = `${FAKE.acc}\t"TEST ONLY unclosed`;
+  const unquoted = `${numLine(numFactRow({ tag: "InvestmentOwnedAtCost", value: "50" }))}\textra`;
+  const ok = numFactRow({ tag: "InvestmentOwnedBalancePrincipalAmount", value: "100" });
+  writeSyntheticTree(dataDir, sourcesWithNum([ok, pass, d6fail, invalid, unquoted]));
+
+  await runLoad({ dataDir, database: STREAM_DB, log: () => {} });
+  await runSoiLoad({ dataDir, database: STREAM_DB, log: () => {} });
+  const streamed = await runNumLoad({ dataDir, database: STREAM_DB, log: () => {} });
+
+  await runLoad({ dataDir, database: LEGACY_DB, log: () => {} });
+  await runSoiLoad({ dataDir, database: LEGACY_DB, log: () => {} });
+  const legacy = await runLegacyNumLoad({ dataDir, database: LEGACY_DB });
+
+  assert.deepEqual(fingerprint(STREAM_DB), fingerprint(LEGACY_DB));
+  assert.equal(Number(streamed.totals.num_rows), 5);
+  assert.equal(Number(streamed.totals.num_field_count_mismatch_rows), 4);
+  assert.equal(Number(streamed.totals.num_quoted_recovery_rows), 2);
+  assert.equal(Number(streamed.totals.num_footlen_mismatch_rows), 1);
+  assert.equal(Number(legacy.num_quoted_recovery_rows), 2);
+  assert.equal(
+    query(STREAM_DB, `SELECT count(*) FROM raw.tabular_row r JOIN raw.table_load t ON t.id = r.table_load_id
+WHERE t.table_code = 'NUM' AND r.parse_status = 'QUOTED_RECOVERY'`).join(),
+    "2",
+  );
+  assert.equal(
+    query(STREAM_DB, `SELECT count(*) FROM ops.projection_exception e
+JOIN raw.table_load t ON t.id = e.table_load_id
+WHERE t.table_code = 'NUM' AND e.kind = 'FOOTLEN_MISMATCH'`).join(),
+    "1",
+  );
+  assert.equal(
+    query(STREAM_DB, `SELECT count(*) FROM ops.projection_exception e
+JOIN raw.table_load t ON t.id = e.table_load_id
+WHERE t.table_code = 'NUM' AND e.kind = 'FIELD_COUNT_MISMATCH'`).join(),
+    "2",
+  );
+  assert.equal(
+    query(STREAM_DB, `SELECT count(*) FROM obs.num_fact_observation n
+JOIN raw.tabular_row r ON r.id = n.tabular_row_id
+WHERE r.parse_status = 'QUOTED_RECOVERY'`).join(),
+    "1",
+  );
+  assert.equal(
+    query(STREAM_DB, `SELECT n.identifier_member_raw FROM obs.num_fact_observation n
+JOIN raw.tabular_row r ON r.id = n.tabular_row_id
+WHERE r.parse_status = 'QUOTED_RECOVERY'`).join(),
+    identWithTab,
+  );
+  assert.equal(
+    query(STREAM_DB, `SELECT obs.cell_by_label(r.id, 'value') = obs.num_cell_by_label(r.id, 'value')
+FROM raw.tabular_row r JOIN raw.table_load t ON t.id = r.table_load_id
+WHERE t.table_code = 'NUM' AND r.parse_status = 'QUOTED_RECOVERY'
+  AND r.id IN (SELECT tabular_row_id FROM obs.num_fact_observation)`).join(),
+    "f",
+  );
 }));
 
 test("invalid UTF-8 in datasets/num.tsv fails closed", withTwoDbs(async (dataDir) => {

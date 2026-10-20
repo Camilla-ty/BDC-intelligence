@@ -12,6 +12,7 @@ import { createInterface } from "node:readline";
 import { NUM_MEMBER_PATH, VERIFIED_NUM_HEADER } from "../../lib/num-schema.mjs";
 import { copyBlock, formatCopyRow, lit, num, openPipelineSession, queryRows } from "../../lib/db.mjs";
 import { parseIdentifierMemberFromSegments } from "../../normalize/num-segments.mjs";
+import { recoverQuotedNumCells } from "../../parse/num-quoted-tsv.mjs";
 import { EMPTY_BUFFER_SHA256, parseNumTsv, streamNumTsv } from "../../parse/num.mjs";
 import { listMembers, readMember, streamMemberChunks } from "../../parse/zip.mjs";
 import { LOCATION_COLUMNS, artifactBlock, finishBlock, prelude } from "../sql.mjs";
@@ -68,15 +69,54 @@ function createIdentSql() {
   return `CREATE TEMP TABLE _ident (line_number bigint PRIMARY KEY, identifier_member text) ON COMMIT DROP;`;
 }
 
+function createQuotedSql() {
+  return `CREATE TEMP TABLE _quoted (line_number bigint PRIMARY KEY, recovered_cells jsonb) ON COMMIT DROP;`;
+}
+
+function quotedRecoveryRows(rows) {
+  const out = [];
+  for (const row of rows) {
+    const naive = row.raw.split("\t");
+    if (naive.length === WIDTH) continue;
+    const recovered = recoverQuotedNumCells(row.raw, WIDTH);
+    if (!recovered) continue;
+    out.push([row.lineNumber, JSON.stringify(recovered.cells)]);
+  }
+  return out;
+}
+
+function identifierMemberFromRaw(raw) {
+  const naive = raw.split("\t");
+  const cells = naive.length === WIDTH
+    ? naive
+    : recoverQuotedNumCells(raw, WIDTH)?.cells;
+  if (!cells) return null;
+  return parseIdentifierMemberFromSegments(cells[SEGMENTS - 1]) ?? "";
+}
+
 function afterTsvSql({ width, parserId, projId, runId, header, headerSha256, rowCount, mismatches }) {
   return `
 ${tableLoadSql({ header, headerSha256, rowCount, mismatches, status: "OK", ruleId: parserId, runId })}
 INSERT INTO raw.tabular_row (table_load_id, line_number, raw_line, raw_line_sha256, cells, field_count, parse_status, run_id)
 SELECT pg_temp.ctx('load'), t.line_number, t.raw_line, encode(sha256(convert_to(t.raw_line, 'UTF8')), 'hex'),
        string_to_array(t.raw_line, E'\\t'), cardinality(string_to_array(t.raw_line, E'\\t')),
-       (CASE WHEN cardinality(string_to_array(t.raw_line, E'\\t')) = ${width} THEN 'OK' ELSE 'FIELD_COUNT_MISMATCH' END)::ref.parse_status,
+       (CASE
+          WHEN cardinality(string_to_array(t.raw_line, E'\\t')) = ${width} THEN 'OK'
+          WHEN EXISTS (SELECT 1 FROM _quoted q WHERE q.line_number = t.line_number) THEN 'QUOTED_RECOVERY'
+          ELSE 'FIELD_COUNT_MISMATCH'
+        END)::ref.parse_status,
        ${num(runId)}
 FROM _tsv t ORDER BY t.line_number;
+
+INSERT INTO raw.num_quoted_recovery (tabular_row_id, recovered_cells, recovered_field_count, parser_rule_version_id, run_id)
+SELECT r.id,
+       ARRAY(SELECT e FROM jsonb_array_elements_text(q.recovered_cells) WITH ORDINALITY AS t(e, ord) ORDER BY ord),
+       jsonb_array_length(q.recovered_cells),
+       ${num(parserId)}, ${num(runId)}
+FROM raw.tabular_row r
+JOIN _quoted q ON q.line_number = r.line_number
+WHERE r.table_load_id = pg_temp.ctx('load')
+ORDER BY r.line_number;
 
 CREATE TEMP TABLE _mismatch (${LOCATION_COLUMNS}) ON COMMIT DROP;
 INSERT INTO _mismatch
@@ -97,10 +137,41 @@ SELECT pg_temp.ctx('load'), s.tabular_row_id, 'FIELD_COUNT_MISMATCH',
 FROM _mismatch s JOIN _mismatch_ev e ON e.tabular_row_id = s.tabular_row_id
 ORDER BY s.ord;
 
-CREATE TEMP TABLE _ok ON COMMIT DROP AS
-SELECT r.id AS tabular_row_id, r.line_number, r.cells
+CREATE TEMP TABLE _footlen (${LOCATION_COLUMNS}) ON COMMIT DROP;
+INSERT INTO _footlen
+SELECT pg_temp.ctx('artifact'), 'L1_STRUCTURED_DATASET'::ref.evidence_level, r.id, NULL, NULL, NULL, r.line_number
 FROM raw.tabular_row r
-WHERE r.table_load_id = pg_temp.ctx('load') AND r.parse_status = 'OK';
+JOIN raw.table_load tl ON tl.id = r.table_load_id
+JOIN raw.num_quoted_recovery q ON q.tabular_row_id = r.id
+WHERE r.table_load_id = pg_temp.ctx('load')
+  AND r.parse_status = 'QUOTED_RECOVERY'
+  AND NOT raw.num_quoted_footlen_ok(q.recovered_cells, tl.header)
+ORDER BY r.line_number;
+CREATE TEMP TABLE _footlen_ev (id bigint, artifact_id bigint, tabular_row_id bigint, column_position integer, json_path text) ON COMMIT DROP;
+WITH ins AS (
+  INSERT INTO evidence.evidence (evidence_level, artifact_id, locator_type, tabular_row_id, column_position, column_label, json_path, run_id)
+  SELECT s.evidence_level, s.artifact_id, 'TSV_ROW'::ref.locator_type, s.tabular_row_id, s.column_position, s.column_label, s.json_path, ${num(runId)}
+  FROM _footlen s ORDER BY s.ord
+  RETURNING id, artifact_id, tabular_row_id, column_position, json_path)
+INSERT INTO _footlen_ev SELECT * FROM ins;
+INSERT INTO ops.projection_exception (table_load_id, tabular_row_id, kind, detail, evidence_id, rule_version_id, run_id)
+SELECT pg_temp.ctx('load'), s.tabular_row_id, 'FOOTLEN_MISMATCH',
+       'NUM quoted-recovery footnote length does not equal footlen; recovery kept, not projected (SOURCE_SCHEMAS 4.8)',
+       e.id, ${num(projId)}, ${num(runId)}
+FROM _footlen s JOIN _footlen_ev e ON e.tabular_row_id = s.tabular_row_id
+ORDER BY s.ord;
+
+CREATE TEMP TABLE _ok ON COMMIT DROP AS
+SELECT r.id AS tabular_row_id, r.line_number,
+       CASE WHEN r.parse_status = 'OK' THEN r.cells ELSE q.recovered_cells END AS cells
+FROM raw.tabular_row r
+JOIN raw.table_load tl ON tl.id = r.table_load_id
+LEFT JOIN raw.num_quoted_recovery q ON q.tabular_row_id = r.id
+WHERE r.table_load_id = pg_temp.ctx('load')
+  AND (
+    r.parse_status = 'OK'
+    OR (r.parse_status = 'QUOTED_RECOVERY' AND raw.num_quoted_footlen_ok(q.recovered_cells, tl.header))
+  );
 SELECT pg_temp.fail('NUM adsh cell is not an accession number') FROM _ok WHERE cells[${ADSH}] !~ '^[0-9]{10}-[0-9]{2}-[0-9]{6}$' LIMIT 1;
 SELECT pg_temp.fail('NUM tag cell is empty') FROM _ok WHERE cells[${TAG}] = '' LIMIT 1;
 SELECT pg_temp.fail('NUM version cell is empty') FROM _ok WHERE cells[${VERSION}] = '' LIMIT 1;
@@ -182,6 +253,9 @@ INSERT INTO _counts VALUES
   ('num_rows_with_carriage_return', ${carriageReturns}),
   ('num_header_width', ${width});
 INSERT INTO _counts SELECT 'num_ok_rows', count(*) FROM _ok;
+INSERT INTO _counts SELECT 'num_quoted_recovery_rows', count(*) FROM raw.tabular_row r
+  WHERE r.table_load_id = pg_temp.ctx('load') AND r.parse_status = 'QUOTED_RECOVERY';
+INSERT INTO _counts SELECT 'num_footlen_mismatch_rows', count(*) FROM _footlen;
 INSERT INTO _counts SELECT 'num_orphan_adsh', count(*) FROM _orphan;
 INSERT INTO _counts SELECT 'num_fact_observations', count(*) FROM obs.num_fact_observation o
   JOIN raw.tabular_row r ON r.id = o.tabular_row_id WHERE r.table_load_id = pg_temp.ctx('load');
@@ -227,9 +301,9 @@ ${artifactBlock("artifact", entry, runId)}
 function identifierRowsFromParsed(rows) {
   const identifierByLine = new Map();
   for (const row of rows) {
-    const cells = row.raw.split("\t");
-    if (cells.length !== WIDTH) continue;
-    identifierByLine.set(row.lineNumber, parseIdentifierMemberFromSegments(cells[SEGMENTS - 1]) ?? "");
+    const member = identifierMemberFromRaw(row.raw);
+    if (member == null) continue;
+    identifierByLine.set(row.lineNumber, member);
   }
   return [...identifierByLine.entries()].map(([lineNumber, member]) => [lineNumber, member]);
 }
@@ -244,6 +318,8 @@ export function bufferedNumLoadSql({
   return `${head}
 ${createTsvSql()}
 ${copyBlock("_tsv", ["line_number", "raw_line"], parsed.rows.map((r) => [r.lineNumber, r.raw]))}
+${createQuotedSql()}
+${copyBlock("_quoted", ["line_number", "recovered_cells"], quotedRecoveryRows(parsed.rows))}
 ${afterTsvSql({
     width: WIDTH, parserId, projId, runId,
     header: parsed.header, headerSha256: parsed.headerSha256,
@@ -285,13 +361,16 @@ async function applyNumStream({
   const parserId = rules["parser.sec_num_tsv"];
   const projId = rules["obs.projection.num"];
   const identPath = path.join(tmpdir(), `bdc-num-ident-${process.pid}-${randomBytes(8).toString("hex")}`);
+  const quotedPath = path.join(tmpdir(), `bdc-num-quoted-${process.pid}-${randomBytes(8).toString("hex")}`);
   const session = await openPipelineSession(database);
   let identOut;
+  let quotedOut;
   let rowCount = 0;
   let mismatches = 0;
   let carriageReturns = 0;
   try {
     identOut = createWriteStream(identPath);
+    quotedOut = createWriteStream(quotedPath);
     await session.query(unitPrelude(entry, runId, releaseId));
     await session.query(createTsvSql());
     await session.copyFrom("_tsv", ["line_number", "raw_line"], (async function* () {
@@ -300,13 +379,32 @@ async function applyNumStream({
         rowCount += 1;
         if (event.raw.includes("\r")) carriageReturns += 1;
         const cells = event.raw.split("\t");
-        if (cells.length !== WIDTH) mismatches += 1;
-        else await writeIdentLine(identOut, event.lineNumber, parseIdentifierMemberFromSegments(cells[SEGMENTS - 1]) ?? "");
+        if (cells.length !== WIDTH) {
+          mismatches += 1;
+          const recovered = recoverQuotedNumCells(event.raw, WIDTH);
+          if (recovered) {
+            await writeIdentLine(identOut, event.lineNumber,
+              parseIdentifierMemberFromSegments(recovered.cells[SEGMENTS - 1]) ?? "");
+            await writeIdentLine(quotedOut, event.lineNumber, JSON.stringify(recovered.cells));
+          }
+        } else {
+          await writeIdentLine(identOut, event.lineNumber,
+            parseIdentifierMemberFromSegments(cells[SEGMENTS - 1]) ?? "");
+        }
         yield [event.lineNumber, event.raw];
       }
     })());
     identOut.end();
+    quotedOut.end();
     await finished(identOut);
+    await finished(quotedOut);
+    await session.query(createQuotedSql());
+    await session.copyFrom("_quoted", ["line_number", "recovered_cells"], (async function* () {
+      const lines = createInterface({ input: createReadStream(quotedPath), crlfDelay: Infinity });
+      for await (const line of lines) {
+        if (line !== "") yield line;
+      }
+    })());
     await session.query(afterTsvSql({
       width: WIDTH, parserId, projId, runId,
       header: headerEvent.header, headerSha256: headerEvent.headerSha256,
@@ -325,8 +423,10 @@ async function applyNumStream({
     return sessionLines(body);
   } finally {
     identOut?.destroy();
+    quotedOut?.destroy();
     await session.close().catch(() => undefined);
     rmSync(identPath, { force: true });
+    rmSync(quotedPath, { force: true });
   }
 }
 

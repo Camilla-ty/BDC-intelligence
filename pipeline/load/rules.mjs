@@ -74,16 +74,21 @@ export const RULES = [
   // is unchanged. Hosted v5 remains stored.
   { code: "pipeline.soi_load", kind: "EXTRACTION", version: "6", files: ["pipeline/load/soi-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
     spec: "docs/adr/0012-soi-ingestion.md", description: "Offline SOI loader: processes ZIP artifacts already loaded by registry:load; LOADED on any prior version of this rule_code, or any outcome on the current version, skips the artifact" },
-  { code: "parser.sec_num_tsv", kind: "PARSER", version: "2",
-    files: ["pipeline/parse/num.mjs", "pipeline/parse/zip.mjs", "pipeline/lib/num-schema.mjs"],
-    spec: "docs/SOURCE_SCHEMAS.md 3.3, 4.3, 4.8", description: "Lands datasets/num.tsv exactly as received; documented eleven-column header is verified" },
-  { code: "obs.projection.num", kind: "NORMALIZATION", version: "2",
+  { code: "parser.sec_num_tsv", kind: "PARSER", version: "3",
+    files: [
+      "pipeline/parse/num.mjs", "pipeline/parse/zip.mjs", "pipeline/lib/num-schema.mjs",
+      "pipeline/parse/num-quoted-tsv.mjs",
+    ],
+    spec: "docs/SOURCE_SCHEMAS.md 3.3, 4.3, 4.8",
+    description: "Lands datasets/num.tsv exactly as received; documented eleven-column header is verified; syntactically valid quoted extra-tab rows are classified QUOTED_RECOVERY" },
+  { code: "obs.projection.num", kind: "NORMALIZATION", version: "3",
     files: [
       "pipeline/load/units/dataset-num.mjs", "pipeline/normalize/num-segments.mjs",
       "pipeline/load/sql.mjs", "pipeline/lib/num-schema.mjs",
+      "pipeline/parse/num-quoted-tsv.mjs",
     ],
-    spec: "docs/SOURCE_SCHEMAS.md 4.3; docs/DATA_MODEL.md",
-    description: "Projects each OK NUM line to obs.num_fact_observation; ddate is YYYYMMDD; identifier member is parsed from segments; orphan adsh rows stay raw only" },
+    spec: "docs/SOURCE_SCHEMAS.md 4.3, 4.8; docs/DATA_MODEL.md",
+    description: "Projects each OK NUM line and each D6-valid QUOTED_RECOVERY row to obs.num_fact_observation from recovered cells; ddate is YYYYMMDD; identifier member is parsed from segments without trimming; D6 failures stay FOOTLEN_MISMATCH; orphan adsh rows stay raw only" },
   // v3: same Hosted session error handling as registry_load v6.
   { code: "pipeline.num_load", kind: "EXTRACTION", version: "3",
     files: ["pipeline/load/num-run.mjs", "pipeline/load/run.mjs", "pipeline/lib/db.mjs", "pipeline/lib/fetch-log.mjs", "pipeline/lib/store.mjs"],
