@@ -74,7 +74,7 @@ describe("loadBorrowerPositionValuation", () => {
 
     expect(mocks.executeSql).toHaveBeenCalledTimes(1);
     const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
-    expect(sql).toMatch(/registry\.borrower_position_valuation\('/);
+    expect(sql).toMatch(/CROSS JOIN LATERAL registry\.borrower_position_valuation\(m\.legal_entity_id\)/);
     expect(sql).toContain(ENTITY);
     expect(sql).not.toMatch(/borrower_valuation_period_comparison/);
     expect(sql).toMatch(/json_agg\(row_to_json/);
@@ -118,7 +118,7 @@ describe("borrower detail valuation read wiring", () => {
 
     expect(page.match(/loadBorrowerPositionValuation/g)).toHaveLength(2);
     expect(loader.match(/borrower_position_valuation/g)?.length).toBeGreaterThanOrEqual(1);
-    expect(loader).toMatch(/FROM registry\.borrower_position_valuation/);
+    expect(loader).toMatch(/registry\.borrower_position_valuation\(m\.legal_entity_id\)/);
     expect(loader).not.toMatch(/borrower_valuation_period_comparison/);
     expect(page).not.toMatch(/borrower_valuation_period_comparison/);
   });

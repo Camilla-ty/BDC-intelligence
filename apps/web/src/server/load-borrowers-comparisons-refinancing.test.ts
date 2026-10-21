@@ -137,8 +137,8 @@ describe("loadBorrowerComparisonsAndRefinancing", () => {
 
     expect(mocks.executeSql).toHaveBeenCalledTimes(1);
     const sql = String(mocks.executeSql.mock.calls[0]?.[0] ?? "");
-    expect(sql).toMatch(/registry\.borrower_position_comparisons\('/);
-    expect(sql).toMatch(/registry\.borrower_refinancing_outcomes\('/);
+    expect(sql).toMatch(/CROSS JOIN LATERAL registry\.borrower_position_comparisons\(m\.legal_entity_id\)/);
+    expect(sql).toMatch(/CROSS JOIN LATERAL registry\.borrower_refinancing_outcomes\(m\.legal_entity_id\)/);
     expect(sql).toContain(ENTITY);
     expect(sql).toMatch(/::uuid/);
     expect(sql).toMatch(/json_build_object/);
