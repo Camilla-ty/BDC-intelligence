@@ -103,14 +103,15 @@ export const RULES = [
     ],
     spec: "docs/adr/0021-aug-2026-num-quoted-recovery-backfill.md",
     description: "One-time backfill of the ADR 0021 pinned artifact: inserts a new NUM table_load of the locked FIELD_COUNT_MISMATCH lines as QUOTED_RECOVERY rows with sidecars, FOOTLEN_MISMATCH exceptions, and facts that pass D6 and every obs.projection.num v3 gate; stored rows are not changed; LOADED on any version of this rule_code skips the artifact" },
-  { code: "obs.currency.from_num_unique_match", kind: "NORMALIZATION", version: "2",
+  // v2 rows stay in ops.rule_version and keep their stored bindings; v3 is ADR 0022.
+  { code: "obs.currency.from_num_unique_match", kind: "NORMALIZATION", version: "3",
     files: [
       "pipeline/normalize/num-currency-bind.mjs",
       "pipeline/load/num-currency-bind.mjs",
       "pipeline/bind-num-currency.mjs",
     ],
-    spec: "docs/SOURCE_SCHEMAS.md 5.4; docs/adr/0016-num-currency-binding.md",
-    description: "Append-only currency bind for SOI PRINCIPAL_AMOUNT, COST, and FAIR_VALUE when a unique NUM fact matches filing, date, identifier, expected tag, and equal value with an ISO currency uom; fail closed otherwise; join_basis OBSERVED_UNDOCUMENTED; no issuer→USD and no FX" },
+    spec: "docs/SOURCE_SCHEMAS.md 5.4; docs/adr/0016-num-currency-binding.md; docs/adr/0022-num-currency-binding-v3.md",
+    description: "Append-only currency bind for SOI PRINCIPAL_AMOUNT, COST, and FAIR_VALUE when exactly one eligible NUM fact matches filing, date, identifier, expected tag, and equal value with an ISO currency uom (unique-fact); NUM facts with RangeAxis or InvestmentCompanyNonconsolidatedSubsidiaryAxis are not eligible; heads whose SOI row has a non-empty Range Axis or Investment Company, Nonconsolidated Subsidiary Axis cell are excluded with a recorded reason; fail closed otherwise; join_basis OBSERVED_UNDOCUMENTED; no issuer→USD and no FX" },
   { code: "norm.borrower_name", kind: "NORMALIZATION", version: "1",
     files: ["pipeline/normalize/borrower-name.mjs", "pipeline/load/p4-min.mjs"],
     spec: "docs/METHODOLOGY.md 7; docs/SOURCE_SCHEMAS.md 5.3",

@@ -12,8 +12,18 @@
 // recomputes each head's expected outcome in SQL and checks integrity; exits 1 on any
 // disagreement or integrity failure.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
+
+// Large exports exceed V8's maximum string length when joined, so write one line at a time.
+function writeLines(file, lines) {
+  const fd = openSync(file, "w");
+  try {
+    for (const line of lines) writeSync(fd, `${line}\n`);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 delete process.env.PIPELINE_DATABASE_URL;
 delete process.env.DATABASE_URL;
@@ -37,8 +47,11 @@ const summary = (s) => ({
   corroborationLines: s.corroborations.length,
   fieldValueKeyDuplicates: s.fieldValueKeyDuplicates,
   corroborationDuplicates: s.corroborationDuplicates,
+  exclusionLines: s.exclusions.length,
+  exclusionDuplicates: s.exclusionDuplicates,
   fieldValuesSha256: s.fieldValuesSha256,
   corroborationsSha256: s.corroborationsSha256,
+  exclusionsSha256: s.exclusionsSha256,
 });
 
 if (mode === "fingerprint") {
@@ -55,11 +68,13 @@ if (mode === "fingerprint") {
   const ref = exportBindState(refDb);
   const cand = exportBindState(candDb);
   for (const [name, s] of [["reference", ref], ["candidate", cand]]) {
-    writeFileSync(path.join(outDir, `${name}-field-values.tsv`), `${s.fieldValues.join("\n")}\n`);
-    writeFileSync(path.join(outDir, `${name}-corroborations.tsv`), `${s.corroborations.join("\n")}\n`);
+    writeLines(path.join(outDir, `${name}-field-values.tsv`), s.fieldValues);
+    writeLines(path.join(outDir, `${name}-corroborations.tsv`), s.corroborations);
+    writeLines(path.join(outDir, `${name}-exclusions.tsv`), s.exclusions);
   }
   const fv = diffLines(ref.fieldValues, cand.fieldValues);
   const co = diffLines(ref.corroborations, cand.corroborations);
+  const ex = diffLines(ref.exclusions, cand.exclusions);
   const countDiffs = Object.keys({ ...ref.counts, ...cand.counts })
     .filter((k) => ref.counts[k] !== cand.counts[k])
     .map((k) => ({ table: k, reference: ref.counts[k], candidate: cand.counts[k] }));
@@ -69,14 +84,18 @@ if (mode === "fingerprint") {
     countDiffs,
     fieldValueDiff: { onlyReference: fv.onlyLeft.length, onlyCandidate: fv.onlyRight.length },
     corroborationDiff: { onlyReference: co.onlyLeft.length, onlyCandidate: co.onlyRight.length },
+    exclusionDiff: { onlyReference: ex.onlyLeft.length, onlyCandidate: ex.onlyRight.length },
     identical: countDiffs.length === 0
       && ref.fieldValueKeyDuplicates === 0 && cand.fieldValueKeyDuplicates === 0
       && ref.corroborationDuplicates === 0 && cand.corroborationDuplicates === 0
+      && ref.exclusionDuplicates === 0 && cand.exclusionDuplicates === 0
       && ref.fieldValuesSha256 === cand.fieldValuesSha256
-      && ref.corroborationsSha256 === cand.corroborationsSha256,
+      && ref.corroborationsSha256 === cand.corroborationsSha256
+      && ref.exclusionsSha256 === cand.exclusionsSha256,
   };
   writeFileSync(path.join(outDir, "diff-field-values.json"), JSON.stringify(fv, null, 2));
   writeFileSync(path.join(outDir, "diff-corroborations.json"), JSON.stringify(co, null, 2));
+  writeFileSync(path.join(outDir, "diff-exclusions.json"), JSON.stringify(ex, null, 2));
   writeFileSync(path.join(outDir, "compare.json"), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   if (!result.identical) process.exit(1);

@@ -106,6 +106,23 @@ JOIN ops.rule_version rv ON rv.id = c.rule_version_id
 JOIN ops.run r ON r.id = c.run_id
 WHERE c.id > ${lo} AND c.id <= ${hi};`;
 
+const EXCLUSIONS_SQL = (lo, hi) => `${READ_ONLY}${FIELD_VALUE_KEYS}
+SELECT concat_ws(E'\\t',
+  k.k,
+  x.reason,
+  coalesce(x.soi_column_label, '<null>'),
+  coalesce(x.soi_cell_raw, '<null>'),
+  coalesce(${ROW_LOC("n.tabular_row_id")}, '<null>'),
+  coalesce(x.num_axis, '<null>'),
+  rv.rule_code || '@' || rv.version,
+  r.run_kind::text)
+FROM obs.field_value_currency_exclusion x
+JOIN fv_key k ON k.id = x.field_value_id
+LEFT JOIN obs.num_fact_observation n ON n.id = x.num_fact_observation_id
+JOIN ops.rule_version rv ON rv.id = x.rule_version_id
+JOIN ops.run r ON r.id = x.run_id
+WHERE x.id > ${lo} AND x.id <= ${hi};`;
+
 const COUNTS_SQL = `${READ_ONLY}
 SELECT 'registrants', count(*) FROM registry.registrant UNION ALL
 SELECT 'filings', count(*) FROM registry.filing UNION ALL
@@ -117,6 +134,7 @@ SELECT 'field_values', count(*) FROM obs.position_field_value UNION ALL
 SELECT 'successors', count(*) FROM obs.position_field_value WHERE supersedes_id IS NOT NULL UNION ALL
 SELECT 'num_facts', count(*) FROM obs.num_fact_observation UNION ALL
 SELECT 'corroborations', count(*) FROM obs.field_value_corroboration UNION ALL
+SELECT 'currency_exclusions', count(*) FROM obs.field_value_currency_exclusion UNION ALL
 SELECT 'projection_exceptions', count(*) FROM ops.projection_exception UNION ALL
 SELECT 'evidence', count(*) FROM evidence.evidence UNION ALL
 SELECT 'artifact_processing', count(*) FROM ops.artifact_processing;`;
@@ -127,12 +145,18 @@ FROM ops.run r JOIN ops.run_outcome o ON o.run_id = r.id
 WHERE r.run_kind = 'NUM_CURRENCY_BIND'
 ORDER BY r.id;`;
 
-const sha = (lines) => createHash("sha256").update(lines.join("\n")).digest("hex");
+// Same digest as hashing lines.join("\n"), without building one string past V8's length limit.
+const sha = (lines) => {
+  const hash = createHash("sha256");
+  lines.forEach((line, i) => hash.update(i === 0 ? line : `\n${line}`));
+  return hash.digest("hex");
+};
 const duplicates = (lines) => lines.length - new Set(lines).size;
 
 export function exportBindState(database) {
   const fieldValues = pagedQuery(database, "obs.position_field_value", FIELD_VALUES_SQL).sort();
   const corroborations = pagedQuery(database, "obs.field_value_corroboration", CORROBORATIONS_SQL).sort();
+  const exclusions = pagedQuery(database, "obs.field_value_currency_exclusion", EXCLUSIONS_SQL).sort();
   const counts = Object.fromEntries(query(database, COUNTS_SQL).map((l) => l.split("\t")).map(([k, v]) => [k, Number(v)]));
   const bindOutcomes = query(database, BIND_OUTCOMES_SQL).map((l) => JSON.parse(l));
   return {
@@ -140,28 +164,38 @@ export function exportBindState(database) {
     bindOutcomes,
     fieldValues,
     corroborations,
+    exclusions,
     fieldValueKeyDuplicates: duplicates(fieldValues.map((l) => l.split("\t")[0])),
     corroborationDuplicates: duplicates(corroborations),
+    exclusionDuplicates: duplicates(exclusions),
     fieldValuesSha256: sha(fieldValues),
     corroborationsSha256: sha(corroborations),
+    exclusionsSha256: sha(exclusions),
   };
 }
 
-// Independent SQL restatement of the binding rule (SOURCE_SCHEMAS 5.4), used only to audit
-// what the binder wrote. Equality here is SQL numeric equality; the binder uses JavaScript
-// Number equality, so values beyond 15 significant digits are counted separately.
+// Independent SQL restatement of the v3 binding rule (SOURCE_SCHEMAS 5.4; ADR 0022), used
+// only to audit what the binder wrote. Equality here is SQL numeric equality; the binder uses
+// JavaScript Number equality, so values beyond 15 significant digits are counted separately.
 const AUDIT_SESSION = `${READ_ONLY}SET enable_nestloop = off;\nSET work_mem = '256MB';\n`;
+
+const PROHIBITED_AXES_RE = "(^|;)(InvestmentCompanyNonconsolidatedSubsidiaryAxis|RangeAxis)[(=]";
 
 const AUDIT_HEADS = `
 WITH heads AS MATERIALIZED (
   SELECT h.id, h.field_code, h.normalized_numeric, p.id AS position_id, p.filing_id, p.reported_date,
          p.holding_descriptor_raw,
+         coalesce(r.cells[array_position(tl.header, 'Investment Company, Nonconsolidated Subsidiary Axis')], '') <> ''
+           OR coalesce(r.cells[array_position(tl.header, 'Range Axis')], '') <> '' AS soi_excluded,
          CASE h.field_code
            WHEN 'PRINCIPAL_AMOUNT' THEN 'InvestmentOwnedBalancePrincipalAmount'
            WHEN 'COST' THEN 'InvestmentOwnedAtCost'
            WHEN 'FAIR_VALUE' THEN 'InvestmentOwnedAtFairValue' END AS tag
   FROM obs.position_field_value h
   JOIN obs.position_observation p ON p.id = h.position_observation_id
+  LEFT JOIN obs.soi_row_observation so ON so.id = p.origin_soi_row_observation_id
+  LEFT JOIN raw.tabular_row r ON r.id = so.tabular_row_id
+  LEFT JOIN raw.table_load tl ON tl.id = r.table_load_id
   WHERE h.field_code IN ('PRINCIPAL_AMOUNT', 'COST', 'FAIR_VALUE')
     AND h.value_state = 'REPORTED' AND h.normalized_numeric IS NOT NULL AND h.currency_state = 'UNKNOWN'
     AND NOT EXISTS (
@@ -169,44 +203,50 @@ WITH heads AS MATERIALIZED (
       WHERE s.supersedes_id = h.id AND r.run_kind <> 'NUM_CURRENCY_BIND')
 ),
 facts AS MATERIALIZED (
-  SELECT n.id, n.filing_id, n.reported_date, n.identifier_member_raw, n.tag, n.value_numeric, n.uom_raw
+  SELECT n.id, n.filing_id, n.reported_date, n.identifier_member_raw, n.tag, n.value_numeric, n.uom_raw,
+         coalesce(n.segments_raw, '') ~ '${PROHIBITED_AXES_RE}' AS prohibited
   FROM obs.num_fact_observation n
   WHERE n.value_state = 'REPORTED' AND n.value_numeric IS NOT NULL AND n.identifier_member_raw IS NOT NULL
     AND n.tag IN ('InvestmentOwnedBalancePrincipalAmount', 'InvestmentOwnedAtCost', 'InvestmentOwnedAtFairValue')
 ),
 tagged AS (
-  SELECT h.id AS head_id, n.id AS fact_id, n.uom_raw, (n.value_numeric = h.normalized_numeric) AS eq
+  SELECT h.id AS head_id, n.id AS fact_id, n.uom_raw, n.prohibited, (n.value_numeric = h.normalized_numeric) AS eq
   FROM heads h
   JOIN facts n
     ON n.filing_id = h.filing_id AND n.reported_date = h.reported_date
    AND n.identifier_member_raw = h.holding_descriptor_raw AND n.tag = h.tag
 ),
 agg AS (
-  SELECT h.id,
-         count(t.fact_id) AS n_tagged,
-         count(*) FILTER (WHERE t.eq) AS n_eq,
-         count(DISTINCT t.uom_raw) FILTER (WHERE t.eq AND t.uom_raw ~ '^[A-Z]{3}$') AS n_ccy,
-         min(t.uom_raw) FILTER (WHERE t.eq AND t.uom_raw ~ '^[A-Z]{3}$') AS ccy,
-         min(t.fact_id) FILTER (WHERE t.eq AND t.uom_raw ~ '^[A-Z]{3}$') AS promote_fact,
-         min(t.fact_id) AS only_fact
+  SELECT h.id, h.soi_excluded,
+         count(t.fact_id) FILTER (WHERE NOT t.prohibited) AS n_eligible,
+         count(t.fact_id) FILTER (WHERE t.prohibited) AS n_prohibited,
+         count(*) FILTER (WHERE t.eq AND NOT t.prohibited) AS n_eq,
+         count(DISTINCT t.uom_raw) FILTER (WHERE t.eq AND NOT t.prohibited) AS n_eq_units,
+         min(t.uom_raw) FILTER (WHERE t.eq AND NOT t.prohibited) AS eq_uom,
+         min(t.fact_id) FILTER (WHERE t.eq AND NOT t.prohibited) AS eq_fact,
+         min(t.fact_id) FILTER (WHERE NOT t.prohibited) AS only_fact
   FROM heads h LEFT JOIN tagged t ON t.head_id = h.id
-  GROUP BY h.id
+  GROUP BY h.id, h.soi_excluded
 ),
 expected AS (
-  SELECT id, n_tagged, n_eq, n_ccy, CASE
-    WHEN n_tagged = 0 THEN 'NONE'
-    WHEN n_eq = 0 AND n_tagged = 1 THEN 'NOT_EQUAL:' || only_fact
+  SELECT id, CASE
+    WHEN soi_excluded THEN 'NONE'
+    WHEN n_eligible = 0 THEN 'NONE'
+    WHEN n_eq = 0 AND n_eligible = 1 THEN 'NOT_EQUAL:' || only_fact
     WHEN n_eq = 0 THEN 'MULTIPLE_CANDIDATES'
-    WHEN n_ccy = 0 THEN 'NONE'
-    WHEN n_ccy > 1 THEN 'MULTIPLE_CANDIDATES'
-    ELSE 'PROMOTE:' || ccy || ':' || promote_fact END AS e,
+    WHEN n_eq > 1 THEN 'MULTIPLE_CANDIDATES'
+    WHEN eq_uom !~ '^[A-Z]{3}$' THEN 'NONE'
+    ELSE 'PROMOTE:' || eq_uom || ':' || eq_fact END AS e,
     CASE
-      WHEN n_tagged = 0 THEN 'zero_match'
-      WHEN n_eq = 0 AND n_tagged = 1 THEN 'value_mismatch'
+      WHEN soi_excluded THEN 'soi_dimension'
+      WHEN n_eligible = 0 AND n_prohibited > 0 THEN 'num_dimension'
+      WHEN n_eligible = 0 THEN 'zero_match'
+      WHEN n_eq = 0 AND n_eligible = 1 THEN 'value_mismatch'
       WHEN n_eq = 0 THEN 'ambiguous_value_mismatch'
-      WHEN n_ccy = 0 THEN 'non_currency_uom'
-      WHEN n_ccy > 1 THEN 'multiple_currencies'
-      ELSE 'unique_match' END AS reason
+      WHEN n_eq > 1 AND n_eq_units = 1 THEN 'multiple_equal_facts'
+      WHEN n_eq > 1 THEN 'multiple_units'
+      WHEN eq_uom !~ '^[A-Z]{3}$' THEN 'non_currency_uom'
+      ELSE 'unique_fact' END AS reason
   FROM agg
 ),
 succ AS MATERIALIZED (
@@ -308,7 +348,38 @@ SELECT 'head_with_successor_and_failure_row', count(*) FROM obs.field_value_corr
 UNION ALL
 SELECT 'num_facts_bound_to_more_than_one_head', count(*) FROM (
   SELECT 1 FROM obs.field_value_corroboration c WHERE c.outcome = 'EQUAL'
-  GROUP BY c.num_fact_observation_id HAVING count(*) > 1) d;`;
+  GROUP BY c.num_fact_observation_id HAVING count(*) > 1) d
+UNION ALL
+SELECT 'equal_fact_with_prohibited_axis', count(*) FROM obs.field_value_corroboration c
+  JOIN obs.num_fact_observation n ON n.id = c.num_fact_observation_id
+  WHERE c.outcome = 'EQUAL' AND coalesce(n.segments_raw, '') ~ '${PROHIBITED_AXES_RE}'
+UNION ALL
+SELECT 'bound_head_with_soi_dimension', count(*) FROM obs.position_field_value s
+  JOIN obs.position_field_value h ON h.id = s.supersedes_id
+  JOIN obs.position_observation p ON p.id = h.position_observation_id
+  JOIN obs.soi_row_observation so ON so.id = p.origin_soi_row_observation_id
+  WHERE s.currency_state = 'FROM_NUM_UNIQUE_MATCH' AND (
+    coalesce(obs.cell_by_label(so.tabular_row_id, 'Investment Company, Nonconsolidated Subsidiary Axis'), '') <> ''
+    OR coalesce(obs.cell_by_label(so.tabular_row_id, 'Range Axis'), '') <> '')
+UNION ALL
+SELECT 'soi_exclusion_on_bound_head', count(*) FROM obs.field_value_currency_exclusion x
+  WHERE x.reason <> 'NUM_PROHIBITED_DIMENSION'
+    AND EXISTS (SELECT 1 FROM obs.position_field_value s WHERE s.supersedes_id = x.field_value_id)
+UNION ALL
+SELECT 'soi_dimension_head_without_exclusion_after_success', count(*) FROM obs.current_position_field_value h
+  JOIN obs.position_observation p ON p.id = h.position_observation_id
+  JOIN obs.soi_row_observation so ON so.id = p.origin_soi_row_observation_id
+  WHERE h.field_code IN ('PRINCIPAL_AMOUNT', 'COST', 'FAIR_VALUE') AND h.value_state = 'REPORTED'
+    AND h.normalized_numeric IS NOT NULL AND h.currency_state = 'UNKNOWN'
+    AND EXISTS (SELECT 1 FROM ops.current_run_status rs WHERE rs.run_kind = 'NUM_CURRENCY_BIND' AND rs.status = 'SUCCEEDED')
+    AND (coalesce(obs.cell_by_label(so.tabular_row_id, 'Investment Company, Nonconsolidated Subsidiary Axis'), '') <> ''
+         OR coalesce(obs.cell_by_label(so.tabular_row_id, 'Range Axis'), '') <> '')
+    AND NOT EXISTS (SELECT 1 FROM obs.field_value_currency_exclusion x
+                    WHERE x.field_value_id = h.id AND x.reason <> 'NUM_PROHIBITED_DIMENSION')
+UNION ALL
+SELECT 'duplicate_exclusion', count(*) FROM (
+  SELECT 1 FROM obs.field_value_currency_exclusion x
+  GROUP BY x.field_value_id, x.reason, x.num_fact_observation_id, x.num_axis, x.rule_version_id HAVING count(*) > 1) d;`;
 
 const AUDIT_CURRENCY_SQL = `${READ_ONLY}
 SELECT concat_ws(E'\\t', s.field_code, s.currency_code, count(*)::text)
@@ -334,7 +405,7 @@ export function auditBindState(database) {
     const key = `${r.reason}\u0001${r.field}\u0001${r.expected.split(":")[0]}\u0001${r.expected === r.actual}`;
     tally.set(key, (tally.get(key) ?? 0) + 1);
     if (r.zeroKind) zeroKinds[r.zeroKind] = (zeroKinds[r.zeroKind] ?? 0) + 1;
-    if (r.reason !== "unique_match") {
+    if (r.reason !== "unique_fact") {
       const list = picked.get(r.reason) ?? [];
       if (list.length < EXAMPLES_PER_REASON) list.push(r);
       picked.set(r.reason, list);

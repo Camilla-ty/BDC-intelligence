@@ -1102,6 +1102,37 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION obs.check_field_value_currency_exclusion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  fv obs.position_field_value;
+  p obs.position_observation;
+  soi_row bigint;
+BEGIN
+  SELECT * INTO fv FROM obs.position_field_value WHERE id = NEW.field_value_id;
+  IF fv.field_code NOT IN ('PRINCIPAL_AMOUNT', 'COST', 'FAIR_VALUE') THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'currency exclusion requires a monetary field value';
+  END IF;
+  SELECT * INTO p FROM obs.position_observation WHERE id = fv.position_observation_id;
+  IF NEW.reason IN ('SOI_NONCONSOLIDATED_SUBSIDIARY_AXIS', 'SOI_RANGE_AXIS') THEN
+    SELECT s.tabular_row_id INTO soi_row FROM obs.soi_row_observation s WHERE s.id = p.origin_soi_row_observation_id;
+    IF NEW.soi_cell_raw IS DISTINCT FROM obs.cell_by_label(soi_row, NEW.soi_column_label) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = 'soi_cell_raw must equal the origin SOI row cell for soi_column_label';
+    END IF;
+  ELSIF NEW.reason = 'NUM_PROHIBITED_DIMENSION' AND NOT EXISTS (
+    SELECT 1 FROM obs.num_fact_observation n
+    WHERE n.id = NEW.num_fact_observation_id AND n.filing_id = p.filing_id
+      AND n.segments_raw ~ ('(^|;)' || NEW.num_axis || '[(=]')
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+      MESSAGE = 'excluded NUM fact must be from the same filing and carry num_axis in segments_raw';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
 CREATE FUNCTION obs.check_group_member() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1595,6 +1626,61 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION ops.abandon_num_currency_bind_run(p_run_id bigint, p_actor text, p_reason text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  r ops.run;
+  prior_status ops.run_status;
+  counts jsonb;
+BEGIN
+  IF p_actor IS NULL OR btrim(p_actor) = '' OR p_reason IS NULL OR btrim(p_reason) = '' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1', MESSAGE = 'abandon refused: an actor and a reason are required';
+  END IF;
+  PERFORM pg_advisory_xact_lock(8120261018);
+  SELECT * INTO r FROM ops.run WHERE id = p_run_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1', MESSAGE = format('abandon refused: run %s does not exist', p_run_id);
+  END IF;
+  IF r.run_kind <> 'NUM_CURRENCY_BIND' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+      MESSAGE = format('abandon refused: run %s is %s, not NUM_CURRENCY_BIND', p_run_id, r.run_kind);
+  END IF;
+  SELECT s.status INTO prior_status FROM ops.current_run_status s WHERE s.run_id = p_run_id;
+  IF prior_status <> 'STARTED' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+      MESSAGE = format('abandon refused: run %s is already %s', p_run_id, prior_status);
+  END IF;
+  IF (r.parameters->>'liveness_lock_class') IS DISTINCT FROM '81202610' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+      MESSAGE = format('abandon refused: run %s holds no liveness lock, so it cannot be shown to have stopped', p_run_id);
+  END IF;
+  IF NOT pg_try_advisory_xact_lock(81202610, p_run_id::integer) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+      MESSAGE = format('abandon refused: run %s is still active (its liveness lock is held)', p_run_id);
+  END IF;
+  SELECT jsonb_build_object(
+      'abandoned', true,
+      'batches_committed', count(*),
+      'last_committed_batch_index', coalesce(max(b.batch_index), 0),
+      'last_committed_field_value_id', max(b.last_field_value_id),
+      'heads_committed', coalesce(sum(b.heads_in_batch), 0),
+      'successors_committed', coalesce(sum(b.successors_written), 0),
+      'not_equal_committed', coalesce(sum(b.not_equal_written), 0),
+      'multiple_committed', coalesce(sum(b.multiple_written), 0),
+      'exclusions_committed', coalesce(sum(b.exclusions_written), 0))
+    INTO counts
+  FROM ops.num_currency_bind_batch b WHERE b.run_id = p_run_id;
+  INSERT INTO ops.run_outcome (run_id, status, finished_at, counts, error_summary)
+  VALUES (p_run_id, 'ABORTED', now(), counts,
+          format('abandoned by %s: %s (liveness lock was free: the run''s database session had ended, so no later write of this run can commit)',
+                 p_actor, p_reason));
+  INSERT INTO ops.audit_event (event_kind, subject_table, subject_id, actor, reason, details)
+  VALUES ('NUM_CURRENCY_BIND_ABANDONED', 'ops.run', p_run_id::text, p_actor, p_reason, counts);
+  RETURN counts;
+END
+$$;
+
 CREATE FUNCTION ops.add_supersession(rel regclass, subject_columns text, chain_mode text) RETURNS void
     LANGUAGE plpgsql
     AS $$
@@ -1661,6 +1747,27 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION ops.assert_num_currency_bind_live(p_run_id bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF (SELECT r.parameters->>'liveness_lock_class' FROM ops.run r
+      WHERE r.id = p_run_id AND r.run_kind = 'NUM_CURRENCY_BIND') IS DISTINCT FROM '81202610' THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+      MESSAGE = format('bind write refused: run %s has no liveness lock protocol', p_run_id);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_locks l
+    WHERE l.locktype = 'advisory' AND l.granted AND l.classid = 81202610
+      AND l.objid::bigint = p_run_id AND l.objsubid = 2
+      AND l.database = (SELECT d.oid FROM pg_database d WHERE d.datname = current_database())
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+      MESSAGE = format('bind write refused: run %s lost its liveness lock (its database session ended); the binder must stop', p_run_id);
+  END IF;
+END
+$$;
+
 CREATE FUNCTION ops.assert_subject_exists(subject_table text, subject_id bigint) RETURNS void
     LANGUAGE plpgsql
     AS $_$
@@ -1675,6 +1782,63 @@ BEGIN
   END IF;
 END
 $_$;
+
+CREATE FUNCTION ops.check_num_currency_bind_batch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  prev ops.num_currency_bind_batch;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM ops.run r WHERE r.id = NEW.run_id AND r.run_kind = 'NUM_CURRENCY_BIND') THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'bind checkpoint requires a NUM_CURRENCY_BIND run';
+  END IF;
+  IF EXISTS (SELECT 1 FROM ops.run_outcome o WHERE o.run_id = NEW.run_id) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'bind checkpoint cannot be added to a finished run';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM ops.run_rule_version rr WHERE rr.run_id = NEW.run_id AND rr.rule_version_id = NEW.rule_version_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'bind checkpoint rule version must be linked to its run';
+  END IF;
+  SELECT * INTO prev FROM ops.num_currency_bind_batch b
+  WHERE b.run_id = NEW.run_id ORDER BY b.batch_index DESC LIMIT 1;
+  IF NEW.batch_index <> coalesce(prev.batch_index, 0) + 1 THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'bind checkpoint batch_index must follow the previous batch';
+  END IF;
+  IF prev.id IS NOT NULL AND NEW.first_field_value_id <= prev.last_field_value_id THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'bind checkpoint head ranges must not overlap';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION ops.check_num_currency_bind_batch_live() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  PERFORM ops.assert_num_currency_bind_live(NEW.run_id);
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION ops.check_num_currency_bind_resume() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF (SELECT count(*) FROM ops.run r WHERE r.id IN (NEW.prior_run_id, NEW.run_id) AND r.run_kind = 'NUM_CURRENCY_BIND') <> 2 THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'resume claims link two NUM_CURRENCY_BIND runs';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM ops.run_outcome o WHERE o.run_id = NEW.prior_run_id AND o.status IN ('FAILED', 'ABORTED')
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'only a FAILED or ABORTED run can be resumed';
+  END IF;
+  IF EXISTS (SELECT 1 FROM ops.run_outcome o WHERE o.run_id = NEW.run_id) THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'the resuming run must not have finished';
+  END IF;
+  RETURN NEW;
+END
+$$;
 
 CREATE FUNCTION ops.check_projection_exception() RETURNS trigger
     LANGUAGE plpgsql
@@ -1825,6 +1989,71 @@ END
 $$;
 
 COMMENT ON FUNCTION ops.grant_layer_privileges() IS 'Writer: SELECT and INSERT on history tables, SELECT on ref; reader: SELECT on views only. Call from every migration that creates tables or views.';
+
+CREATE FUNCTION ops.start_num_currency_bind_run(p_code_version text, p_parameters jsonb, p_resumes_run_id bigint, p_rule_version text, p_rule_sha256 text) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  prior_kind text;
+  prior_status ops.run_status;
+  claimed_by bigint;
+  prior_rule text;
+  new_id bigint;
+BEGIN
+  IF p_resumes_run_id IS NOT NULL THEN
+    IF p_resumes_run_id < 1 OR p_resumes_run_id > 2147483647 THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCR1', MESSAGE = format('resume refused: run %s does not exist', p_resumes_run_id);
+    END IF;
+    PERFORM pg_advisory_xact_lock(81202611, p_resumes_run_id::integer);
+    SELECT r.run_kind, s.status INTO prior_kind, prior_status
+    FROM ops.run r JOIN ops.current_run_status s ON s.run_id = r.id WHERE r.id = p_resumes_run_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCR1', MESSAGE = format('resume refused: run %s does not exist', p_resumes_run_id);
+    END IF;
+    IF prior_kind <> 'NUM_CURRENCY_BIND' THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+        MESSAGE = format('resume refused: run %s is %s, not NUM_CURRENCY_BIND', p_resumes_run_id, prior_kind);
+    END IF;
+    IF prior_status = 'STARTED' THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+        MESSAGE = format('resume refused: run %s is STARTED; it may still be running. Confirm it has stopped with --abandon first', p_resumes_run_id);
+    END IF;
+    IF prior_status NOT IN ('FAILED', 'ABORTED') THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+        MESSAGE = format('resume refused: run %s is %s; only FAILED or ABORTED runs can be resumed', p_resumes_run_id, prior_status);
+    END IF;
+    SELECT c.run_id INTO claimed_by FROM ops.num_currency_bind_resume c WHERE c.prior_run_id = p_resumes_run_id;
+    IF FOUND THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+        MESSAGE = format('resume refused: run %s was already resumed by run %s', p_resumes_run_id, claimed_by);
+    END IF;
+    SELECT rv.version || '|' || rv.definition_sha256 INTO prior_rule
+    FROM ops.run_rule_version rr JOIN ops.rule_version rv ON rv.id = rr.rule_version_id
+    WHERE rr.run_id = p_resumes_run_id AND rv.rule_code = 'obs.currency.from_num_unique_match';
+    IF prior_rule IS DISTINCT FROM p_rule_version || '|' || p_rule_sha256 THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCR1',
+        MESSAGE = format('resume refused: run %s did not use obs.currency.from_num_unique_match v%s with the current definition',
+                         p_resumes_run_id, p_rule_version);
+    END IF;
+  END IF;
+
+  INSERT INTO ops.run (run_kind, code_version, parameters, started_at)
+  VALUES ('NUM_CURRENCY_BIND', p_code_version,
+          p_parameters || jsonb_build_object('liveness_lock_class', 81202610)
+            || CASE WHEN p_resumes_run_id IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('resumes_run_id', p_resumes_run_id) END,
+          now())
+  RETURNING id INTO new_id;
+  IF new_id > 2147483647 THEN
+    RAISE EXCEPTION USING ERRCODE = 'BDCR1', MESSAGE = 'run id exceeds the liveness lock key range';
+  END IF;
+  IF p_resumes_run_id IS NOT NULL THEN
+    INSERT INTO ops.num_currency_bind_resume (prior_run_id, run_id) VALUES (p_resumes_run_id, new_id);
+  END IF;
+  PERFORM pg_advisory_lock(81202610, new_id::integer);
+  RETURN new_id;
+END
+$$;
 
 CREATE FUNCTION ops.text_is_numeric_zero(value text) RETURNS boolean
     LANGUAGE sql IMMUTABLE
@@ -6964,6 +7193,40 @@ ALTER TABLE obs.field_value_corroboration ALTER COLUMN id ADD GENERATED ALWAYS A
     CACHE 1
 );
 
+CREATE TABLE obs.field_value_currency_exclusion (
+    id bigint NOT NULL,
+    field_value_id bigint NOT NULL,
+    reason text NOT NULL,
+    soi_column_label text,
+    soi_cell_raw text,
+    num_fact_observation_id bigint,
+    num_axis text,
+    rule_version_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT field_value_currency_exclusion_check CHECK (
+CASE reason
+    WHEN 'SOI_NONCONSOLIDATED_SUBSIDIARY_AXIS'::text THEN ((soi_column_label = 'Investment Company, Nonconsolidated Subsidiary Axis'::text) AND (soi_cell_raw IS NOT NULL) AND (soi_cell_raw <> ''::text) AND (num_fact_observation_id IS NULL) AND (num_axis IS NULL))
+    WHEN 'SOI_RANGE_AXIS'::text THEN ((soi_column_label = 'Range Axis'::text) AND (soi_cell_raw IS NOT NULL) AND (soi_cell_raw <> ''::text) AND (num_fact_observation_id IS NULL) AND (num_axis IS NULL))
+    ELSE ((soi_column_label IS NULL) AND (soi_cell_raw IS NULL) AND (num_fact_observation_id IS NOT NULL) AND (num_axis IS NOT NULL))
+END),
+    CONSTRAINT field_value_currency_exclusion_num_axis_check CHECK ((num_axis = ANY (ARRAY['InvestmentCompanyNonconsolidatedSubsidiaryAxis'::text, 'RangeAxis'::text]))),
+    CONSTRAINT field_value_currency_exclusion_reason_check CHECK ((reason = ANY (ARRAY['SOI_NONCONSOLIDATED_SUBSIDIARY_AXIS'::text, 'SOI_RANGE_AXIS'::text, 'NUM_PROHIBITED_DIMENSION'::text])))
+);
+
+COMMENT ON TABLE obs.field_value_currency_exclusion IS 'Append-only reasons a monetary field value was excluded from NUM currency binding: a non-empty SOI subsidiary or range cell, or a candidate NUM fact carrying a prohibited axis. The value keeps currency_state UNKNOWN.';
+
+COMMENT ON COLUMN obs.field_value_currency_exclusion.soi_cell_raw IS 'SOI cell exactly as disclosed on the position''s origin row.';
+
+ALTER TABLE obs.field_value_currency_exclusion ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME obs.field_value_currency_exclusion_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
 CREATE TABLE obs.maturity_inspection (
     id bigint NOT NULL,
     position_observation_id bigint NOT NULL,
@@ -7446,6 +7709,61 @@ ALTER TABLE ops.audit_event ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 ALTER TABLE ops.coverage_assertion ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME ops.coverage_assertion_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE TABLE ops.num_currency_bind_batch (
+    id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    rule_version_id bigint NOT NULL,
+    batch_index integer NOT NULL,
+    first_field_value_id bigint NOT NULL,
+    last_field_value_id bigint NOT NULL,
+    heads_in_batch integer NOT NULL,
+    successors_written integer NOT NULL,
+    equal_written integer NOT NULL,
+    not_equal_written integer NOT NULL,
+    multiple_written integer NOT NULL,
+    exclusions_written integer NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT num_currency_bind_batch_batch_index_check CHECK ((batch_index >= 1)),
+    CONSTRAINT num_currency_bind_batch_check CHECK ((first_field_value_id <= last_field_value_id)),
+    CONSTRAINT num_currency_bind_batch_check1 CHECK ((equal_written = successors_written)),
+    CONSTRAINT num_currency_bind_batch_equal_written_check CHECK ((equal_written >= 0)),
+    CONSTRAINT num_currency_bind_batch_exclusions_written_check CHECK ((exclusions_written >= 0)),
+    CONSTRAINT num_currency_bind_batch_heads_in_batch_check CHECK ((heads_in_batch >= 1)),
+    CONSTRAINT num_currency_bind_batch_multiple_written_check CHECK ((multiple_written >= 0)),
+    CONSTRAINT num_currency_bind_batch_not_equal_written_check CHECK ((not_equal_written >= 0)),
+    CONSTRAINT num_currency_bind_batch_successors_written_check CHECK ((successors_written >= 0))
+);
+
+COMMENT ON TABLE ops.num_currency_bind_batch IS 'Append-only checkpoint of one committed NUM_CURRENCY_BIND batch: the head-id range it covered and the rows it wrote. Written in the batch transaction.';
+
+ALTER TABLE ops.num_currency_bind_batch ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME ops.num_currency_bind_batch_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE TABLE ops.num_currency_bind_resume (
+    id bigint NOT NULL,
+    prior_run_id bigint NOT NULL,
+    run_id bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT num_currency_bind_resume_check CHECK ((prior_run_id <> run_id))
+);
+
+COMMENT ON TABLE ops.num_currency_bind_resume IS 'Append-only resume claims: a FAILED or ABORTED NUM_CURRENCY_BIND run is resumed by at most one later run.';
+
+ALTER TABLE ops.num_currency_bind_resume ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME ops.num_currency_bind_resume_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -10450,6 +10768,9 @@ ALTER TABLE ONLY obs.borrower_name_observation
 ALTER TABLE ONLY obs.field_value_corroboration
     ADD CONSTRAINT field_value_corroboration_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY obs.field_value_currency_exclusion
+    ADD CONSTRAINT field_value_currency_exclusion_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY obs.maturity_inspection_candidate
     ADD CONSTRAINT maturity_inspection_candidate_pkey PRIMARY KEY (id);
 
@@ -10512,6 +10833,21 @@ ALTER TABLE ONLY ops.audit_event
 
 ALTER TABLE ONLY ops.coverage_assertion
     ADD CONSTRAINT coverage_assertion_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY ops.num_currency_bind_batch
+    ADD CONSTRAINT num_currency_bind_batch_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY ops.num_currency_bind_batch
+    ADD CONSTRAINT num_currency_bind_batch_run_id_batch_index_key UNIQUE (run_id, batch_index);
+
+ALTER TABLE ONLY ops.num_currency_bind_resume
+    ADD CONSTRAINT num_currency_bind_resume_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY ops.num_currency_bind_resume
+    ADD CONSTRAINT num_currency_bind_resume_prior_run_id_key UNIQUE (prior_run_id);
+
+ALTER TABLE ONLY ops.num_currency_bind_resume
+    ADD CONSTRAINT num_currency_bind_resume_run_id_key UNIQUE (run_id);
 
 ALTER TABLE ONLY ops.projection_exception
     ADD CONSTRAINT projection_exception_pkey PRIMARY KEY (id);
@@ -10768,6 +11104,8 @@ CREATE INDEX borrower_name_observation_subject_idx ON obs.borrower_name_observat
 
 CREATE UNIQUE INDEX borrower_name_observation_supersedes_once ON obs.borrower_name_observation USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
 
+CREATE UNIQUE INDEX field_value_currency_exclusion_once ON obs.field_value_currency_exclusion USING btree (field_value_id, rule_version_id, reason, COALESCE(num_fact_observation_id, (0)::bigint), COALESCE(num_axis, ''::text));
+
 CREATE INDEX maturity_inspection_subject_idx ON obs.maturity_inspection USING btree (position_observation_id);
 
 CREATE UNIQUE INDEX maturity_inspection_supersedes_once ON obs.maturity_inspection USING btree (supersedes_id) WHERE (supersedes_id IS NOT NULL);
@@ -10942,6 +11280,8 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.borrower_name_obse
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.field_value_corroboration FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.field_value_currency_exclusion FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.maturity_inspection FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.maturity_inspection_candidate FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
@@ -10967,6 +11307,8 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON obs.soi_row_observatio
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.borrower_name_observation FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.field_value_corroboration FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.field_value_currency_exclusion FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON obs.maturity_inspection FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
@@ -10997,6 +11339,8 @@ CREATE TRIGGER check_borrower_name_successor BEFORE INSERT ON obs.borrower_name_
 CREATE TRIGGER check_fact_group_member_evidence BEFORE INSERT ON obs.position_observation_group_member FOR EACH ROW EXECUTE FUNCTION obs.check_fact_group_member_evidence();
 
 CREATE TRIGGER check_field_value_corroboration BEFORE INSERT ON obs.field_value_corroboration FOR EACH ROW EXECUTE FUNCTION obs.check_field_value_corroboration();
+
+CREATE TRIGGER check_field_value_currency_exclusion BEFORE INSERT ON obs.field_value_currency_exclusion FOR EACH ROW EXECUTE FUNCTION obs.check_field_value_currency_exclusion();
 
 CREATE TRIGGER check_group_member BEFORE INSERT ON obs.position_observation_group_member FOR EACH ROW EXECUTE FUNCTION obs.check_group_member();
 
@@ -11040,6 +11384,10 @@ CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ops.audit_event FOR EA
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ops.coverage_assertion FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ops.num_currency_bind_batch FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ops.num_currency_bind_resume FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ops.projection_exception FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_row BEFORE DELETE OR UPDATE ON ops.rule_activation FOR EACH ROW EXECUTE FUNCTION ops.forbid_mutation();
@@ -11060,6 +11408,10 @@ CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.audit_event FOR EACH 
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.coverage_assertion FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.num_currency_bind_batch FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.num_currency_bind_resume FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.projection_exception FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.rule_activation FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
@@ -11073,6 +11425,12 @@ CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.run_outcome FOR EACH 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.run_rule_version FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
 
 CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON ops.schema_migration FOR EACH STATEMENT EXECUTE FUNCTION ops.forbid_mutation();
+
+CREATE TRIGGER check_num_currency_bind_batch BEFORE INSERT ON ops.num_currency_bind_batch FOR EACH ROW EXECUTE FUNCTION ops.check_num_currency_bind_batch();
+
+CREATE TRIGGER check_num_currency_bind_batch_live BEFORE INSERT ON ops.num_currency_bind_batch FOR EACH ROW EXECUTE FUNCTION ops.check_num_currency_bind_batch_live();
+
+CREATE TRIGGER check_num_currency_bind_resume BEFORE INSERT ON ops.num_currency_bind_resume FOR EACH ROW EXECUTE FUNCTION ops.check_num_currency_bind_resume();
 
 CREATE TRIGGER check_projection_exception BEFORE INSERT ON ops.projection_exception FOR EACH ROW EXECUTE FUNCTION ops.check_projection_exception();
 
@@ -11497,6 +11855,18 @@ ALTER TABLE ONLY obs.field_value_corroboration
 ALTER TABLE ONLY obs.field_value_corroboration
     ADD CONSTRAINT field_value_corroboration_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
 
+ALTER TABLE ONLY obs.field_value_currency_exclusion
+    ADD CONSTRAINT field_value_currency_exclusion_field_value_id_fkey FOREIGN KEY (field_value_id) REFERENCES obs.position_field_value(id);
+
+ALTER TABLE ONLY obs.field_value_currency_exclusion
+    ADD CONSTRAINT field_value_currency_exclusion_num_fact_observation_id_fkey FOREIGN KEY (num_fact_observation_id) REFERENCES obs.num_fact_observation(id);
+
+ALTER TABLE ONLY obs.field_value_currency_exclusion
+    ADD CONSTRAINT field_value_currency_exclusion_rule_version_id_fkey FOREIGN KEY (rule_version_id) REFERENCES ops.rule_version(id);
+
+ALTER TABLE ONLY obs.field_value_currency_exclusion
+    ADD CONSTRAINT field_value_currency_exclusion_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
 ALTER TABLE ONLY obs.maturity_inspection_candidate
     ADD CONSTRAINT maturity_inspection_candidate_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
 
@@ -11682,6 +12052,24 @@ ALTER TABLE ONLY ops.coverage_assertion
 
 ALTER TABLE ONLY ops.coverage_assertion
     ADD CONSTRAINT coverage_assertion_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES ops.coverage_assertion(id);
+
+ALTER TABLE ONLY ops.num_currency_bind_batch
+    ADD CONSTRAINT num_currency_bind_batch_first_field_value_id_fkey FOREIGN KEY (first_field_value_id) REFERENCES obs.position_field_value(id);
+
+ALTER TABLE ONLY ops.num_currency_bind_batch
+    ADD CONSTRAINT num_currency_bind_batch_last_field_value_id_fkey FOREIGN KEY (last_field_value_id) REFERENCES obs.position_field_value(id);
+
+ALTER TABLE ONLY ops.num_currency_bind_batch
+    ADD CONSTRAINT num_currency_bind_batch_rule_version_id_fkey FOREIGN KEY (rule_version_id) REFERENCES ops.rule_version(id);
+
+ALTER TABLE ONLY ops.num_currency_bind_batch
+    ADD CONSTRAINT num_currency_bind_batch_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY ops.num_currency_bind_resume
+    ADD CONSTRAINT num_currency_bind_resume_prior_run_id_fkey FOREIGN KEY (prior_run_id) REFERENCES ops.run(id);
+
+ALTER TABLE ONLY ops.num_currency_bind_resume
+    ADD CONSTRAINT num_currency_bind_resume_run_id_fkey FOREIGN KEY (run_id) REFERENCES ops.run(id);
 
 ALTER TABLE ONLY ops.projection_exception
     ADD CONSTRAINT projection_exception_evidence_id_fkey FOREIGN KEY (evidence_id) REFERENCES evidence.evidence(id);
@@ -12235,6 +12623,15 @@ GRANT ALL ON FUNCTION identity.verify_legal_entity_identifier(p_legal_entity_id 
 REVOKE ALL ON FUNCTION identity.withdraw_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_supersede_reason text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint, p_copy_evidence_from_tip boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION identity.withdraw_legal_entity_identifier(p_legal_entity_id uuid, p_scheme text, p_relationship_role text, p_raw_value text, p_decided_by text, p_supersede_reason text, p_evidence_id bigint, p_researcher_citation_url text, p_researcher_citation_title text, p_researcher_citation_excerpt text, p_expected_current_id bigint, p_copy_evidence_from_tip boolean) TO resolution_writer;
 
+REVOKE ALL ON FUNCTION ops.abandon_num_currency_bind_run(p_run_id bigint, p_actor text, p_reason text) FROM PUBLIC;
+GRANT ALL ON FUNCTION ops.abandon_num_currency_bind_run(p_run_id bigint, p_actor text, p_reason text) TO bdc_pipeline_writer;
+
+REVOKE ALL ON FUNCTION ops.assert_num_currency_bind_live(p_run_id bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION ops.assert_num_currency_bind_live(p_run_id bigint) TO bdc_pipeline_writer;
+
+REVOKE ALL ON FUNCTION ops.start_num_currency_bind_run(p_code_version text, p_parameters jsonb, p_resumes_run_id bigint, p_rule_version text, p_rule_sha256 text) FROM PUBLIC;
+GRANT ALL ON FUNCTION ops.start_num_currency_bind_run(p_code_version text, p_parameters jsonb, p_resumes_run_id bigint, p_rule_version text, p_rule_sha256 text) TO bdc_pipeline_writer;
+
 REVOKE ALL ON FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) FROM PUBLIC;
 GRANT ALL ON FUNCTION registry.bdc_portfolio_changes(p_cik text, p_reported_date date) TO bdc_reader;
 
@@ -12552,6 +12949,10 @@ GRANT SELECT,INSERT ON TABLE obs.field_value_corroboration TO bdc_pipeline_write
 
 GRANT USAGE ON SEQUENCE obs.field_value_corroboration_id_seq TO bdc_pipeline_writer;
 
+GRANT SELECT,INSERT ON TABLE obs.field_value_currency_exclusion TO bdc_pipeline_writer;
+
+GRANT USAGE ON SEQUENCE obs.field_value_currency_exclusion_id_seq TO bdc_pipeline_writer;
+
 GRANT SELECT,INSERT ON TABLE obs.maturity_inspection TO bdc_pipeline_writer;
 
 GRANT SELECT,INSERT ON TABLE obs.maturity_inspection_candidate TO bdc_pipeline_writer;
@@ -12613,6 +13014,14 @@ GRANT SELECT,INSERT ON TABLE ops.audit_event TO bdc_pipeline_writer;
 GRANT USAGE ON SEQUENCE ops.audit_event_id_seq TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE ops.coverage_assertion_id_seq TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE ops.num_currency_bind_batch TO bdc_pipeline_writer;
+
+GRANT USAGE ON SEQUENCE ops.num_currency_bind_batch_id_seq TO bdc_pipeline_writer;
+
+GRANT SELECT,INSERT ON TABLE ops.num_currency_bind_resume TO bdc_pipeline_writer;
+
+GRANT USAGE ON SEQUENCE ops.num_currency_bind_resume_id_seq TO bdc_pipeline_writer;
 
 GRANT USAGE ON SEQUENCE ops.projection_exception_id_seq TO bdc_pipeline_writer;
 

@@ -39,11 +39,11 @@ ingestion), and [ADR 0012](adr/0012-soi-ingestion.md) (SOI ingestion). Source fa
 
 | Schema | Holds |
 | --- | --- |
-| `ops` | Runs and outcomes, rule versions and activations, audit events, coverage assertions, artifact-processing ledger, projection exceptions (`FIELD_COUNT_MISMATCH`, `ORPHAN_ADSH`, `FOOTLEN_MISMATCH`), migration ledger |
+| `ops` | Runs and outcomes, rule versions and activations, audit events, coverage assertions, artifact-processing ledger, projection exceptions (`FIELD_COUNT_MISMATCH`, `ORPHAN_ADSH`, `FOOTLEN_MISMATCH`), currency-bind batch checkpoints and resume claims (ADR 0022), migration ledger |
 | `raw` | Artifacts (downloaded bytes), artifact lineage, ZIP members, table loads, raw rows, NUM quoted-recovery sidecar, JSON documents and flattened JSON values |
 | `registry` | Registrants, registrant attribute and name-history observations, data-set releases and listings, BDC Report editions, filings, registrant links, filing attributes, filing documents, amendment decisions |
 | `evidence` | Evidence locators and supplementary (corroborating or contradicting) evidence |
-| `obs` | SOI row observations and classifications, NUM facts, position observations and sources, groups, field values, corroborations, borrower-name observations, cross-artifact equivalence |
+| `obs` | SOI row observations and classifications, NUM facts, position observations and sources, groups, field values, corroborations, currency-bind exclusions (ADR 0022), borrower-name observations, cross-artifact equivalence |
 | `identity` | Legal entities and aliases, economic groups, instruments and attribute assertions, positions, and append-only external identifier assertions (ADR 0018) |
 | `resolution` | Match candidates with per-attribute comparisons (no scores), the four decision tables, and append-only legal-entity consolidation decisions (ADR 0017) |
 | `validation` | Validation results and evidence-status assertions |
@@ -117,7 +117,7 @@ and `evidence.evidence` (omitted from the diagram for readability).
 | 3 | field requires Level 2 evidence and has neither Level 2 evidence nor `FILING_VERIFIED` | `UNKNOWN` |
 | 4 | evidence status `FILING_MISMATCH` | `UNRESOLVED` |
 | 5 | current mapping `OPEN_QUESTION` or `OBSERVED_UNCONFIRMED` | `PROVISIONAL` |
-| 6 | currency taken from a unique NUM match (an undocumented join) | `PROVISIONAL` |
+| 6 | currency taken from a unique-fact NUM match (an undocumented join; ADR 0022) | `PROVISIONAL` |
 | 7 | scale `UNRESOLVED` (Q4) | `UNRESOLVED` |
 | 8 | `FILING_VERIFIED`, or Level 2 evidence | `AUTHORITATIVE` |
 | 9 | otherwise (documented data-set column, not yet filing-verified) | `REPORTED_STRUCTURED` |
@@ -195,6 +195,7 @@ No web role exists yet.
 | `BDCL1` | Missing required link (source, member, or input), checked at commit |
 | `BDCD1` | Derivation gate violation |
 | `BDCI1` | Cross-row integrity violation (for example raw text not matching its source cell) |
+| `BDCR1` | Run state transition refused (currency-bind start, resume, abandon, or a write without the run's liveness lock; ADR 0022) |
 
 ## 11. Not in this phase
 

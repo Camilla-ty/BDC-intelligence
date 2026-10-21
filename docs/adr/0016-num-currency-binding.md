@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted. Binding uniqueness, dimension exclusions, and run checkpoints are amended by
+[0022](0022-num-currency-binding-v3.md).
 
 ## Context
 
