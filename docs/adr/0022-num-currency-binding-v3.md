@@ -72,18 +72,25 @@ record of which batches had committed.
 - **Run liveness (migration 0068).** A binder run starts through
   `ops.start_num_currency_bind_run` on a dedicated session. The same statement inserts the
   run and takes the session advisory lock `(81202610, run_id)`, and the session stays open
-  until the run ends. PostgreSQL releases the lock when the session ends, including process
-  death. Run `parameters` record `liveness_lock_class = 81202610`.
-- **Liveness fence (migration 0069).** Every binder write requires the run's liveness lock
-  to be held. `ops.assert_num_currency_bind_live(run_id)` raises `BDCR1` unless the run
+  until the run ends. PostgreSQL releases a session advisory lock when the server session
+  holding it ends, or when that session releases it. Run `parameters` record
+  `liveness_lock_class = 81202610`. Three events are kept apart: the binder's client
+  connection ending, the lock being released, and the PostgreSQL backend terminating. They
+  need not coincide; through a session pooler, a client can disconnect and the lock be
+  released while the backend stays open. The binder relies only on whether the lock is held.
+- **Liveness fence (migration 0069).** Every bind batch and the binder's `SUCCEEDED` write
+  require the run's liveness lock to be held. The binder's own `FAILED` write and the rule
+  links written by `registerRules` (`ops.run_rule_version`) do not require the lock; rule
+  links are instead refused once the run has an outcome (migration 0070, below).
+  `ops.assert_num_currency_bind_live(run_id)` raises `BDCR1` unless the run
   recorded the liveness protocol and some session in this database holds its lock in
   `pg_locks`. It is called:
   - at the start of each batch transaction, after the batch lock and before the first write;
   - from a checkpoint trigger, which fires after the 0067 checkpoint checks;
   - in the binder's `SUCCEEDED` write, which takes the batch lock as well.
 
-  A failed check rolls back the whole batch, so a binder whose liveness session has ended
-  cannot commit another batch or claim `SUCCEEDED`.
+  A failed check rolls back the whole batch, so a binder whose liveness lock is no longer
+  held cannot commit another batch or claim `SUCCEEDED`.
 - **Abandon.** `npm run num:bind-currency -- --abandon RUN_ID --actor NAME --reason TEXT`
   calls `ops.abandon_num_currency_bind_run`. It first takes the batch lock, so no batch is in
   flight. It then requires that the run:
@@ -94,11 +101,22 @@ record of which batches had committed.
   A batch needs the lock held and abandon needs it free, and both decide under the batch lock.
   They are therefore serialized and can never both proceed. It writes `ABORTED` with the
   committed checkpoint counts plus `abandoned = true`. `error_summary` holds the actor, the
-  reason, and only what the free lock proves: the run's database session had ended, so no
-  later write of the run can commit. An `ops.audit_event` row
+  reason, and only what the free lock shows: no database session held it, so no later bind
+  batch, rule link, or outcome of the run can commit. An `ops.audit_event` row
   (`NUM_CURRENCY_BIND_ABANDONED`) is written. Checkpoints are kept. Because the run now has an
-  outcome, the checkpoint trigger also rejects any later batch of it. A second abandon is
-  refused (`UNIQUE (run_id)` on the outcome).
+  outcome:
+  - the 0067 checkpoint trigger rejects any later batch of it, and every batch writes a
+    checkpoint, so the whole batch rolls back;
+  - a later `SUCCEEDED` or `FAILED` row, and a second abandon, are refused (`UNIQUE (run_id)`
+    on the outcome);
+  - a later rule link is refused (`BDCI1`) by the 0070 trigger on `ops.run_rule_version`. It
+    acts only on `NUM_CURRENCY_BIND` runs and checks for an outcome after taking the batch
+    lock, which abandon takes first. A link therefore either commits before the abandon or
+    waits for it and is refused. This holds for any outcome, not only `ABORTED`.
+
+  The 0069 wording said the run's database session had ended. Migration 0070 replaces both
+  functions with the same logic and corrected messages. `ABORTED` rows written under 0069
+  keep their original text.
 - **Connection loss.** When the liveness connection drops while the binder process keeps
   running, the local session wrapper may exit the process once its event loop runs. The
   Hosted session wrapper only logs the error. Either way, the binder's next batch, or its
@@ -109,7 +127,8 @@ record of which batches had committed.
     outcome. The binder reports the stored status (for example `ABORTED`) and does not claim
     `FAILED`.
   - If the database cannot be reached, no outcome can be written. The binder reports that the
-    stored status is unknown. Once the session has ended, the run can be abandoned.
+    stored status is unknown. Once no session holds the liveness lock, the run can be
+    abandoned.
 - **Resume.** `npm run num:bind-currency -- --resume RUN_ID` starts a new run through the same
   function. Under the per-run advisory transaction lock `(81202611, prior_run_id)`, the
   function inserts the run and one `ops.num_currency_bind_resume` claim
@@ -135,15 +154,29 @@ record of which batches had committed.
 - Existing v2 bindings, if any, are not re-evaluated. Remediating them would be a separate
   decision.
 - A process killed outside JavaScript error handling (for example `SIGKILL` or host loss)
-  still leaves its run `STARTED`. Once its session has ended, `--abandon` marks it `ABORTED`
-  and it can be resumed.
-- A free liveness lock proves that the run's database session has ended, not that its
-  process has. A process that lost its session may still be running (for example in its
-  planning phase) when an operator abandons the run. It cannot write after that, and it
-  reports the stored `ABORTED` status when it next tries.
+  still leaves its run `STARTED`. Once no session holds its liveness lock, `--abandon` marks
+  it `ABORTED` and it can be resumed.
+- A free liveness lock proves only that no database session holds it. It does not prove that
+  the binder process, its client connection, or a PostgreSQL backend has ended. A process
+  whose lock was released may still be running (for example in its planning phase) when an
+  operator abandons the run. After that it cannot commit a bind batch, a rule link, or an
+  outcome, and it reports the stored `ABORTED` status when it next tries. Before an abandon,
+  a binder whose lock was released can still link rules to its `STARTED` run; links are
+  fenced on the outcome, not on the lock. A run that ended before linking its rules (killed
+  or abandoned in its rule phase) has no recorded rule identity, so `--resume` refuses it.
+  It committed no batch; a new run without `--resume` recomputes from current heads.
+- Hosted session pooler, one probe trial (21 October 2026). A dedicated client took a session
+  advisory lock of an unused class through the session pooler (port 5432). A second
+  connection saw exactly one holder, and its transaction-level try-lock was refused. After
+  the holding client was killed with `SIGKILL`, the lock was gone within about 207 ms. The
+  holder's PostgreSQL backend was still present and idle 60 seconds later. This is one
+  trial, of one disconnect type. It does not establish behaviour after a graceful close, an
+  idle client, or a network failure. How the pooler cleared the lock was not observed.
 - Run ids above 2,147,483,647 do not fit the two-int lock key and are refused at start.
 - The fence reads `pg_locks`. It is correct only when the connection that holds a run's
   liveness lock is the database session itself, that is, a direct connection or a
   session-mode pooler. The transaction pooler is already refused.
-- Migrations 0067, 0068, and 0069 add the tables, functions, and triggers. Applying them to
-  Hosted, and any Hosted binder run, need separate approval.
+- Migrations 0067, 0068, and 0069 add the tables, functions, and triggers. Migration 0070
+  corrects the liveness wording without changing the fence or abandon logic, and adds the
+  rule-link trigger. Applying them to Hosted, and any Hosted binder run, need separate
+  approval.

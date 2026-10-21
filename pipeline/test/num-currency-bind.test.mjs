@@ -264,6 +264,34 @@ test("every batch checks the run's liveness lock under the batch lock, before it
   assert.match(migration, new RegExp(`pg_advisory_xact_lock\\(${NUM_CURRENCY_BIND_LOCK_KEY}\\)`), "abandon takes the batch lock");
 });
 
+const MIGRATION_0070 = "0070_num_currency_bind_terminal_run_fence.sql";
+const readMigration = (name) => readFileSync(new URL(`../../db/migrations/${name}`, import.meta.url), "utf8");
+
+test("migration 0070 changes only the 0069 liveness wording, not the fence or abandon logic", () => {
+  const functions = (sql) => [...sql.matchAll(/^CREATE (?:OR REPLACE )?FUNCTION (ops\.(?:assert_num_currency_bind_live|abandon_num_currency_bind_run)\([\s\S]*?^\$\$;$)/gm)]
+    .map((m) => m[1]);
+  const before = functions(readMigration("0069_num_currency_bind_liveness_fence.sql"));
+  const after = functions(readMigration(MIGRATION_0070));
+  assert.equal(before.length, 2);
+  assert.equal(after.length, 2);
+  const reworded = before.map((body) => body
+    .replace("lost its liveness lock (its database session ended)", "lost its liveness lock (no database session holds it)")
+    .replace("liveness lock was free: the run''s database session had ended, so no later write of this run can commit",
+      "liveness lock was free: no database session held it, so no later bind batch, rule link, or outcome of this run can commit"));
+  assert.notDeepEqual(reworded, before, "both 0069 messages were found");
+  assert.deepEqual(after, reworded);
+});
+
+test("migration 0070 refuses a finished bind run's rule link only after the batch lock", () => {
+  const sql = readMigration(MIGRATION_0070);
+  const body = /CREATE FUNCTION ops\.check_num_currency_bind_rule_link\(\)[\s\S]*?^\$\$;$/m.exec(sql)?.[0] ?? "";
+  const kind = body.indexOf("r.run_kind = 'NUM_CURRENCY_BIND'");
+  const lock = body.indexOf(`PERFORM pg_advisory_xact_lock(${NUM_CURRENCY_BIND_LOCK_KEY});`);
+  const outcome = body.indexOf("FROM ops.run_outcome o WHERE o.run_id = NEW.run_id");
+  assert.ok(kind > 0 && lock > kind && outcome > lock, "bind runs only, then the batch lock, then the outcome check");
+  assert.match(sql, /CREATE TRIGGER check_num_currency_bind_rule_link BEFORE INSERT ON ops\.run_rule_version\s+FOR EACH ROW/);
+});
+
 test("abandon refuses a bad run id, a blank actor, or a blank reason before touching the database", () => {
   const base = { database: "bdc_never_opened", runId: 1, actor: "test", reason: "TEST ONLY", log: () => {} };
   assert.throws(() => abandonNumCurrencyBind({ ...base, runId: 0 }), /invalid --abandon run id/);

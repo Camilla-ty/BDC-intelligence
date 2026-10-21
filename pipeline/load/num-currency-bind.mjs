@@ -500,7 +500,7 @@ export async function runNumCurrencyBind({
 }
 
 // Reads the run's stored status after its FAILED row could not be written. An outcome may
-// already exist (for example ABORTED by --abandon after this run's session ended), or the
+// already exist (for example ABORTED by --abandon after this run's liveness lock was freed), or the
 // database may be unreachable; say which, never assume.
 function recordedStatus(database, runId) {
   try {
@@ -558,9 +558,10 @@ VALUES (${runId}, 'FAILED', now(), ${lit(JSON.stringify(counts))}::jsonb, ${lit(
 
 /**
  * Marks a STARTED binder run ABORTED through ops.abandon_num_currency_bind_run. Refused
- * unless the run's liveness lock is free (its database session has ended), the run has no
+ * unless the run's liveness lock is free (no database session holds it), the run has no
  * outcome, and the run recorded the liveness protocol. Counts come from committed
- * checkpoints. A free lock also means no later write of the run can commit (migration 0069).
+ * checkpoints. Once ABORTED, no later bind batch (0067 finished-run check), rule link
+ * (0070 trigger), or outcome (UNIQUE run_id) of the run can commit.
  */
 export function abandonNumCurrencyBind({ database, runId, actor, reason, log: logFn = console.log }) {
   assertRunId(runId, "--abandon");

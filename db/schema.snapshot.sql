@@ -1673,7 +1673,7 @@ BEGIN
   FROM ops.num_currency_bind_batch b WHERE b.run_id = p_run_id;
   INSERT INTO ops.run_outcome (run_id, status, finished_at, counts, error_summary)
   VALUES (p_run_id, 'ABORTED', now(), counts,
-          format('abandoned by %s: %s (liveness lock was free: the run''s database session had ended, so no later write of this run can commit)',
+          format('abandoned by %s: %s (liveness lock was free: no database session held it, so no later bind batch, rule link, or outcome of this run can commit)',
                  p_actor, p_reason));
   INSERT INTO ops.audit_event (event_kind, subject_table, subject_id, actor, reason, details)
   VALUES ('NUM_CURRENCY_BIND_ABANDONED', 'ops.run', p_run_id::text, p_actor, p_reason, counts);
@@ -1763,7 +1763,7 @@ BEGIN
       AND l.database = (SELECT d.oid FROM pg_database d WHERE d.datname = current_database())
   ) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCR1',
-      MESSAGE = format('bind write refused: run %s lost its liveness lock (its database session ended); the binder must stop', p_run_id);
+      MESSAGE = format('bind write refused: run %s lost its liveness lock (no database session holds it); the binder must stop', p_run_id);
   END IF;
 END
 $$;
@@ -1835,6 +1835,21 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM ops.run_outcome o WHERE o.run_id = NEW.run_id) THEN
     RAISE EXCEPTION USING ERRCODE = 'BDCI1', MESSAGE = 'the resuming run must not have finished';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION ops.check_num_currency_bind_rule_link() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM ops.run r WHERE r.id = NEW.run_id AND r.run_kind = 'NUM_CURRENCY_BIND') THEN
+    PERFORM pg_advisory_xact_lock(8120261018);
+    IF EXISTS (SELECT 1 FROM ops.run_outcome o WHERE o.run_id = NEW.run_id) THEN
+      RAISE EXCEPTION USING ERRCODE = 'BDCI1',
+        MESSAGE = format('rule link refused: NUM_CURRENCY_BIND run %s already has an outcome', NEW.run_id);
+    END IF;
   END IF;
   RETURN NEW;
 END
@@ -11431,6 +11446,8 @@ CREATE TRIGGER check_num_currency_bind_batch BEFORE INSERT ON ops.num_currency_b
 CREATE TRIGGER check_num_currency_bind_batch_live BEFORE INSERT ON ops.num_currency_bind_batch FOR EACH ROW EXECUTE FUNCTION ops.check_num_currency_bind_batch_live();
 
 CREATE TRIGGER check_num_currency_bind_resume BEFORE INSERT ON ops.num_currency_bind_resume FOR EACH ROW EXECUTE FUNCTION ops.check_num_currency_bind_resume();
+
+CREATE TRIGGER check_num_currency_bind_rule_link BEFORE INSERT ON ops.run_rule_version FOR EACH ROW EXECUTE FUNCTION ops.check_num_currency_bind_rule_link();
 
 CREATE TRIGGER check_projection_exception BEFORE INSERT ON ops.projection_exception FOR EACH ROW EXECUTE FUNCTION ops.check_projection_exception();
 

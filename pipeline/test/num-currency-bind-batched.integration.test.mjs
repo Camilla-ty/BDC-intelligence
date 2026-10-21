@@ -21,6 +21,7 @@ import { runNumLoad } from "../load/num-run.mjs";
 import { RULES, registerRules, ruleDefinitionSha } from "../load/rules.mjs";
 import {
   NUM_CURRENCY_BIND_LIVENESS_LOCK_CLASS,
+  NUM_CURRENCY_BIND_LOCK_KEY,
   abandonNumCurrencyBind,
   bindBatchSql,
   committedProgress,
@@ -492,7 +493,7 @@ SELECT (SELECT count(*) FROM obs.position_field_value WHERE supersedes_id IS NOT
       promotes: [{ ...pairs[0], currencyCode: "pure" }], corroborations: [], checkpoint: checkpoint(3), runId: Number(runId), ruleId,
     }), /not a currency code/);
 
-    // Once the liveness session has ended, the next batch writes nothing.
+    // Once no session holds the liveness lock, the next batch writes nothing.
     await liveness.close();
     const next = { promotes: [], corroborations: [], checkpoint: { ...checkpoint(3), firstHeadId: 2 ** 40, lastHeadId: 2 ** 40, heads: 1 }, runId: Number(runId), ruleId };
     assert.throws(() => runScript(db, bindBatchSql(next)), /bind write refused: run \d+ lost its liveness lock/);
@@ -730,7 +731,7 @@ WHERE event_kind = 'NUM_CURRENCY_BIND_ABANDONED' AND subject_id = '${runId}' AND
 
 // A binder child whose liveness backend is terminated after batch 2 while the process keeps
 // running. Abandon is tried before the loss and, optionally, after it. Prints one JSON line.
-function spawnLivenessLossBinder(database, { abandonAfterLoss }) {
+function spawnLivenessLossBinder(database, { abandonAfterLoss, beforeRules = false }) {
   const code = `
 import { writeSync } from "node:fs";
 const binder = await import(${JSON.stringify(BINDER_URL)});
@@ -748,19 +749,24 @@ const abandon = (id, reason) => {
   }
 };
 const out = { events: {} };
+const loseLiveness = () => {
+  out.events.beforeLoss = abandon(out.runId, "TEST ONLY abandon while the binder holds its lock");
+  out.events.terminated = Number(queryRows(db,
+    "SELECT count(pg_terminate_backend(pid))::text " + lockedBy(out.runId), { asWriter: false })[0][0]);
+  for (let i = 0; i < 300 && holders(out.runId) > 0; i += 1) sleep(100);
+  out.events.holdersAfterLoss = holders(out.runId);
+  if (${abandonAfterLoss}) out.events.afterLoss = abandon(out.runId, "TEST ONLY liveness connection lost");
+};
 try {
   await binder.runNumCurrencyBind({
     database: db, log: () => {}, batchSize: 7,
     hooks: {
-      afterStart: (id) => { out.runId = id; },
+      afterStart: (id) => {
+        out.runId = id;
+        if (${beforeRules}) loseLiveness();
+      },
       afterBatch: (b) => {
-        if (b.batchIndex !== 2) return;
-        out.events.beforeLoss = abandon(out.runId, "TEST ONLY abandon while the binder holds its lock");
-        out.events.terminated = Number(queryRows(db,
-          "SELECT count(pg_terminate_backend(pid))::text " + lockedBy(out.runId), { asWriter: false })[0][0]);
-        for (let i = 0; i < 300 && holders(out.runId) > 0; i += 1) sleep(100);
-        out.events.holdersAfterLoss = holders(out.runId);
-        if (${abandonAfterLoss}) out.events.afterLoss = abandon(out.runId, "TEST ONLY liveness connection lost");
+        if (!${beforeRules} && b.batchIndex === 2) loseLiveness();
       },
     },
   });
@@ -799,7 +805,7 @@ test("a binder that loses its liveness connection writes no further batch; aband
       if (abandonAfterLoss) {
         assert.equal(out.events.afterLoss.counts.batches_committed, 2);
         assert.equal(stored.status, "ABORTED");
-        assert.match(stored.error, /the run's database session had ended, so no later write of this run can commit/);
+        assert.match(stored.error, /liveness lock was free: no database session held it, so no later bind batch, rule link, or outcome of this run can commit/);
         assert.match(out.error, /FAILED outcome could not be recorded .*its stored status is ABORTED$/s);
         assert.equal(out.failedCounts, null, "the binder does not claim a FAILED outcome it could not write");
       } else {
@@ -819,6 +825,72 @@ test("a binder that loses its liveness connection writes no further batch; aband
       assert.equal(runState(db, resumed.runId).status, "SUCCEEDED");
       assertSameExport(reference, exportBindState(db), `${db} after resume`);
     }
+  },
+));
+
+const ruleLinks = (db, runId) => Number(scalar(db, `SELECT count(*)::text FROM ops.run_rule_version WHERE run_id = ${Number(runId)}`));
+
+test("a binder abandoned before it registers its rules links no rule to the run; it cannot be resumed and a new run completes", withLoadedDbs(
+  ["ref", "rules"],
+  async ([refDb, db]) => {
+    const normal = await runNumCurrencyBind({ database: refDb, log: quiet, batchSize: 7 });
+    const reference = exportBindState(refDb);
+    assert.ok(ruleLinks(refDb, normal.runId) > 0, "a normal run registers its rule links");
+
+    const child = await spawnLivenessLossBinder(db, { abandonAfterLoss: true, beforeRules: true });
+    assert.equal(child.status, 0, child.err);
+    const out = JSON.parse(child.out.trim());
+    const { runId } = out;
+    assert.match(out.events.beforeLoss.refused, /abandon refused: run \d+ is still active \(its liveness lock is held\)/);
+    assert.equal(out.events.holdersAfterLoss, 0);
+    assert.equal(out.events.afterLoss.counts.batches_committed, 0);
+    assert.equal(out.result, "error");
+    assert.match(out.error, /rule link refused: NUM_CURRENCY_BIND run \d+ already has an outcome/);
+    assert.match(out.error, /FAILED outcome could not be recorded .*its stored status is ABORTED$/s);
+
+    assert.equal(runState(db, runId).status, "ABORTED");
+    assert.equal(ruleLinks(db, runId), 0, "no rule link was added after the abandon");
+    assert.equal(Number(scalar(db, `SELECT count(*)::text FROM ops.num_currency_bind_batch WHERE run_id = ${runId}`)), 0);
+
+    await assert.rejects(runNumCurrencyBind({ database: db, log: quiet, batchSize: 7, resumeRunId: runId }),
+      /resume refused: run \d+ did not use obs\.currency\.from_num_unique_match v3 with the current definition/,
+      "a run with no rule link has no verifiable rule identity");
+    const fresh = await runNumCurrencyBind({ database: db, log: quiet, batchSize: 7 });
+    assert.equal(runState(db, fresh.runId).status, "SUCCEEDED");
+    assert.equal(ruleLinks(db, fresh.runId), ruleLinks(refDb, normal.runId), "a new run registers the same rule links");
+    assertSameExport(reference, exportBindState(db), "after a new run");
+  },
+));
+
+test("a rule link waits for an abandon in flight and is then refused", withLoadedDbs(
+  ["linkrace"],
+  async ([db]) => {
+    const starter = await openPipelineSession(db);
+    const runId = Number(await starter.query(`SELECT ops.start_num_currency_bind_run(
+      'test', '{"uniqueness": "unique-fact"}'::jsonb, NULL, 'test-1', '${"c".repeat(64)}')`));
+    await starter.close();
+    await waitFor("liveness lock released", () => livenessLockHolders(db, runId) === 0);
+    const ruleId = Number(scalar(db, "SELECT min(id)::text FROM ops.rule_version"));
+
+    const abandoner = await openPipelineSession(db);
+    const linker = await openPipelineSession(db);
+    try {
+      await abandoner.query("BEGIN");
+      await abandoner.query(`SELECT ops.abandon_num_currency_bind_run(${runId}, 'integration test', 'TEST ONLY abandon in flight')::text`);
+      const link = linker.query(`INSERT INTO ops.run_rule_version (run_id, rule_version_id) VALUES (${runId}, ${ruleId})`)
+        .then(() => "committed", (e) => e.message);
+      await waitFor("rule link waits on the batch lock", () => Number(scalar(db, `
+SELECT count(*)::text FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+  AND ((classid::bigint << 32) | objid::bigint) = ${NUM_CURRENCY_BIND_LOCK_KEY} AND objsubid = 1
+  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`)) === 1);
+      await abandoner.query("COMMIT");
+      assert.match(await link, /rule link refused: NUM_CURRENCY_BIND run \d+ already has an outcome/);
+    } finally {
+      await abandoner.close();
+      await linker.close();
+    }
+    assert.equal(runState(db, runId).status, "ABORTED");
+    assert.equal(ruleLinks(db, runId), 0);
   },
 ));
 
