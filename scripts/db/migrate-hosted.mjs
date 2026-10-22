@@ -23,6 +23,39 @@ export function hostedApplyScripts(migrations) {
   };
 }
 
+export const HOSTED_MIGRATION_STATEMENT_TIMEOUT_SQL = "SET statement_timeout = '60s'";
+export const HOSTED_MIGRATION_STATEMENT_TIMEOUT_READ_SQL = "SELECT current_setting('statement_timeout')";
+
+const STATEMENT_TIMEOUT_UNIT_MS = {
+  ms: 1,
+  s: 1000,
+  min: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
+
+// PostgreSQL prints 60000 ms as 1min. Accept only the compact unit form, and only when it
+// is exactly 60000 ms. Any other display fails closed before bootstrap.
+export function statementTimeoutMilliseconds(setting) {
+  const text = String(setting ?? "").trim();
+  const match = /^(\d+)(ms|s|min|h|d)$/.exec(text);
+  if (!match) throw new Error(`statement_timeout ${JSON.stringify(text)} is not a recognized duration`);
+  const milliseconds = Number(match[1]) * STATEMENT_TIMEOUT_UNIT_MS[match[2]];
+  if (!Number.isSafeInteger(milliseconds)) {
+    throw new Error(`statement_timeout ${JSON.stringify(text)} is not a recognized duration`);
+  }
+  return milliseconds;
+}
+
+export function assertHostedStatementTimeout(setting) {
+  const milliseconds = statementTimeoutMilliseconds(setting);
+  if (milliseconds !== 60_000) {
+    throw new Error(
+      `statement_timeout is ${String(setting).trim()} (${milliseconds} ms); hosted migrations require exactly 60000 ms`,
+    );
+  }
+}
+
 export function assertHostedUrl(connectionString) {
   if (!connectionString || !connectionString.trim()) {
     throw new Error("DATABASE_URL is not set");
@@ -76,18 +109,32 @@ async function queryRows(client, text) {
   return lines;
 }
 
-export async function migrateHosted(connectionString, dir = MIGRATIONS_DIR) {
+export async function enforceHostedStatementTimeout(client) {
+  await client.query({ text: HOSTED_MIGRATION_STATEMENT_TIMEOUT_SQL, queryMode: "simple" });
+  const lines = await queryRows(client, HOSTED_MIGRATION_STATEMENT_TIMEOUT_READ_SQL);
+  if (lines.length !== 1) {
+    throw new Error(`statement_timeout read returned ${lines.length} rows; hosted migrations require exactly 60000 ms`);
+  }
+  assertHostedStatementTimeout(lines[0]);
+}
+
+export async function migrateHosted(connectionString, dir = MIGRATIONS_DIR, options = {}) {
   assertHostedUrl(connectionString);
   const { migrations, errors } = listMigrations(dir);
   if (errors.length) throw new Error(`invalid migrations:\n  - ${errors.join("\n  - ")}`);
 
-  const client = new pg.Client({
-    connectionString: connectionString.trim(),
-    ssl: hostedSsl(connectionString),
-    connectionTimeoutMillis: 30_000,
-  });
+  // Tests may pass a connected client. The URL guard above and the timeout guard below still run.
+  const ownsClient = options.client == null;
+  const client = ownsClient
+    ? new pg.Client({
+      connectionString: connectionString.trim(),
+      ssl: hostedSsl(connectionString),
+      connectionTimeoutMillis: 30_000,
+    })
+    : options.client;
   try {
-    await client.connect();
+    if (ownsClient) await client.connect();
+    await enforceHostedStatementTimeout(client);
     const { bootstrap, ledgerQuery } = hostedApplyScripts(migrations);
     await client.query({ text: bootstrap, queryMode: "simple" });
     const applied = new Map(
@@ -105,7 +152,7 @@ export async function migrateHosted(connectionString, dir = MIGRATIONS_DIR) {
   } catch (error) {
     throw new Error(publicError(error, connectionString));
   } finally {
-    await client.end().catch(() => undefined);
+    if (ownsClient) await client.end().catch(() => undefined);
   }
 }
 
